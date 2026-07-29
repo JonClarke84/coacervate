@@ -117,7 +117,7 @@ at run start; the rest can be changed live, which is how environmental events wo
 | Profile | Intent |
 | --- | --- |
 | `default` | Balanced. The starting point for experiments on the PC. |
-| `ambient` | The Raspberry Pi edition. Small world (~600 organisms), reduced grid, tick rate deliberately slowed so meaningful change happens over *days*, snapshots rare, `stats.bin` thinned and `snapshots.bin` disabled by default — continuous writes are what kill storage on an always-on appliance. |
+| `slow` | Tick rate deliberately reduced so meaningful change happens over hours rather than minutes. For leaving it up on a second screen and noticing it rather than watching it. |
 | `bloom` | High light influx. Demonstrates stagnation under abundance. |
 | `famine` | Low influx. Demonstrates selection pressure and extinction. |
 
@@ -422,6 +422,40 @@ genus. Colour derives from a hash of the genome so lineages are visually distinc
 Markdown alongside the replay log. This is the payoff for leaving it running overnight, and
 it is mostly presentation over data already being collected.
 
+### Darwin marginalia
+
+Everything Darwin published is public domain, as are his letters. Surfacing his own words
+alongside the events they describe gives the simulation a voice without inventing one.
+
+**The rule that makes this work: quotes are captions on events, not decoration.** A quote
+fires because something happened that it actually describes, which makes Darwin read as a
+commentator on your world. A rotating quote box in the corner would be a fortune cookie —
+disconnected, and tiresome within an hour.
+
+| Trigger | Theme he actually wrote about |
+| --- | --- |
+| Population reaches carrying capacity | The struggle for existence |
+| First predation event | The struggle for existence |
+| Speciation | Divergence of character |
+| Mass extinction | Extinction, and the rarity of its observation |
+| A lineage *loses* a cell kind | **Rudimentary and atrophied organs** — he wrote at length on structures reduced or abandoned. The perfect pairing for the non-teleological rule. |
+| Deep-time milestone | The immensity of geological time; the imperfection of the record |
+| World seeded | His 1871 letter to Hooker speculating that life began in a "warm little pond" |
+| Chronicle header | The closing line of *On the Origin of Species* |
+
+**Anachronism discipline.** Only quote him where he genuinely spoke. Darwin knew nothing of
+genes, mutation or molecular heredity, and he deliberately avoided the origin of life in
+*Origin* — the warm little pond was a private aside in a letter, not a published claim.
+Quoting him beside a mutation event would be a category error, and exactly the kind of thing
+a biologist would notice. Selection, struggle, divergence, extinction, rudimentary organs and
+deep time are all safely his.
+
+**Presentation.** A data file (`darwin.toml`) of `{ text, work, year, trigger }` records.
+Each trigger fires at most once per run — a handful of quotes across several hours, not a
+stream. Typeset as marginalia: serif face, generous leading, low contrast, slow fade in and
+out. It must obey the visually-calm constraint; this is a note in the margin of a book, not a
+notification. Always attribute the work and year. Disableable in config.
+
 ---
 
 ## 12. Rendering
@@ -447,20 +481,12 @@ The visual quality comes from shaders, not from the widget library.
 `egui` panels sit over the world: translucent dark, thin borders, monospace numerics,
 recessive. The simulation is the subject; the chrome should nearly disappear.
 
-### Portability ceiling — load-bearing
+### No portability budget
 
-The renderer must stay runnable on a Raspberry Pi 5, because the ambient edition (phase 9,
-see `CLAUDE.md`) is a real delivery target. VideoCore VII manages roughly 77 GFLOPS against
-the 4070 Ti's ~40 TFLOPS, and more importantly it has far tighter resource limits — Bevy on a
-Pi 5 has been observed failing with "too many bindings of type StorageBuffers".
-
-**Constraints:** instanced draws plus a small number of straightforward post-processing
-passes. Stay within OpenGL ES 3.1 / Vulkan 1.2 feature levels for the core look. Keep
-binding counts modest. Do not make the *render* path depend on compute shaders or storage
-buffers in fragment stages — the simulation may use compute freely on the PC, but drawing
-must not.
-
-Honouring this costs nothing now. Retrofitting it turns a recompile into a rewrite.
+Target the 4070 Ti and use what it does best. There is **no** requirement to stay within
+mobile or embedded GPU feature levels — the eventual Raspberry Pi version will be a separate
+rewrite, not a port of this renderer, so constraining the visuals for hardware this codebase
+will never run on would be pure waste.
 
 ### Frame dumping — build this in phase 5
 
@@ -499,10 +525,9 @@ Use `postcard` and `zstd`. Do not invent a clever format.
 
 ---
 
-## 14. GPU port (phase 10)
+## 14. GPU port (phase 9)
 
-Only after the CPU implementation is stable and tested — and after the ambient edition,
-which does not depend on it.
+Only after the CPU implementation is stable and tested.
 
 **Moves to the GPU** — uniform, per-tick, embarrassingly parallel:
 

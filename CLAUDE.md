@@ -398,110 +398,23 @@ designed progression. This is an instrument. That difference is the point.
 
 ---
 
-## The second delivery target: the ambient edition
+## A future, separate project: the ambient edition
 
-**A Raspberry Pi with an attached LCD, running always-on and slow, as a Christmas 2026
-present for Jonathan's father — a retired biology teacher whose hero is Darwin.**
+**Not part of this build.** Recorded only so the idea isn't lost.
 
-Built *after* the PC version, from the same crates. This is a real delivery target with a
-real deadline, not a someday idea, and the audience changes the brief substantially.
+The eventual intent is a Raspberry Pi with an attached LCD, running always-on and
+deliberately slow — meaningful change over days rather than minutes — as a present for
+Jonathan's father, a retired biology teacher whose hero is Darwin.
 
-### Who it is for, and why that matters
+**It will be a separate rewrite that takes this project as inspiration rather than sharing
+its code.** That is a deliberate decision, and the consequence matters: **nothing in the PC
+version should be compromised to accommodate it.** Use whatever the 4070 Ti does best. Do not
+constrain the renderer, the data layout, the feature set or the dependency choices for a
+machine this codebase will never run on.
 
-He knows actual biology. He will notice imprecision, and he will read this rather than just
-watch it. Three consequences:
-
-**The chronicle is the gift, not the visuals.** For this audience the generated natural
-history is the primary artifact and the animation is the accompaniment. A "field notebook"
-view he can page through — named lineages, what each one did, when it appeared and when it
-went — matters more than bloom quality.
-
-**The framing must be rigorously non-teleological.** This is the single most important
-constraint of the ambient edition, and it is a *copywriting and design* constraint rather
-than a simulation one. Evolution has no direction, no ladder and no goal, and the
-misconception that it does is the thing biology teachers spend entire careers correcting.
-So:
-
-- Never "evolving toward", "progress", "advanced", "primitive", "higher", "improved",
-  "better", "more evolved", "trying to".
-- Fitness is relative to *current* conditions only. A lineage that thrives and then dies
-  when the light dims was never worse — the conditions changed.
-- Extinction is not failure and must never be presented as such.
-- Complexity is not the objective. **Loss** of structure is a legitimate and common
-  evolutionary outcome, and the simulation should be able to show it — a lineage that
-  abandons photosynthesis to parasitise its neighbours has not regressed. If the event log
-  can only celebrate gains, it is teaching something false.
-- The event log states *what changed*, never whether it was an improvement.
-
-Getting this right is also simply more Darwinian, and he will notice that too.
-
-**It must never need attention.** He will not debug it. No desktop, no error dialogs, no
-crash screens, no updates, no configuration.
-
-### What "slow" should mean
-
-Deliberately geological. Tune the tick rate so meaningful change happens on the order of
-*days*, not minutes — something different to notice each morning, with the chronicle growing
-alongside. A day of real time reading as tens of millions of years makes deep time legible
-in a way a fast-forward never does. Slowness is the feature; do not treat it as a limitation
-of the hardware.
-
-With no keyboard, an auto-cycling "currently observed" panel works well: rotate slowly
-through living lineages, showing each one's name, body plan, ancestry and story. Informative
-with zero interaction. A touchscreen is a bonus, not a requirement.
-
-### Darwin
-
-Everything Darwin wrote is public domain. His 1871 letter to Hooker speculating that life
-began in a "warm little pond" is *directly* about what this simulates, and the closing line
-of *On the Origin of Species* — "There is grandeur in this view of life" — would sit well on
-a splash screen or at the head of the chronicle. Attribute properly and use sparingly; one
-well-chosen line beats a collage.
-
-### Hardware and reliability
-
-Raspberry Pi 5 (4 GB is sufficient) with the official active cooler — passive cooling is not
-enough for a machine running its CPU continuously. Any decent IPS LCD; the renderer must
-already tolerate arbitrary aspect ratios.
-
-The engineering risk of an always-on appliance is **storage, not compute**:
-
-- **Boot from USB SSD or an NVMe HAT, not an SD card.** Continuous writes kill SD cards, and
-  an app appending to a replay log will do it in months.
-- **Read-only root filesystem**, with simulation state on a small writable partition and
-  atomic writes. This is what makes it survive being unplugged, which it will be.
-- Snapshot rarely — enough to resume after a power cut, not enough to wear the disk.
-- Systemd unit with automatic restart, going straight from boot into the app via DRM/KMS
-  with no desktop environment at all.
-- A watchdog that restarts on hang. Never a visible error.
-
-Build natively on the Pi. Cross-compiling to `aarch64` from Windows means wrangling a
-linker and sysroot, and it is not worth the trouble for something built rarely.
-
-### Renderer portability — a constraint on the PC version
-
-The ambient edition runs the **CPU** simulation path, which costs nothing to support because
-that path must exist permanently anyway as the reference the GPU port is validated against.
-
-The renderer is where the PC version could accidentally foreclose the Pi. Mesa's V3DV driver
-gives Pi 4 and 5 Vulkan 1.3 and ships by default in Raspberry Pi OS, and `wgpu` runs on it —
-but VideoCore VII is roughly 77 GFLOPS against the 4070 Ti's ~40 TFLOPS, and it has much
-tighter resource limits. Bevy on a Pi 5 has been seen to fail with "too many bindings of
-type StorageBuffers", which is exactly the kind of ceiling a desktop GPU never makes you
-think about.
-
-**Therefore:** keep the renderer to instanced draws plus a small number of straightforward
-post-processing passes. Stay within OpenGL ES 3.1 / Vulkan 1.2 feature levels for the core
-look, and keep binding counts modest. Getting clever with compute-driven rendering on the PC
-turns the Pi port from a recompile into a rewrite. This is cheap to honour now and expensive
-to retrofit.
-
-### Sequencing — this is why the phase order changed
-
-The ambient edition depends on phases 1–8 only. It does **not** depend on the GPU compute
-port, which is simultaneously the most technically risky phase and the one the gift does not
-need. The GPU work has therefore been moved *after* the ambient edition so that a Christmas
-deadline is never hostage to shader debugging.
+The one idea worth carrying back from that direction is the constraint on generated text —
+see *Character of the thing* below. It is not a concession to an audience; it is simply
+correct, and it improves the chronicle regardless of who reads it.
 
 ---
 
@@ -524,6 +437,27 @@ It runs on a second screen while you work. That is a real design constraint, not
   run, waiting to be read in the morning. This is the payoff for the entire walk-away
   premise, and it is mostly presentation over data already being collected.
 
+### Generated text must never imply a direction — load-bearing
+
+Every piece of generated copy — event log, chronicle, species descriptions, tooltips — has
+to be rigorously non-teleological. Evolution has no goal, no ladder and no destination, and
+the belief that it does is the single most common misconception about it.
+
+- Never "evolving toward", "progress", "advanced", "primitive", "higher", "improved",
+  "better", "more evolved", "trying to", "succeeded in".
+- Fitness is relative to *current* conditions only. A lineage that thrives and then dies when
+  the light dims was never worse — the conditions changed.
+- Extinction is not failure and must never be framed as such.
+- Complexity is not the objective. **Loss** of structure is a legitimate and common outcome:
+  a lineage that abandons photosynthesis to parasitise its neighbours has not regressed. If
+  the event log can only celebrate gains, it is teaching something false — and it will make
+  the simulation less interesting to watch, because half of what happens will go unremarked.
+- State *what changed*, never whether it was an improvement.
+
+This costs nothing and it is simply correct. It also happens to make the chronicle read like
+a naturalist's field notes rather than a progress report, which is the tone the whole thing
+is aiming for.
+
 ---
 
 ## Build phases
@@ -538,19 +472,14 @@ Each phase ends green: tests pass, `clippy` is clean, and the thing is demonstra
 | 4 | Reproduction, death, detritus | Headless run reaches equilibrium without extinction or explosion |
 | 5 | Renderer + PNG dump | A frame renders; Claude can see it |
 | 6 | egui panels, sliders, live charts | Initial conditions settable; run controllable |
-| 7 | Species clustering, naming, event log, inspector, museum | Speciation is visible and named |
+| 7 | Species clustering, naming, event log, Darwin marginalia, inspector, museum | Speciation is visible and named |
 | 8 | Replay log, scrubbing, chronicle | An overnight run can be replayed and read |
-| 9 | **Ambient edition (Raspberry Pi)** — the Christmas target | Runs unattended on a Pi for a week with no intervention |
-| 10 | GPU compute port | Matches the CPU reference from the same seed |
-| 11 | Polish — screensaver mode, packaging | Ships as a zip |
+| 9 | GPU compute port | Matches the CPU reference from the same seed |
+| 10 | Polish — screensaver mode, packaging | Ships as a zip |
 
 Phases 1–4 are headless and pure. **Do not start the renderer before the simulation
 produces a stable ecology in a headless run** — a beautiful renderer showing a world that
 dies in thirty seconds teaches you nothing.
-
-The GPU port sits *after* the ambient edition deliberately. It is the riskiest phase and the
-gift does not depend on it, so a Christmas deadline must never be waiting on shader
-debugging.
 
 ---
 

@@ -84,9 +84,7 @@ reasoning and decision log.
 
 ## Status
 
-In development. Windows x86-64 first, with a second build targeting a Raspberry Pi 5 driving
-an attached LCD — an always-on, deliberately slow edition where meaningful evolutionary
-change happens over days rather than minutes, and the generated chronicle is the point.
+In development. Windows x86-64.
 
 ## Honest limitations
 
