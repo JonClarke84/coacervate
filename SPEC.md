@@ -112,6 +112,15 @@ reseed_on_extinction = false
 Every one of these is exposed as a slider in the UI. `[world]`, `[limits]` and `seed` lock
 at run start; the rest can be changed live, which is how environmental events work.
 
+**Profiles.** Ship named presets rather than expecting anyone to tune 25 sliders from cold:
+
+| Profile | Intent |
+| --- | --- |
+| `default` | Balanced. The starting point for experiments on the PC. |
+| `ambient` | The Raspberry Pi edition. Small world (~600 organisms), reduced grid, tick rate deliberately slowed so meaningful change happens over *days*, snapshots rare, `stats.bin` thinned and `snapshots.bin` disabled by default — continuous writes are what kill storage on an always-on appliance. |
+| `bloom` | High light influx. Demonstrates stagnation under abundance. |
+| `famine` | Low influx. Demonstrates selection pressure and extinction. |
+
 ---
 
 ## 4. The resource field
@@ -438,6 +447,21 @@ The visual quality comes from shaders, not from the widget library.
 `egui` panels sit over the world: translucent dark, thin borders, monospace numerics,
 recessive. The simulation is the subject; the chrome should nearly disappear.
 
+### Portability ceiling — load-bearing
+
+The renderer must stay runnable on a Raspberry Pi 5, because the ambient edition (phase 9,
+see `CLAUDE.md`) is a real delivery target. VideoCore VII manages roughly 77 GFLOPS against
+the 4070 Ti's ~40 TFLOPS, and more importantly it has far tighter resource limits — Bevy on a
+Pi 5 has been observed failing with "too many bindings of type StorageBuffers".
+
+**Constraints:** instanced draws plus a small number of straightforward post-processing
+passes. Stay within OpenGL ES 3.1 / Vulkan 1.2 feature levels for the core look. Keep
+binding counts modest. Do not make the *render* path depend on compute shaders or storage
+buffers in fragment stages — the simulation may use compute freely on the PC, but drawing
+must not.
+
+Honouring this costs nothing now. Retrofitting it turns a recompile into a rewrite.
+
 ### Frame dumping — build this in phase 5
 
 - `--dump-frame <path>` renders one frame and exits.
@@ -475,9 +499,10 @@ Use `postcard` and `zstd`. Do not invent a clever format.
 
 ---
 
-## 14. GPU port (phase 9)
+## 14. GPU port (phase 10)
 
-Only after the CPU implementation is stable and tested.
+Only after the CPU implementation is stable and tested — and after the ambient edition,
+which does not depend on it.
 
 **Moves to the GPU** — uniform, per-tick, embarrassingly parallel:
 
