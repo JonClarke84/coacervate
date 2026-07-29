@@ -1,0 +1,27 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Simulation output — runs are large and reproducible from (seed, config)
+/runs/
+*.png
+!docs/**/*.png
+
+# Windows
+Thumbs.db
+desktop.ini
+*.exe
+*.lnk
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Claude Code local overrides
+.claude/settings.local.json
+CLAUDE.local.md
