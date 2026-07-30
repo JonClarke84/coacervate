@@ -4,16 +4,19 @@
 //! and it contains no unsafe code. Everything in it is a deterministic function of a
 //! seed and a configuration; see `SPEC.md` section 2.
 //!
-//! What lives here at the end of phase 1:
+//! What lives here so far:
 //!
 //! - [`config`] — the run's settings, and the validation a TOML document is checked
 //!   against before anything else is allowed to happen.
 //! - [`rng`] — the seeded random-number generator, and the per-organism streams that let
 //!   later phases run organisms in parallel without changing the result.
+//! - [`ledger`] — where every unit of energy in the world is, and the assertion that no
+//!   unit is ever invented or lost.
 
 #![forbid(unsafe_code)]
 
 pub mod config;
+pub mod ledger;
 pub mod rng;
 
 #[cfg(test)]

@@ -51,9 +51,9 @@ watch an interesting event again, and it is what makes the GPU port testable.
 - No wall-clock time in simulation logic.
 - `f32` throughout for state (GPU compatibility). Accept that this constrains
   reproducibility to a fixed instruction set; document it rather than chasing bit-exactness
-  across architectures. **One exception, and it is not optional:** the energy ledger's five
+  across architectures. **One exception, and it is not optional:** the energy ledger's
   accounts are `f64`, because they are running totals over the whole run rather than state.
-  See section 5 for the arithmetic — at `f32` they stop accumulating inside the first minute.
+  See section 5 for the measured arithmetic — at `f32` the invariant breaks at tick 121,128.
 
 **Test:** run 100,000 ticks twice from the same seed, hash the world state, assert equal.
 
@@ -172,11 +172,24 @@ Five accounts:
 | `dissipated` | Energy spent on metabolism and movement — permanently gone |
 | `influx_total` | Cumulative energy added by light since `t = 0` |
 
+A sixth value, `initial_total`, is captured once at construction — the energy the world was
+born holding. It is not an account, because nothing ever moves into or out of it, but the
+invariant needs it and it has to be stored somewhere.
+
 Invariant:
 
 ```
 field + biomass + detritus + dissipated  ==  initial_total + influx_total   (± 1e-3 relative)
 ```
+
+**Relative to `initial_total + influx_total`**, with a floor of one energy unit. The floor
+matters: without it, a world holding nothing is being asked for bit-exactness, which no
+float arithmetic can promise.
+
+Note what the invariant does *not* claim. It says energy is conserved, not that any
+particular account is solvent. Spending more than an organism holds drives `biomass`
+negative while the books still balance perfectly — those are different claims, and
+solvency belongs with the organism in section 10, not here.
 
 Checked every tick in debug, every 1,000 ticks in release. **On violation, panic.** Eight
 hours of quietly wrong output is worse than a crash.
@@ -187,13 +200,26 @@ Section 2 mandates `f32` for simulation *state*, for GPU compatibility. The ledg
 are not state in that sense — they are running totals over the whole life of a run, and at
 `f32` they stop working long before an overnight run finishes.
 
-The arithmetic is not close. `f32` carries 24 bits of mantissa, so `x + y` silently returns
-`x` unchanged once `x / y` exceeds about 16.7 million. At the default config, light adds
-roughly `0.012 × 36,864 ≈ 442` per tick to `influx_total`. That total passes 16.7 million
-after about 38,000 ticks — *under a minute* — and from then on `influx_total` simply stops
-increasing while `field` keeps being credited. The invariant then fails, not because
-anything is wrong, but because the accumulator ran out of room. Worse, summing 36,864 `f32`
-tiles naively to compute `field` loses precision in the same way on every single tick.
+The numbers below were measured, not estimated — see
+`an_f32_account_would_have_stopped_counting` in `ledger.rs`, which pins them.
+
+`f32` carries 24 bits of mantissa, so a running total loses its ability to absorb small
+additions long before it overflows. At the default config, light adds `0.012 × 36,864 ≈
+442.4` per tick to `influx_total`. Two things then happen, in this order:
+
+- **At tick 121,128** — a couple of minutes of wall clock — accumulated rounding has pushed
+  the two sides of the invariant more than `1e-3` apart, and the run panics. Nothing is
+  wrong with the simulation; the accumulator simply cannot represent what it has been told.
+  This is the number that forces the decision.
+- **At tick 17,780,259** the total reaches 8,589,934,592 and freezes completely. The gap
+  between neighbouring `f32` values there is 1,024, more than twice the 442.4 being added,
+  so every subsequent addition rounds straight back to where it started.
+
+The frozen total sits about **9% above** the true figure, so there is no version of this
+that announces itself as an obvious error.
+
+The same loss applies to summing 36,864 `f32` tiles to compute `field`, on every single
+tick.
 
 So: **tiles stay `f32`; the five accounts are `f64`; and the per-tick sum over tiles
 accumulates in `f64`.** The GPU port in section 14 must do the same — a reduction over
@@ -202,7 +228,12 @@ loss. This costs nothing on the GPU side, because the accounts are never read by
 
 Flow:
 
-- Light adds to `field` and `influx_total`.
+- Light adds to `field` and `influx_total`. This is the only operation in the simulation
+  that creates energy; everything below moves it.
+- **Seeding an organism takes its starting energy out of `field`**, exactly as harvesting
+  would. Easy to miss, because a seeded organism feels like it comes from outside the
+  world — but conjuring its body out of nothing is a leak on tick zero, and it will show up
+  as an invariant failure with no obvious cause.
 - Photocytes move `field → biomass`.
 - Devorocytes move `detritus → biomass`, or `biomass → biomass` when predating.
 - Metabolism and movement move `biomass → dissipated`.
