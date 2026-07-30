@@ -48,4 +48,5 @@ max_dev_steps = 16
 [run]
 max_wall_clock_hours = 12.0
 max_ticks = 0            # 0 = unbounded
+max_ticks_per_second = 0 # 0 = uncapped. The `slow` profile's only lever.
 reseed_on_extinction = false

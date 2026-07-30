@@ -127,6 +127,7 @@ pub struct RawLimits {
 pub struct RawRun {
     pub max_wall_clock_hours: f64,
     pub max_ticks: u64,
+    pub max_ticks_per_second: u32,
     pub reseed_on_extinction: bool,
 }
 
@@ -203,6 +204,7 @@ pub fn spec_defaults() -> RawConfig {
         run: RawRun {
             max_wall_clock_hours: 12.0,
             max_ticks: 0,
+            max_ticks_per_second: 0,
             reseed_on_extinction: false,
         },
     }
@@ -550,6 +552,17 @@ pub struct RunConfig {
     /// gate, and this type is what is left when the special value has been taken out of
     /// circulation.
     pub max_ticks: Option<u64>,
+
+    /// How many ticks the simulation may compute per second of real time, or nothing at
+    /// all if it should go as fast as the machine allows.
+    ///
+    /// This is the only thing separating a run you watch from a run you *notice*. The
+    /// simulation's own clock is fixed - every tick is the same slice of simulated time
+    /// however long it took to compute - so slowing this down does not change what
+    /// happens, only how fast it arrives. It is what the `slow` profile is made of.
+    ///
+    /// Zero means uncapped, translated away here for the same reason as `max_ticks`.
+    pub max_ticks_per_second: Option<u32>,
     pub reseed_on_extinction: bool,
 }
 
@@ -689,6 +702,8 @@ impl RawConfig {
                 // SPEC's `0 = unbounded` sentinel, spent here so nothing downstream
                 // inherits it.
                 max_ticks: (self.run.max_ticks > 0).then_some(self.run.max_ticks),
+                max_ticks_per_second: (self.run.max_ticks_per_second > 0)
+                    .then_some(self.run.max_ticks_per_second),
                 reseed_on_extinction: self.run.reseed_on_extinction,
             },
         })

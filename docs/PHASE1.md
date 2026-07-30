@@ -296,11 +296,13 @@ is correct, and its escape hatch does not reach integration tests).
 
 These need a human answer. Do not invent one.
 
-**Q1. SPEC's `slow` profile is currently unimplementable.** It is defined by a reduced tick
-rate; section 2 refers to "a configured cap" on ticks per wall-clock second; **no such key
-exists anywhere in section 3's schema**. It probably wants `max_ticks_per_second = 0  # 0 =
-uncapped` under `[run]`. Adding a key later does not break configs written before it, so
-this can wait — but it must be settled before Phase 6 builds sliders from the schema.
+**~~Q1. SPEC's `slow` profile is currently unimplementable.~~ RESOLVED 2026-07-31.** It was
+defined by a reduced tick rate, section 2 referred to "a configured cap" on ticks per
+wall-clock second, and no such key existed anywhere in section 3's schema. With Jonathan's
+authorisation to edit the spec, `max_ticks_per_second = 0  # 0 = uncapped` was added to
+`[run]` in SPEC section 3, in `config/default.toml`, and in both config types — the
+sentinel is spent at the validation gate like `max_ticks`. The `slow` profile is now
+buildable; it still waits for Phase 4, per D6.
 
 **Q2. Is `max_organisms = 4000` a default or a ceiling?** Taken here as a default, with
 100,000 (CLAUDE.md's GPU figure) as the ceiling, so a Phase 9 experiment does not need a
@@ -309,8 +311,21 @@ code change. Note this admits configs Phase 2's CPU implementation cannot honour
 **Q3. Resident memory (< 2 GB) and replay log budget (8 GB)** appear in CLAUDE.md's caps
 table with **no config key at all**. A known gap; no keys have been invented for them.
 
-**Q4. The repository is on branch `master`; CLAUDE.md's stated main branch is `main`.** Not
-a code concern, but it will matter at the first commit.
+**~~Q4. The repository is on branch `master`.~~ NOT A PROBLEM — this was a
+misreading.** The repository is on `main`, matching CLAUDE.md; the `master` in the earlier
+note belonged to the *parent* directory, which is a different repository. Nothing to do.
+
+**Q5. `point_sigma` is bounded to 0..=1, and that bound is not derived from SPEC.** SPEC
+section 7 calls it "gaussian magnitude on numeric fields" — a standard deviation, not a
+probability, so unlike the five mutation *rates* beside it there is no reason it must sit
+below one. The bound caps how far a single point mutation can move a numeric gene field,
+which is a mutation-strength decision rather than a validity one. Harmless today; wants a
+human answer before Phase 3 tunes mutation.
+
+**Q6. `spring_damping` has no stated semantics at all in SPEC.** It is bounded below at
+zero on the reasoning that negative damping is not damping — it would feed energy into the
+springs every tick and break section 5's energy invariant. That is inferred from section 5,
+not read off section 3, and it is the only bound in the config module arrived at that way.
 
 ---
 

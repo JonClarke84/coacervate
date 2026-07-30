@@ -51,7 +51,9 @@ watch an interesting event again, and it is what makes the GPU port testable.
 - No wall-clock time in simulation logic.
 - `f32` throughout for state (GPU compatibility). Accept that this constrains
   reproducibility to a fixed instruction set; document it rather than chasing bit-exactness
-  across architectures.
+  across architectures. **One exception, and it is not optional:** the energy ledger's five
+  accounts are `f64`, because they are running totals over the whole run rather than state.
+  See section 5 for the arithmetic — at `f32` they stop accumulating inside the first minute.
 
 **Test:** run 100,000 ticks twice from the same seed, hash the world state, assert equal.
 
@@ -106,6 +108,7 @@ max_dev_steps = 16
 [run]
 max_wall_clock_hours = 12.0
 max_ticks = 0            # 0 = unbounded
+max_ticks_per_second = 0 # 0 = uncapped. The `slow` profile's only lever.
 reseed_on_extinction = false
 ```
 
@@ -117,7 +120,7 @@ at run start; the rest can be changed live, which is how environmental events wo
 | Profile | Intent |
 | --- | --- |
 | `default` | Balanced. The starting point for experiments on the PC. |
-| `slow` | Tick rate deliberately reduced so meaningful change happens over hours rather than minutes. For leaving it up on a second screen and noticing it rather than watching it. |
+| `slow` | `max_ticks_per_second` reduced so meaningful change happens over hours rather than minutes. For leaving it up on a second screen and noticing it rather than watching it. |
 | `bloom` | High light influx. Demonstrates stagnation under abundance. |
 | `famine` | Low influx. Demonstrates selection pressure and extinction. |
 
@@ -177,6 +180,25 @@ field + biomass + detritus + dissipated  ==  initial_total + influx_total   (± 
 
 Checked every tick in debug, every 1,000 ticks in release. **On violation, panic.** Eight
 hours of quietly wrong output is worse than a crash.
+
+### The five accounts are `f64`. This is an exception to section 2, and it is required.
+
+Section 2 mandates `f32` for simulation *state*, for GPU compatibility. The ledger accounts
+are not state in that sense — they are running totals over the whole life of a run, and at
+`f32` they stop working long before an overnight run finishes.
+
+The arithmetic is not close. `f32` carries 24 bits of mantissa, so `x + y` silently returns
+`x` unchanged once `x / y` exceeds about 16.7 million. At the default config, light adds
+roughly `0.012 × 36,864 ≈ 442` per tick to `influx_total`. That total passes 16.7 million
+after about 38,000 ticks — *under a minute* — and from then on `influx_total` simply stops
+increasing while `field` keeps being credited. The invariant then fails, not because
+anything is wrong, but because the accumulator ran out of room. Worse, summing 36,864 `f32`
+tiles naively to compute `field` loses precision in the same way on every single tick.
+
+So: **tiles stay `f32`; the five accounts are `f64`; and the per-tick sum over tiles
+accumulates in `f64`.** The GPU port in section 14 must do the same — a reduction over
+tiles returns to the CPU as a `f64` total, or is performed in two stages to avoid the same
+loss. This costs nothing on the GPU side, because the accounts are never read by a shader.
 
 Flow:
 

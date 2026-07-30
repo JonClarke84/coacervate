@@ -152,6 +152,7 @@ mod tests {
 
         assert_eq!(raw.run.max_wall_clock_hours, 12.0);
         assert_eq!(raw.run.max_ticks, 0);
+        assert_eq!(raw.run.max_ticks_per_second, 0);
         assert!(!raw.run.reseed_on_extinction);
     }
 
