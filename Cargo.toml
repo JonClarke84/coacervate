@@ -1,0 +1,49 @@
+[workspace]
+resolver = "3"
+members = ["crates/coacervate-sim", "crates/coacervate-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+coacervate-sim = { path = "crates/coacervate-sim" }
+# `chacha` + `std` with default features OFF gives ChaCha8Rng from `rand` itself, so
+# rand_chacha is not needed and the sim's direct dependencies stay at exactly rand +
+# serde, as CLAUDE.md requires. It also compiles out rand::rng(), random(), ThreadRng,
+# StdRng and SysRng, which turns SPEC section 2's "No thread_rng, ever" into a compile
+# error rather than a rule somebody has to remember.
+rand = { version = "0.10.2", default-features = false, features = ["chacha", "std"] }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.4"
+proptest = "1.11.0"
+
+[workspace.lints.rust]
+# Belt and braces with the #![forbid(unsafe_code)] in each crate root. This form is a
+# real forbid (cargo passes -F unsafe_code) and it additionally covers tests/*.rs, which
+# the crate-root attribute does NOT reach, since each integration test is its own crate.
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# The direct implementation of CLAUDE.md's "no lossy `as` casts on values that matter".
+cast_possible_truncation = "deny"
+cast_precision_loss = "deny"
+cast_sign_loss = "deny"
+cast_possible_wrap = "deny"
+cast_lossless = "deny"
+# `==` on a floating-point value. Costs a few annotated exceptions in the value-pinning
+# tests; becomes genuinely valuable in phase 2, where `==` on an energy value is a real
+# bug in the load-bearing ledger.
+float_cmp = "deny"
+# Enforces the type bans in clippy.toml. The lint lives in clippy's `restriction` group,
+# so it does nothing unless explicitly denied here. See clippy.toml for what and why.
+disallowed_types = "deny"
+
+# MUST stay at the workspace root. In a member manifest cargo ignores [profile.*] with
+# only a warning, the build stays green, and release binaries wrap integers silently for
+# the life of the project -- a setting that fails OPEN.
+#
+# Deliberately NOT paired with debug-assertions: SPEC section 5 needs the debug/release
+# distinction to check the energy ledger every tick vs every 1,000 ticks.
+[profile.release]
+overflow-checks = true

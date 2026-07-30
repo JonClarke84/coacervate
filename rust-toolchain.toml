@@ -1,0 +1,13 @@
+# Guarantees the check suite's tools are present, so `cargo fmt --check` can never fail
+# for the boring reason.
+#
+# Deliberately NOT pinned to an exact version. A version pin would make rustup download a
+# second complete toolchain for no benefit on a one-machine project, and it makes
+# `rustup update` silently ineffective inside this directory. Revisit only if a toolchain
+# update is ever OBSERVED to change simulation output.
+#
+# WARNING: unknown keys in this file are silently ignored. `component` instead of
+# `components` looks fine and does nothing.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

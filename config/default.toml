@@ -1,0 +1,51 @@
+# The `default` profile: SPEC section 3's configuration document.
+#
+# Every value here is read at startup and copied verbatim into the replay log, so a
+# recording of a run always carries the settings that produced it. The comments are part
+# of the document: they are where the units and the meanings of these numbers are written
+# down.
+
+[world]
+seed = 42
+width = 2048.0
+height = 1152.0
+grid_cols = 256          # resource field resolution
+grid_rows = 144
+years_per_tick = 1000.0
+
+[light]
+influx = 0.012           # energy per grid tile per tick
+cap = 8.0                # max energy a tile can hold
+gradient = 0.75          # 0 = uniform, 1 = fully top-weighted
+patchiness = 0.15        # spatial noise amplitude
+diffusion = 0.04         # lateral spread per tick
+
+[physics]
+drag = 0.92              # velocity retained per tick (high — viscous regime)
+collision_stiffness = 40.0
+spring_damping = 0.35
+
+[metabolism]
+upkeep_scale = 1.0       # global multiplier on all cell upkeep ("temperature")
+movement_cost = 0.15     # energy per unit of work done by contraction
+reproduction_threshold = 2.2   # × body construction cost
+offspring_share = 0.45   # fraction of parent energy passed to offspring
+
+[mutation]
+point_rate = 0.06        # per gene, per reproduction
+point_sigma = 0.12       # gaussian magnitude on numeric fields
+duplication_rate = 0.02  # per genome
+deletion_rate = 0.02
+insertion_rate = 0.01
+genome_duplication_rate = 0.0008
+
+[limits]
+max_organisms = 4000
+max_cells_per_organism = 64
+max_genes = 128
+max_dev_steps = 16
+
+[run]
+max_wall_clock_hours = 12.0
+max_ticks = 0            # 0 = unbounded
+reseed_on_extinction = false

@@ -1,0 +1,16 @@
+[package]
+name = "coacervate-sim"
+version.workspace = true
+edition.workspace = true
+
+# CLAUDE.md: "Pure simulation. No I/O, no rendering, no dependencies beyond std + rand +
+# serde." Verify with: cargo tree -p coacervate-sim -e normal
+[dependencies]
+rand = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,20 @@
+# SPEC.md section 2 lists four things that must never appear in simulation logic.
+# Two of them are already compile errors by construction:
+#
+#   unsafe      -> #![forbid(unsafe_code)] plus the workspace lint table
+#   thread_rng  -> compiled out by rand's default-features = false
+#
+# The other two are only rules until something enforces them. These are that something.
+# CLAUDE.md: "Jonathan cannot review Rust, so the compiler has to be the reviewer."
+#
+# Note for later phases: coacervate-app WILL legitimately need Instant for the
+# max_wall_clock_hours bound. When that happens, put #![allow(clippy::disallowed_types)]
+# at the crate root of coacervate-app -- do NOT give the app its own [lints] table in
+# Cargo.toml, because a package-level table REPLACES the workspace one and would
+# silently drop the five cast lints.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "SPEC section 2: no HashMap iteration may affect simulation state. Use BTreeMap or index into dense arrays." },
+    { path = "std::collections::HashSet", reason = "SPEC section 2: iteration order is unspecified. Use BTreeSet or dense arrays." },
+    { path = "std::time::Instant", reason = "SPEC section 2: no wall-clock time in simulation logic." },
+    { path = "std::time::SystemTime", reason = "SPEC section 2: no wall-clock time in simulation logic." },
+]
