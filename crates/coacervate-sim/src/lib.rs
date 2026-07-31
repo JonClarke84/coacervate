@@ -24,6 +24,9 @@
 //!   have instead of only ever becoming a better single cell.
 //! - [`development`] — running that program: a genome in, and a body of cells and the
 //!   springs between them out. The same genome grows the same body every time.
+//! - [`mutation`] — copying a genome imperfectly, which is the only way anything new ever
+//!   enters the world. Duplicating a rule and changing the state it answers to is what lets
+//!   a lineage gain a body part rather than only a better version of the one it had.
 //! - [`world`] — all of the above owned in one place, and the tick that moves it: the light
 //!   falling, the energy spreading, the tiles shedding what they cannot hold, and the cells
 //!   being pushed about — with the books checked as it goes.
@@ -36,6 +39,7 @@ pub mod development;
 pub mod genome;
 pub mod grid;
 pub mod ledger;
+pub mod mutation;
 pub mod physics;
 pub mod rng;
 pub mod world;

@@ -348,7 +348,11 @@ impl Gene {
 /// Development runs steps `0..max_dev_steps`, so the last one is one less than the budget.
 /// The conversion cannot fail: `config.rs` refuses a budget above 255 precisely because a
 /// gene's step numbers are bytes and a step beyond that could not be named by any gene.
-fn last_step(limits: &LimitsConfig) -> u8 {
+///
+/// Shared with `mutation.rs`, which re-draws a gene's step window and has to draw it from the
+/// same place [`Gene::random`] does. A point mutation that could name a step outside the run's
+/// budget would be an operator that switches genes off by arithmetic.
+pub(crate) fn last_step(limits: &LimitsConfig) -> u8 {
     let budget = u8::try_from(limits.max_dev_steps.get())
         .expect("config.rs caps the development budget at 255, which is one byte");
 
