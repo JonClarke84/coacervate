@@ -135,8 +135,41 @@ Per tick, for each tile:
 ```
 target      = cap × light_profile(y) × (1 + patchiness × noise(x, y))
 regrowth    = influx × light_profile(y)
-tile       += min(regrowth, target - tile)      // never exceeds target
+tile        = max(tile, min(tile + regrowth, target))   // light only ever adds
 ```
+
+then, after diffusion has run:
+
+```
+if tile > target:
+    overflow  = tile - target
+    tile      = target
+    dissipated += overflow                       // field → dissipated
+```
+
+**Both halves of that are corrections to an earlier draft, and both matter.**
+
+The original was `tile += min(regrowth, target - tile)`, with a comment reading "never
+exceeds target". Written literally that is a *subtraction* whenever `tile > target` — light
+running backwards, dragging the tile down and destroying the difference with no account to
+put it in. That state is not hypothetical: ceilings fall with depth, so diffusion
+permanently pushes energy into dimmer rows, and from Phase 4 detritus will decay into
+already-full tiles.
+
+But clamping light to a source and stopping there is not enough either, and the reason is
+the whole point of the gradient. Light refills the top, diffusion carries energy downward,
+and deep tiles then sit *above* their targets with nothing to bring them back. The field
+fills until it is **level** — every tile at the deepest ceiling in the world, no depth
+structure left at all. A run reaches that state; it is slow, but overnight runs are tens of
+millions of ticks. A level field is one where swimming upward pays nothing, and section 4's
+own claim that "the gradient is what gives movement a reason to exist" quietly stops being
+true.
+
+So a tile genuinely cannot hold more than its target, and energy that arrives somewhere it
+cannot be held is **dissipated** rather than deleted. This is also the ecologically
+familiar answer: energy sinking below the light is energy the system loses, which is what
+the biological pump does in a real ocean. Total influx still bounds total living biomass,
+so the carrying-capacity argument is untouched.
 
 where
 
@@ -150,6 +183,22 @@ discover, and swimming has no payoff.
 
 Lateral diffusion runs after regrowth: a simple 5-point stencil at rate `diffusion`. This
 smooths harvest shadows and prevents organisms from permanently strip-mining a single tile.
+
+**`diffusion` must not exceed 0.25, and the ledger will not catch it if it does.** An
+explicit five-point stencil overshoots above a quarter — a tile sent past its neighbours'
+value, then dragged back further the next tick — and the overshoot compounds until the
+numbers stop being finite. Energy stays perfectly conserved the whole way down, because
+overshoot moves energy rather than inventing it, so the invariant reports a healthy world
+right up until the field is nonsense. The config bound is therefore `0..=0.25`, not
+`0..=1`, and it is a stability limit rather than a taste one.
+
+The stencil must also be written as a list of **neighbour pairs**, one flow per pair applied
+to both ends together, rather than as a per-tile gather over four neighbours. The gather
+form has to special-case the world's edges, and the natural way to write that — treat a
+missing neighbour as a tile holding nothing — silently drains the whole world out through
+the surface and the floor. Measured on an evenly-filled test world: 70% of its energy gone
+in 100 ticks. With pairs there is no route out of the world to write down, so there is none
+to write down wrongly.
 
 **Carrying capacity.** Total influx per tick is fixed, so total living biomass is bounded by
 it. This is the pressure that drives everything else in the simulation and is the reason
@@ -169,7 +218,7 @@ Five accounts:
 | `field` | Energy in resource grid tiles |
 | `biomass` | Energy stored in living organisms |
 | `detritus` | Energy in dead biomass, not yet returned to the field |
-| `dissipated` | Energy spent on metabolism and movement — permanently gone |
+| `dissipated` | Energy permanently gone: spent on metabolism and movement, or drained out of a field tile that could not hold it (section 4) |
 | `influx_total` | Cumulative energy added by light since `t = 0` |
 
 A sixth value, `initial_total`, is captured once at construction — the energy the world was
@@ -237,6 +286,7 @@ Flow:
 - Photocytes move `field → biomass`.
 - Devorocytes move `detritus → biomass`, or `biomass → biomass` when predating.
 - Metabolism and movement move `biomass → dissipated`.
+- A field tile holding more than its target moves the excess `field → dissipated` (section 4).
 - Death moves `biomass → detritus`.
 - Detritus decays at a fixed rate into the field tile beneath it, moving `detritus → field`,
   while sinking slowly (this is the marine snow, which is both atmospheric and functional).

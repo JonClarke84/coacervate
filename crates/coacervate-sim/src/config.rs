@@ -231,6 +231,17 @@ pub enum ConfigError {
     /// not one.
     NotAFraction { field: &'static str, value: f32 },
 
+    /// A setting whose upper end is set by whether the arithmetic stays stable rather than
+    /// by what the setting means, given a value past it.
+    ///
+    /// The only one of these is `light.diffusion`, and it is the only bound in the file
+    /// that nothing else would catch. See [`DIFFUSION_STABILITY_LIMIT`].
+    Unstable {
+        field: &'static str,
+        value: f32,
+        limit: f32,
+    },
+
     /// A setting that may be nothing but cannot be less than nothing, given a value below
     /// zero.
     Negative { field: &'static str, value: f32 },
@@ -268,6 +279,25 @@ impl std::fmt::Display for ConfigError {
             Self::NotAFraction { field, value } => {
                 write!(out, "{field}: {value} is outside 0..=1")
             }
+            // Much the longest sentence here, and the only one that says *why*. Every other
+            // bound in this file follows from what its setting means, so naming the range
+            // says everything there is to say. This one does not: half is an entirely
+            // ordinary fraction, it is what this program used to accept, and the reason it
+            // is refused cannot be guessed from the word "diffusion". A refusal with no
+            // reason attached reads as an arbitrary house rule, and the obvious response to
+            // an arbitrary house rule is to go and delete it.
+            Self::Unstable {
+                field,
+                value,
+                limit,
+            } => write!(
+                out,
+                "{field}: {value} is outside 0..={limit}. The upper end is a limit of the \
+                 arithmetic rather than a preference: past it energy spreads faster than \
+                 it settles, the field oscillates and grows without limit, and because \
+                 that still conserves energy exactly nothing else in the program will \
+                 catch it"
+            ),
             // A sentence of its own, rather than a use of the one above with a lower end
             // of zero and no upper end. Written that way it would read
             // "light.influx: -0.1 is outside 0..=340282350000000000000000000000000000000",
@@ -381,6 +411,28 @@ const MAX_GENES_CEILING: u32 = 128;
 /// a development step beyond 255 could not be named by any gene in the genome.
 const MAX_DEV_STEPS_CEILING: u32 = 255;
 
+/// The fastest energy may be told to spread between neighbouring tiles, and the only bound
+/// in this file that comes from arithmetic rather than from meaning.
+///
+/// SPEC section 3 calls `diffusion` a "lateral spread per tick", which reads like every
+/// other fraction here and would suggest a bound of one. SPEC section 4 explains why that
+/// is wrong. The resource field spreads energy with an explicit five-point stencil, in
+/// which a tile gives away this share of its difference to each of four neighbours; past a
+/// quarter it gives away more than the difference, so it is sent beyond the neighbours it
+/// was levelling with and has to be dragged back further next tick. The overshoot compounds
+/// until the numbers stop being finite.
+///
+/// **Nothing further down would notice.** Overshoot moves energy rather than inventing it,
+/// so every pair of tiles still trades one number both ways and the energy ledger of SPEC
+/// section 5 goes on reporting a perfectly balanced world while the field turns into
+/// nonsense. That is what makes this a gate rather than a warning: it is the only thing
+/// standing between a plausible-looking number in a configuration file and a run whose
+/// output means nothing.
+///
+/// A quarter itself is allowed. A limit that cannot be reached is a limit one step lower
+/// with nobody able to tell which.
+const DIFFUSION_STABILITY_LIMIT: f32 = 0.25;
+
 // ---------------------------------------------------------------------------------------
 // The three kinds of bound
 //
@@ -402,6 +454,29 @@ fn fraction(field: &'static str, value: f64) -> Result<f32, ConfigError> {
         Err(ConfigError::NotAFraction {
             field,
             value: narrowed,
+        })
+    }
+}
+
+/// A fraction whose upper end is lower than one because the arithmetic stops working
+/// there: `0..=limit`, ends included.
+///
+/// Deliberately a separate gate from [`fraction`] rather than that function with a
+/// parameter. The two look identical and are not the same kind of claim at all. A fraction
+/// is bounded because of what the setting *means*, and widening one is a conversation about
+/// meaning; this is bounded because of what the arithmetic *does*, and widening it is a
+/// conversation about whether the simulation still computes anything. Sharing one function
+/// between them would put both conversations behind the same name.
+fn stable(field: &'static str, value: f64, limit: f32) -> Result<f32, ConfigError> {
+    let narrowed = narrow(field, value)?;
+
+    if (0.0..=limit).contains(&narrowed) {
+        Ok(narrowed)
+    } else {
+        Err(ConfigError::Unstable {
+            field,
+            value: narrowed,
+            limit,
         })
     }
 }
@@ -619,8 +694,17 @@ impl RawConfig {
                 // ledger of section 5 stops balancing. Nothing in section 3 says so; it
                 // follows from the formula.
                 patchiness: fraction("light.patchiness", self.light.patchiness)?,
-                // "lateral spread per tick".
-                diffusion: fraction("light.diffusion", self.light.diffusion)?,
+                // "lateral spread per tick", and the one setting here bounded by whether
+                // the arithmetic survives rather than by what the setting means. SPEC
+                // section 4: past a quarter the five-point stencil overshoots and the
+                // field grows without limit, while conserving energy perfectly the whole
+                // way down, so the ledger never catches it. See
+                // `DIFFUSION_STABILITY_LIMIT`.
+                diffusion: stable(
+                    "light.diffusion",
+                    self.light.diffusion,
+                    DIFFUSION_STABILITY_LIMIT,
+                )?,
             },
             physics: PhysicsConfig {
                 // "velocity retained per tick" - a proportion of what was there before.
@@ -947,7 +1031,10 @@ mod tests {
     fn out_of_range_values_are_rejected_and_the_field_is_named() {
         // Each entry: the setting's path, and a value that its meaning excludes. A
         // fraction gets 1.5, a quantity that must exist gets 0.0, and a quantity that may
-        // be nothing but not less gets -0.1.
+        // be nothing but not less gets -0.1. `diffusion` is the one exception and gets 0.5,
+        // because 0.5 *is* a fraction: what excludes it is the stability of the arithmetic
+        // rather than the meaning of the setting, and it is the value somebody would
+        // actually write.
         let corruptions: [(&str, Corruption); 22] = [
             ("world.width", |raw| raw.world.width = 0.0),
             ("world.height", |raw| raw.world.height = 0.0),
@@ -956,7 +1043,7 @@ mod tests {
             ("light.cap", |raw| raw.light.cap = 0.0),
             ("light.gradient", |raw| raw.light.gradient = 1.5),
             ("light.patchiness", |raw| raw.light.patchiness = 1.5),
-            ("light.diffusion", |raw| raw.light.diffusion = 1.5),
+            ("light.diffusion", |raw| raw.light.diffusion = 0.5),
             ("physics.drag", |raw| raw.physics.drag = 1.5),
             ("physics.collision_stiffness", |raw| {
                 raw.physics.collision_stiffness = 0.0;
@@ -1158,6 +1245,82 @@ mod tests {
             .expect("the resource grid is not capped at this stage");
     }
 
+    /// Energy may not be told to spread faster than a quarter of the difference per tick,
+    /// and the reason is arithmetic rather than taste.
+    ///
+    /// This is the only setting in the whole configuration whose upper end is set by
+    /// *stability* rather than by what the setting means. SPEC section 3 describes
+    /// `diffusion` as a lateral spread per tick, which reads like any other fraction and
+    /// would suggest a bound of one; SPEC section 4 explains why that is wrong. A tile
+    /// giving away a share of its difference to each of four neighbours overshoots once
+    /// that share passes a quarter — it is sent past its neighbours' value, then dragged
+    /// back further the next tick — and the overshoot compounds until the numbers stop
+    /// being finite.
+    ///
+    /// **Nothing downstream would catch it.** Overshoot moves energy rather than inventing
+    /// it, so every pair of tiles still trades one number both ways and the energy ledger
+    /// of SPEC section 5 reports a perfectly healthy world right up until the field is
+    /// nonsense. There is no second line of defence here, which is what makes this bound
+    /// the whole of it.
+    ///
+    /// The boundary is checked in both directions. A quarter exactly is allowed, because a
+    /// limit you cannot actually use is a limit one step lower that nobody can see. And a
+    /// half is refused, which is the case that matters: it is a perfectly ordinary fraction
+    /// that this program used to accept, so somebody's saved configuration may well contain
+    /// it.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "a rate at the limit must arrive as exactly the rate that was written; \
+                  near enough would let a value be quietly adjusted on its way through"
+    )]
+    fn a_diffusion_rate_past_the_stability_limit_is_refused() {
+        let base = spec_defaults();
+
+        let mut at_the_limit = base.clone();
+        at_the_limit.light.diffusion = 0.25;
+        assert_eq!(
+            at_the_limit
+                .validate()
+                .expect("a quarter is the limit itself and has to be usable")
+                .light
+                .diffusion,
+            0.25,
+            "the largest stable rate did not survive being checked"
+        );
+
+        for rate in [0.26, 0.5, 1.0] {
+            let mut too_fast = base.clone();
+            too_fast.light.diffusion = rate;
+
+            let complaint = too_fast
+                .validate()
+                .expect_err("a rate past the stability limit must stop the run")
+                .to_string();
+
+            assert!(
+                complaint.starts_with("light.diffusion: "),
+                "a diffusion rate of {rate} was refused and the complaint was about \
+                 something else: {complaint}"
+            );
+            assert!(
+                complaint.contains("0..=0.25"),
+                "the complaint about a diffusion rate of {rate} does not say what the \
+                 limit is: {complaint}"
+            );
+            // The whole sentence is pinned by `errors_name_the_field_in_plain_english`.
+            // What is checked here is that it does not stop at the range: a bare "outside
+            // 0..=0.25" tells somebody who wrote 0.5 that they are wrong and nothing about
+            // why, and this is the one bound in the file where the why is not guessable
+            // from what the setting means.
+            assert!(
+                complaint.contains("rather than a preference"),
+                "the complaint about a diffusion rate of {rate} does not explain that this \
+                 is a limit of the arithmetic: {complaint}"
+            );
+        }
+    }
+
     /// `max_ticks = 0` means "no limit", and that convention stops here.
     ///
     /// SPEC section 3 writes the setting with a comment saying `0 = unbounded`, which is
@@ -1200,7 +1363,7 @@ mod tests {
         );
     }
 
-    /// The six sentences a person is ever shown, written out in full.
+    /// The seven sentences a person is ever shown, written out in full.
     ///
     /// This is the only test in the module whose subject is the English rather than the
     /// arithmetic, and it is not decoration. The error message is the entire interface
@@ -1211,8 +1374,8 @@ mod tests {
     /// refactors from now, because a message nobody asserts on is a message nobody
     /// notices changing.
     ///
-    /// Two of them are worth explaining, because both look like unnecessary special
-    /// cases and neither is.
+    /// Three of them are worth explaining, because all three look like unnecessary special
+    /// cases and none of them is.
     ///
     /// **Negative gets its own sentence** rather than reusing the range one. A setting
     /// like `influx` has a floor of zero and no ceiling at all, so phrased as a range it
@@ -1224,12 +1387,28 @@ mod tests {
     /// own. Left to itself it would print `1e-40` as a nought, a decimal point and thirty-
     /// nine more noughts: forty characters of zero in the one sentence whose entire job is
     /// to explain that the number's *size* is the problem.
+    ///
+    /// **The diffusion message is three times the length of any other**, and it is the one
+    /// place that is worth it. Every other bound here follows from what its setting means,
+    /// so being told that a gradient is outside `0..=1` is being told everything there is
+    /// to know. A diffusion rate of a half is a perfectly ordinary fraction, is what this
+    /// program used to accept, and is refused for a reason nobody could infer from the
+    /// word "diffusion" — so the sentence has to carry the reason with it or the refusal
+    /// reads as an arbitrary house rule.
     #[test]
     fn errors_name_the_field_in_plain_english() {
-        let sentences: [(&str, Corruption); 6] = [
+        let sentences: [(&str, Corruption); 7] = [
             ("light.gradient: 1.5 is outside 0..=1", |raw| {
                 raw.light.gradient = 1.5;
             }),
+            (
+                "light.diffusion: 0.5 is outside 0..=0.25. The upper end is a limit of the \
+                 arithmetic rather than a preference: past it energy spreads faster than \
+                 it settles, the field oscillates and grows without limit, and because \
+                 that still conserves energy exactly nothing else in the program will \
+                 catch it",
+                |raw| raw.light.diffusion = 0.5,
+            ),
             ("light.influx: -0.1 must not be negative", |raw| {
                 raw.light.influx = -0.1;
             }),

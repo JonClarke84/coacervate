@@ -26,6 +26,25 @@
 //! stops an organism from digging a permanent hole under itself and sitting in it, and it
 //! is the only part of this module where the arithmetic is not exact - see below.
 //!
+//! # A tile cannot hold more than its ceiling, and the excess is a real loss
+//!
+//! Diffusion knows nothing about ceilings, so it will happily leave a tile holding several
+//! times what it can. SPEC section 4 requires that a tile genuinely cannot, so the ceiling
+//! is enforced once at the end of every tick and what will not fit **leaves the world**,
+//! moving `field → dissipated` through [`Ledger::overflow`].
+//!
+//! That is a decision rather than a detail, and it is the reason the field has a shape at
+//! all. Ceilings fall with depth, so energy is permanently being carried downwards into
+//! tiles with less and less room for it; let it accumulate and the field fills from the
+//! bottom upwards until it is **level**, every tile in the world at the deepest ceiling in
+//! it. `the_field_reaches_a_ceiling` recorded exactly that before the rule existed. A level
+//! field is one in which being near the surface is worth nothing, and the whole case for
+//! having a depth gradient is that it is worth something.
+//!
+//! Losing it is also the ecologically familiar answer: energy that sinks below the light is
+//! energy the ocean loses, which is what the biological pump does. Total influx per tick is
+//! unchanged, so SPEC section 4's carrying-capacity argument is untouched.
+//!
 //! # The field is measured, never stored
 //!
 //! [`Grid::total_energy`] adds the tiles up on demand, and that sum is SPEC section 5's
@@ -34,11 +53,12 @@
 //! exactly the bookkeeping that goes wrong; see `ledger.rs`, which is built around not
 //! doing it.
 //!
-//! What this module *does* owe the ledger is a truthful account of what the light did, and
-//! [`Grid::tick`] takes the ledger by reference rather than handing that number back so
-//! that it cannot be forgotten. The number is the energy the tiles actually gained, not the
-//! energy the formula asked for, and the difference between those two is the phase's
-//! central failure mode - `regrowth_credits_influx_with_the_realised_change`.
+//! What this module *does* owe the ledger is a truthful account of the two things that
+//! change how much energy the world contains: what the light put in, and what the tiles
+//! could not hold. [`Grid::tick`] takes the ledger by reference rather than handing those
+//! numbers back, so that neither can be forgotten. Both are what actually happened to the
+//! tiles rather than what the formulae asked for, and the difference between those two is
+//! the phase's central failure mode - `regrowth_credits_influx_with_the_realised_change`.
 //!
 //! # Everything is allocated once
 //!
@@ -56,9 +76,9 @@
 //! not always representable in seven digits, so it has to be deliberate about where the
 //! rounding goes.
 //!
-//! Regrowth is exact: what a tile gained is measured after the fact by widening both
-//! readings and subtracting, so the influx account agrees with the grid rather than nearly
-//! agreeing.
+//! Regrowth is exact, and so is the ceiling: what a tile gained or gave up is measured
+//! after the fact by widening both readings and subtracting, so the influx and dissipated
+//! accounts agree with the grid rather than nearly agreeing.
 //!
 //! Diffusion cannot be exact, because moving energy between tiles means writing it into a
 //! tile. What it can be, and is, is *conservative*: energy is only ever moved between pairs
@@ -67,8 +87,10 @@
 //! quantity permanently in transit - at most half a rounding step per tile, about two
 //! hundredths of a unit for the default world - which does not grow however long a run
 //! goes on. Measured over the default world with nothing alive in it, 100,000 ticks leave
-//! the books out by three parts in ten billion, and never by worse than about one part in
-//! a billion along the way, against a tolerance of one part in a thousand.
+//! the books out by under two parts in ten billion, and never by worse than eight parts in
+//! a billion along the way, against a tolerance of one part in a thousand. Enforcing the
+//! ceiling did not cost any of that: the same run without it came out at three parts in ten
+//! billion, with an identical worst moment.
 //!
 //! # What is not here
 //!
@@ -396,9 +418,15 @@ impl Grid {
     /// Diffusion tells the ledger nothing, and that is correct rather than an omission: it
     /// moves energy between tiles, and both of those tiles are the field. What it costs the
     /// world is the rounding, which is the drift SPEC section 5's tolerance is for.
+    ///
+    /// What diffusion *does* need is somebody to clear up after it, which is the third
+    /// line. It has no idea what a tile's ceiling is and will happily leave a tile holding
+    /// several times what it can, so the ceiling is enforced once, after the energy has
+    /// finished moving, rather than being defended by every operation that touches a tile.
     pub fn tick(&mut self, ledger: &mut Ledger) {
         ledger.light(self.regrow());
         self.diffuse();
+        ledger.overflow(self.spill());
     }
 
     /// Let the light fall for one tick, and report what it actually put into the world.
@@ -495,15 +523,20 @@ impl Grid {
     ///
     /// # This is stable up to a rate of a quarter, and no further
     ///
-    /// `config.rs` bounds `diffusion` at one, because SPEC section 3 describes it as a
-    /// fraction and says nothing more. The arithmetic is less generous. A tile that gives
-    /// away a share of its difference to each of four neighbours overshoots once that share
-    /// passes a quarter, and above a quarter the overshoot grows every tick: neighbouring
+    /// A tile that gives away a share of its difference to each of four neighbours
+    /// overshoots once that share passes a quarter: it hands over more than the difference,
+    /// so it is sent past the neighbours it was levelling with and has to be dragged back
+    /// further next tick. Above a quarter that overshoot grows every tick, and neighbouring
     /// tiles swap ever larger positive and negative amounts until the numbers stop being
-    /// finite. Energy is still conserved the whole way down - every pair still moves one
-    /// number both ways - but the field becomes nonsense long before that stops being true.
-    /// SPEC's default is `0.04`, comfortably inside. See the open questions in
-    /// `docs/PHASE2.md`.
+    /// finite.
+    ///
+    /// Energy is conserved perfectly the whole way down, because every pair still moves one
+    /// number both ways - so the ledger reports a healthy world right up until the field is
+    /// nonsense, and there is no second line of defence anywhere below this one. That is
+    /// why `config.rs` refuses a `diffusion` above `0.25` outright rather than warning
+    /// about it, and why the bound there is a stability limit rather than a reading of what
+    /// SPEC section 3 calls a "lateral spread per tick". SPEC's default is `0.04`,
+    /// comfortably inside.
     fn diffuse(&mut self) {
         let rate = self.diffusion;
 
@@ -535,6 +568,64 @@ impl Grid {
             *tile = before + *moved;
             *moved -= *tile - before;
         }
+    }
+
+    /// Cut every tile back to its ceiling, and report how much energy that took out of the
+    /// world.
+    ///
+    /// SPEC section 4's second half: a tile genuinely cannot hold more than its target, and
+    /// what will not fit is **dissipated** rather than deleted. The caller hands the number
+    /// straight to [`Ledger::overflow`], so the excess leaves the field and arrives in an
+    /// account, and the invariant can see the whole journey.
+    ///
+    /// # Why this has to exist at all, given that the light already stops at the ceiling
+    ///
+    /// Because the light is not the only thing that puts energy into a tile. Diffusion
+    /// moves it from wherever there is more to wherever there is less and knows nothing
+    /// about ceilings; ceilings fall with depth; so energy is permanently being carried
+    /// downwards into tiles with less and less room for it. From Phase 4 detritus rots into
+    /// whatever tile is beneath it, full or not.
+    ///
+    /// Left to accumulate, that has one destination, and it is not obviously wrong until
+    /// you look: the field fills from the bottom upwards until it is **level**, every tile
+    /// in the world holding the largest ceiling in it. `the_field_reaches_a_ceiling`
+    /// recorded exactly that before this existed. A level field is one where being near the
+    /// surface is worth nothing, and SPEC section 4 rests the case for having a depth
+    /// gradient at all on its being worth something.
+    ///
+    /// # Where the energy goes, and why that is the honest answer
+    ///
+    /// Away. Not back up the water column, and not into an adjustment of the ceiling: the
+    /// world simply no longer has it. That is the ecologically familiar case rather than a
+    /// convenience - energy carried below the depth the light can support is energy the
+    /// ocean loses, which is what the biological pump does. Total influx still bounds total
+    /// living biomass, so SPEC section 4's carrying-capacity argument is untouched.
+    ///
+    /// # The arithmetic
+    ///
+    /// A cut-back tile is set to its ceiling exactly, and what it gave up is measured by
+    /// widening both readings and subtracting - the same order as [`Grid::regrow`], and for
+    /// the same reason. The difference between two 32-bit numbers is not always a 32-bit
+    /// number, so subtracting first and widening afterwards would round the one quantity
+    /// that has to be exact if the ledger is to agree with the grid rather than nearly
+    /// agree.
+    ///
+    /// A tile at or below its ceiling is not touched at all. Writing `tile.min(ceiling)`
+    /// unconditionally would give the same tiles and read more neatly; it is avoided
+    /// because it makes every tile in the world a write on every tick, and because the
+    /// version of that mistake which pulls a tile *towards* its ceiling instead of capping
+    /// it would drain a world that is merely filling up.
+    fn spill(&mut self) -> f64 {
+        let mut shed = 0.0;
+
+        for (tile, ceiling) in self.tiles.iter_mut().zip(&self.targets) {
+            if *tile > *ceiling {
+                shed += f64::from(*tile) - f64::from(*ceiling);
+                *tile = *ceiling;
+            }
+        }
+
+        shed
     }
 
     /// Move a share of the difference between two neighbouring tiles from the fuller to the
@@ -1400,8 +1491,8 @@ mod tests {
 
     /// The light adds energy to the world. It never takes any away.
     ///
-    /// ⚠️ **This test disagrees with SPEC section 4, deliberately.** Section 4 writes the
-    /// regrowth rule as
+    /// SPEC section 4 now says so outright, and the sentence it says it in is a correction
+    /// to an earlier draft that this test is what caught. That draft wrote the rule as
     ///
     /// ```text
     /// tile += min(regrowth, target - tile)      // never exceeds target
@@ -1427,12 +1518,13 @@ mod tests {
     /// tick, which is not a foundation to build an ecology on.
     ///
     /// So the light here is a source and only a source, and a tile above its ceiling is
-    /// simply left alone: no more light falls on it until whatever pushed it up there has
-    /// drained away. The alternative worth considering is a genuine hard ceiling, with the
-    /// excess moved to `dissipated` as light a saturated tile could not absorb - which
-    /// conserves energy properly and keeps SPEC's ceiling exactly, at the cost of a
-    /// `field → dissipated` transfer the ledger does not currently have. That would be a
-    /// change to SPEC section 4 and to `ledger.rs`, so it is raised rather than taken.
+    /// left where it is. Which raises the obvious question of what *does* bring it back
+    /// down, since a tile above its ceiling is not a state the world should be allowed to
+    /// stay in - and the answer is [`Grid::spill`], running after diffusion, where the
+    /// excess is moved to `dissipated` rather than removed. Both halves are needed and
+    /// neither is sufficient: without the clamp here the light destroys energy on its way
+    /// past; without the spill the ceilings do not hold and the field goes level. The two
+    /// are tested apart because they fail apart.
     #[test]
     #[expect(
         clippy::float_cmp,
@@ -1490,73 +1582,186 @@ mod tests {
         );
     }
 
-    /// The world fills up and stops.
+    /// A tile cannot hold more than its ceiling, whatever arrives in it.
     ///
-    /// This is SPEC section 4's carrying capacity, and CLAUDE.md's decision log calls it
-    /// "the pressure that drives everything else in the simulation". Total influx per tick
-    /// is fixed, so there is a bound on how much energy the world can hold, and therefore a
-    /// bound on how much life it can support. Everything later in this project - scarcity,
-    /// competition, whether it is ever worth eating your neighbour - is downstream of the
-    /// field having a ceiling rather than growing for ever.
+    /// The light is a source and only a source, so it can never push a tile past its
+    /// ceiling - that is `light_never_runs_backwards`. Diffusion has no such manners. It
+    /// moves energy from wherever there is more to wherever there is less, and it knows
+    /// nothing about ceilings, so a tile beside a full one is handed energy it has no room
+    /// for. SPEC section 4's answer, and this is it, is that the tile is cut back to its
+    /// ceiling and the excess **leaves the world**.
     ///
-    /// So the world is left to run with nothing alive in it until it stops changing, which
-    /// it must do: not slow down, not settle within a tolerance, but reach a state where a
-    /// tick moves not one tile by one bit. Then it is run on for a long time afterwards to
-    /// confirm it stays there.
+    /// A great deal of energy is dropped into one tile, and one tick is run. What matters is
+    /// the tile *below* it: nobody touched that one by hand, and diffusion has just handed
+    /// it several times what it can hold. Afterwards it is sitting at exactly its ceiling.
     ///
-    /// # Where the ceiling actually is, and why it is not the sum of the ceilings
+    /// Then the same claim about the whole world at once - not one tile anywhere is above
+    /// its ceiling - and the two claims that make this a *transfer* rather than a clamp. The
+    /// books still balance, which they could not if the excess had simply been deleted; and
+    /// what the world lost is what `dissipated` gained, to within the small quantity
+    /// diffusion always leaves in transit.
     ///
-    /// The obvious guess is that the world settles with every tile at its own ceiling. It
-    /// does not, and the reason is diffusion. A tile's ceiling falls with depth, so a full
-    /// tile always has a slightly emptier one below it, and energy keeps trickling
-    /// downwards for as long as that is true. The light refills what leaves the top; the
-    /// floor has nowhere to pass it on to. So the world fills from the bottom upwards until
-    /// it is level, and where it comes to rest is *the largest ceiling in it, in every
-    /// tile* - which is the only arrangement with no gradient left to drive a trickle and
-    /// no tile still below its own ceiling for the light to feed. For the world used here
-    /// that is a little over half as much again as the sum of the individual ceilings, and
-    /// it arrives on tick 89,235.
+    /// The last part is the other half of the rule, and it is the one a careless
+    /// implementation gets wrong: a tile that is *not* over its ceiling must be left
+    /// completely alone. A version that wrote every tile back at `min(tile, ceiling)` would
+    /// pass everything above and would still be correct - but a version that pulled every
+    /// tile *towards* its ceiling would drain a world that was merely filling up, and the
+    /// only place that shows is a tile a long way from the spike.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "a tile that is cut back must land exactly on its ceiling, and a tile that \
+                  is left alone must be exactly untouched; a tolerance on either would let \
+                  a slow drain through"
+    )]
+    fn a_tile_pushed_past_its_ceiling_is_cut_back_to_it() {
+        let mut world = Grid::new(&config(|raw| {
+            raw.world.grid_cols = 9;
+            raw.world.grid_rows = 7;
+        }));
+
+        let spike = at(&world, 4, 3);
+        let below = at(&world, 4, 4);
+        let far_away = at(&world, 0, 0);
+
+        // Four hundred units in one tile of a world whose richest tile can hold about
+        // eight. A fortieth of that reaches each neighbour on the first tick, which is
+        // still more than any tile in the world has room for.
+        world.tiles[spike] = 400.0;
+
+        let mut ledger = Ledger::new(world.total_energy());
+        let opening = world.total_energy();
+
+        world.tick(&mut ledger);
+
+        assert_eq!(
+            world.tiles[below], world.targets[below],
+            "diffusion handed the tile below the spike far more than it can hold and it is \
+             still holding {}, against a ceiling of {}",
+            world.tiles[below], world.targets[below]
+        );
+        for (tile, (held, ceiling)) in world.tiles.iter().zip(&world.targets).enumerate() {
+            assert!(
+                held <= ceiling,
+                "tile {tile} is holding {held} against a ceiling of {ceiling}, so a tile in \
+                 this world can hold more than its target after all"
+            );
+        }
+
+        let held = world.total_energy();
+        ledger.check(held);
+        assert!(
+            ledger.dissipated() > 300.0,
+            "the world went from {opening} to {held} and only {} of that is accounted for \
+             as having left the world",
+            ledger.dissipated()
+        );
+        // The bound is what diffusion leaves in transit - a fraction of a rounding step per
+        // tile, which at this size is nothing like a unit of energy.
+        let lost = opening + ledger.influx_total() - held;
+        assert!(
+            (lost - ledger.dissipated()).abs() < 1e-3,
+            "the world lost {lost} and {} of it was written down as dissipated",
+            ledger.dissipated()
+        );
+
+        // And a tile nowhere near the spike is still holding about the one tick of light
+        // that fell on it. The band is a generous five per cent, because a little of it
+        // trickles into the dimmer row below on the same tick; what it rules out is not
+        // subtle, being a tile hauled up to a ceiling six hundred times where it is.
+        let untouched = f64::from(world.tiles[far_away]);
+        let one_tick = f64::from(world.regrowth[0]);
+        assert!(
+            (untouched - one_tick).abs() < one_tick * 0.05,
+            "a tile a long way from the spike holds {untouched} after a tick of light worth \
+             {one_tick}, so something has moved a tile that was nowhere near its ceiling"
+        );
+    }
+
+    /// The world fills up, stops, and still has a surface and a floor.
     ///
-    /// Two things follow that are worth being explicit about.
+    /// **The headline is the depth gradient, and it is the whole reason SPEC section 4's
+    /// overflow rule exists.** A world at rest must still hold materially more energy near
+    /// the surface than at the floor. If it does not, swimming upwards pays nothing, there
+    /// is no spatial structure for phototaxis to find, and section 4's claim that "the
+    /// gradient is what gives movement a reason to exist" has stopped being true - silently,
+    /// with every test in this file still green.
     ///
-    /// The first is that the standing energy in an *empty* world eventually has no depth to
-    /// it. The light still arrives with a gradient and always will, so what an organism can
-    /// harvest per tick still depends entirely on where it is; but a world with nothing
-    /// eating in it ends up evenly stocked. Whether that is the ecology anybody wants is a
-    /// question for a phase that has organisms in it, and it takes tens of thousands of
-    /// ticks even at this size - longer the deeper the world is - so it is not what the
-    /// first hours of a run look like.
+    /// That is not hypothetical, and it is what this test used to record. With the light
+    /// clamped to a source but no ceiling that actually holds, a tile's ceiling falling with
+    /// depth means energy trickles downwards for ever: the light refills the top, the floor
+    /// has nowhere to pass anything on to, and the world fills from the bottom up until it
+    /// is **level** - every tile in it at the largest ceiling in the world, no depth left at
+    /// all. For the world used here that arrived on tick 89,235 at 288 x 8.492838. A run
+    /// reaches that state; it is slow, but an overnight run is tens of millions of ticks.
     ///
-    /// The second is that the tick count is a statement about the *shape* of the world and
-    /// not about this module's speed. Levelling a world out is a slow business that gets
-    /// slower with the square of its depth: SPEC's default world is sixteen times deeper
-    /// than this one, and would take a couple of hundred times as long to come to rest.
+    /// With the rule in section 4 it comes to rest somewhere quite different, and far
+    /// sooner: **tick 1,724, holding 1,477.45**, with the top row holding **3.26 times** what
+    /// the bottom row holds. The floor sits exactly on its own ceiling and sheds everything
+    /// that reaches it; the rows above sit below theirs, because each is losing more
+    /// downwards than the light hands it. The world is a third of the size it used to settle
+    /// at, and it has a shape.
+    ///
+    /// # What "at rest" means here, and why it is no longer "not one bit"
+    ///
+    /// It used to be possible to demand that a tick move not one tile by one bit, because
+    /// the level world really did freeze: no gradient anywhere means no energy moving
+    /// anywhere, and nothing left for the rounding to do.
+    ///
+    /// A world with a gradient in it never freezes in that sense, and it should not. Light
+    /// is falling on every tile every tick and the same amount is leaving through tiles that
+    /// cannot hold what reaches them, so energy is permanently in motion even though the
+    /// picture is not changing. Diffusion carries the part of a movement too small to write
+    /// into a tile over to the next tick - see [`Grid::diffuse`] - so a resting world goes on
+    /// nudging its tiles by their last bit for ever.
+    ///
+    /// So the bar is: a tick no longer moves any tile by more than **a millionth of what it
+    /// holds**. A 32-bit tile can only distinguish about a ten-millionth of itself, so that
+    /// is a handful of rounding steps - as still as a tile of this size can be. It is not a
+    /// slack tolerance quietly hiding a world that is still filling: the tick before it is
+    /// met, some tile is still moving seven times further than that, and the world stays
+    /// under the bar for every one of the next twenty thousand ticks.
+    ///
+    /// # A world at rest is not a world where nothing is happening
+    ///
+    /// That is what the last group of claims is for. Over twenty thousand further ticks the
+    /// field's total barely moves, while `influx_total` and `dissipated` each climb by
+    /// twenty thousand ticks' worth of light. Practically every unit that arrives leaves
+    /// again the same tick, from the tiles at the bottom of the world that have no room for
+    /// it. This is the state the ecology will actually be run in.
+    ///
+    /// The tick count is a statement about the *shape* of the world rather than this
+    /// module's speed. Filling a world is slower the deeper it is, so SPEC's default world,
+    /// sixteen times deeper than this one, takes considerably longer to come to rest.
     #[test]
     fn the_field_reaches_a_ceiling() {
         // Small enough to run to a complete standstill inside a test suite. The behaviour
         // does not depend on the size; the number of ticks it takes to arrive very much
-        // does, because levelling a world out is slower the deeper it is.
+        // does.
         let mut world = Grid::new(&config(|raw| {
             raw.world.grid_cols = 32;
             raw.world.grid_rows = 9;
         }));
         let ceilings = world.targets.clone();
-        let tiles = 32.0 * 9.0;
 
         let mut ledger = Ledger::new(world.total_energy());
         let mut previous = world.tiles.clone();
         let mut settled_at = None;
 
+        // A tick that moves no tile by more than a millionth of what it holds. See the note
+        // above for why this is the bar rather than bitwise stillness.
+        let still = |tiles: &[f32], before: &[f32]| {
+            tiles
+                .iter()
+                .zip(before)
+                .all(|(now, then)| (*now - *then).abs() <= *now * 1e-6)
+        };
+
         for tick in 1..=200_000u32 {
             world.tick(&mut ledger);
             ledger.check(world.total_energy());
 
-            if world
-                .tiles
-                .iter()
-                .zip(&previous)
-                .all(|(now, then)| now.to_bits() == then.to_bits())
-            {
+            if still(&world.tiles, &previous) {
                 settled_at = Some(tick);
                 break;
             }
@@ -1569,59 +1774,88 @@ mod tests {
         );
         let held = world.total_energy();
 
-        let biggest_ceiling = f64::from(ceilings.iter().copied().fold(0.0f32, f32::max));
-        let sum_of_ceilings: f64 = ceilings.iter().copied().map(f64::from).sum();
-        let level = tiles * biggest_ceiling;
-
-        assert!(
-            (held - level).abs() < level * 1e-5,
-            "the world came to rest on tick {settled} holding {held}, and a world at rest \
-             holds the largest of its ceilings in every tile, which is {level}"
-        );
-        for (tile, held) in world.tiles.iter().enumerate() {
+        // Every tile is at or under its own ceiling. This is the rule itself, stated over
+        // the whole world after a hundred thousand chances to break it.
+        for (tile, (standing, ceiling)) in world.tiles.iter().zip(&ceilings).enumerate() {
             assert!(
-                (f64::from(*held) - biggest_ceiling).abs() < 1e-4,
-                "tile {tile} came to rest holding {held} rather than {biggest_ceiling}, so \
-                 the world it settled into is not level"
+                standing <= ceiling,
+                "tile {tile} came to rest holding {standing} against a ceiling of \
+                 {ceiling}, so a tile in this world can hold more than its target after all"
             );
         }
 
-        // Which is a long way above where it would have stopped if each tile had simply
-        // filled to its own ceiling - so this is a test about a world that grew and then
-        // stopped, rather than one that never moved.
+        // The headline. The top row against the bottom row, which is the difference an
+        // organism would be swimming for.
+        let row_holds = |row: usize| -> f64 {
+            world.tiles[row * world.cols()..(row + 1) * world.cols()]
+                .iter()
+                .copied()
+                .map(f64::from)
+                .sum()
+        };
+        let surface = row_holds(0);
+        let floor = row_holds(world.rows() - 1);
+
         assert!(
-            held > sum_of_ceilings * 1.5,
-            "the world settled at {held} against {sum_of_ceilings} for the sum of its own \
-             ceilings, which is close enough that nothing here has been demonstrated"
+            surface > floor * 1.5,
+            "the world came to rest on tick {settled} with {surface} in its top row against \
+             {floor} in its bottom row, which is close enough to level that there is nothing \
+             left for anything to swim towards"
         );
 
-        // And it stays there. Twenty thousand more ticks of light on a world that has
-        // stopped changing do not move one tile by one bit.
-        let resting = world.tiles.clone();
-        for _ in 0..20_000 {
+        // And a monotone gradient the whole way down, rather than merely two ends that
+        // differ. A field that were bright at both ends and dim in the middle would satisfy
+        // the claim above and would be a strange world to build an ecology on.
+        for row in 1..world.rows() {
+            assert!(
+                row_holds(row) < row_holds(row - 1),
+                "row {row} came to rest holding {} against {} in the row above it, so the \
+                 world's standing energy does not fall with depth",
+                row_holds(row),
+                row_holds(row - 1)
+            );
+        }
+
+        // And it stays there. Twenty thousand more ticks, every one of which has to leave
+        // the world as still as the tick that ended the loop above - so what was measured
+        // is a resting state rather than a pause on the way somewhere.
+        let (light_so_far, lost_so_far) = (ledger.influx_total(), ledger.dissipated());
+        for tick in 0..20_000 {
+            previous.copy_from_slice(&world.tiles);
             world.tick(&mut ledger);
             ledger.check(world.total_energy());
+            assert!(
+                still(&world.tiles, &previous),
+                "the world started moving again {tick} ticks after it had apparently come \
+                 to rest"
+            );
         }
+
+        let resting = world.total_energy();
         assert!(
-            world
-                .tiles
-                .iter()
-                .zip(&resting)
-                .all(|(now, then)| now.to_bits() == then.to_bits()),
-            "the world started moving again after it had come to rest, so what was \
-             measured was a pause rather than a ceiling"
+            (resting - held).abs() < held * 1e-4,
+            "twenty thousand ticks after coming to rest the world holds {resting} rather \
+             than the {held} it settled at"
         );
 
-        // Nothing is alive, so what the world holds is exactly what the light put into it.
-        // The bound is a rounding step per tile, which is what a resting world has in
-        // transit: every tile is holding a fraction that is too small to write into it and
-        // is waiting for company that will never come, because nothing is moving any more.
-        // That is a fixed quantity rather than a growing one. It comes to a ten-thousandth
-        // of a unit here, against a tolerance at this scale of about two and a half.
+        // A world at rest is not a world in which nothing is happening. The light goes on
+        // falling on every tile of it, and practically all of that energy leaves again the
+        // same tick, out of the tiles near the floor that have no room for it. A tenth of a
+        // per cent is the slack, and what is inside it is the last of the filling: the
+        // world is still creeping upwards by a fraction of a unit over these twenty
+        // thousand ticks.
+        let arrived = ledger.influx_total() - light_so_far;
+        let left = ledger.dissipated() - lost_so_far;
         assert!(
-            (ledger.influx_total() - held).abs() < tiles * 1e-6,
-            "the world holds {held} and the light says it delivered {}",
-            ledger.influx_total()
+            arrived > 20_000.0,
+            "only {arrived} of light fell on a resting world over twenty thousand ticks, so \
+             what was measured is a dark world rather than a full one"
+        );
+        assert!(
+            (arrived - left).abs() < arrived * 1e-3,
+            "over twenty thousand ticks of a world that has stopped changing, {arrived} of \
+             light arrived and {left} left again, and a field that holds steady is one \
+             where those are the same number"
         );
 
         // The ceilings themselves never moved. A hundred thousand ticks did not recompute
@@ -1634,6 +1868,27 @@ mod tests {
                 .zip(&ceilings)
                 .all(|(now, then)| now.to_bits() == then.to_bits()),
             "the world's ceilings changed while it was running"
+        );
+
+        // The three numbers this world actually settles into, written down. Every claim
+        // above is a statement about the *kind* of world it comes to rest in, and would
+        // stay green through a change that moved all three; these are what make a change of
+        // behaviour something that has to be argued for rather than absorbed.
+        //
+        // Recorded 31 July 2026, Windows 11 x86-64.
+        assert_eq!(
+            settled, 1_724,
+            "the world came to rest on tick {settled} rather than the 1724 recorded here"
+        );
+        assert!(
+            (held - 1_477.448_6).abs() < 1e-3,
+            "the world came to rest holding {held} rather than the 1477.4486 recorded here"
+        );
+        assert!(
+            (surface / floor - 3.260_245).abs() < 1e-4,
+            "the top row holds {} times what the bottom row does, against the 3.260245 \
+             recorded here",
+            surface / floor
         );
     }
 
@@ -1783,13 +2038,14 @@ mod tests {
         /// it: the tolerance exists for this rounding, and this says how much of it
         /// diffusion actually needs.
         ///
-        /// The rate is drawn up to a quarter and no further, which is the arithmetic's
-        /// stability limit rather than the configuration's bound of one - see the note on
-        /// `Grid::diffuse`. Beyond a quarter the field oscillates and grows without limit,
-        /// and while the energy in it is still conserved exactly as well as it is here,
-        /// the test would be measuring the difference between two enormous nearly-equal
-        /// numbers and would be reporting on floating-point cancellation rather than on
-        /// anything this module does.
+        /// The rate is drawn up to a quarter and no further, which is now the whole of
+        /// what `config.rs` will accept - see the note on `Grid::diffuse`. That is not this
+        /// test conveniently avoiding the hard cases: past a quarter the field oscillates
+        /// and grows without limit, and while the energy in it stays conserved exactly as
+        /// well as it is here, the test would be measuring the difference between two
+        /// enormous nearly-equal numbers and reporting on floating-point cancellation
+        /// rather than on anything this module does. The reason that band is untested here
+        /// is the reason it is unreachable there.
         #[test]
         fn diffusion_moves_energy_without_changing_how_much_there_is(
             cols in 1u32..24,

@@ -161,7 +161,8 @@ impl Ledger {
         self.detritus
     }
 
-    /// Energy spent on staying alive and on moving. Permanently gone.
+    /// Energy that is gone for good: spent on staying alive and on moving, or drained out
+    /// of a tile that could not hold it.
     #[must_use]
     pub fn dissipated(&self) -> f64 {
         self.dissipated
@@ -209,6 +210,27 @@ impl Ledger {
     /// living world is constantly turning into heat.
     pub fn spend(&mut self, amount: f64) {
         self.transfer(Account::Biomass, Account::Dissipated, amount);
+    }
+
+    /// `amount` arrived somewhere it could not be held, and has gone.
+    ///
+    /// A tile has a ceiling; the energy that spreads into it does not know that. SPEC
+    /// section 4 requires that a tile genuinely cannot hold more than its target, so
+    /// whatever is left over when a tile is cut back to its ceiling has to be accounted
+    /// for, and the honest answer is that the world no longer has it.
+    ///
+    /// This is the ecologically familiar case rather than a piece of bookkeeping. Light
+    /// reaches the surface, and energy carried below the depth the light can support is
+    /// energy the ocean loses — which is what the biological pump does. It is a genuine
+    /// loss from the world, and it is the reason a deep tile does not simply fill up until
+    /// the whole field is level and depth stops meaning anything.
+    ///
+    /// A transfer like every other operation here, which matters more than it looks.
+    /// `dissipated` is credited with exactly what the field gives up, so there is no way to
+    /// write a version of this that destroys more than it takes; and a negative amount is
+    /// refused, because an overflow running backwards is a full tile filling itself.
+    pub fn overflow(&mut self, amount: f64) {
+        self.transfer(Account::Field, Account::Dissipated, amount);
     }
 
     /// An organism holding `amount` has died.
@@ -551,6 +573,80 @@ mod tests {
         ledger.spend(-5.0);
     }
 
+    /// Energy that arrived where it could not be held leaves the world, rather than being
+    /// deleted from the books.
+    ///
+    /// A tile has a ceiling and diffusion does not know it. Energy carried sideways and
+    /// downwards into a tile that is already full has to go somewhere, and SPEC section 4
+    /// says where: away. The tile is cut back to its ceiling and the excess leaves the
+    /// world as heat, exactly as the energy an organism spends does.
+    ///
+    /// The alternative — letting the tile hold whatever arrives — is what this replaces,
+    /// and it fails in a way that takes hours to notice. Ceilings fall with depth, so energy
+    /// trickles downwards for ever; with no ceiling that actually holds, the field fills
+    /// until it is level, every tile in the world sitting at the deepest ceiling in it, and
+    /// the depth gradient SPEC section 4 says gives movement a reason to exist has quietly
+    /// gone.
+    ///
+    /// What this insists on is that the excess is *moved*. The field gives up exactly what
+    /// `dissipated` receives, so the world holds less and the books still add up — which is
+    /// the difference between energy leaving through a door somebody wrote down and energy
+    /// leaving through a hole.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the amounts are exact in binary, so what dissipates must equal what the \
+                  tile gave up to the last bit; near enough would hide an overflow that \
+                  destroys a little more than it takes"
+    )]
+    fn energy_that_cannot_be_held_is_dissipated_rather_than_deleted() {
+        let mut field = 100.0;
+        let mut ledger = Ledger::new(field);
+        let opening = everything(field, &ledger);
+
+        // The tile is cut back where the tiles live, and the ledger is told what left it.
+        field -= 12.5;
+        ledger.overflow(12.5);
+
+        assert_eq!(
+            ledger.dissipated(),
+            12.5,
+            "the energy a tile could not hold never reached the one account that records \
+             energy leaving the world"
+        );
+        assert_eq!(
+            ledger.biomass(),
+            0.0,
+            "an overflowing tile fed something living on its way out"
+        );
+        assert_eq!(
+            ledger.detritus(),
+            0.0,
+            "an overflowing tile left a corpse behind"
+        );
+        assert_eq!(
+            everything(field, &ledger),
+            opening,
+            "overflow changed how much energy exists rather than where it is"
+        );
+        ledger.check(field);
+    }
+
+    /// An overflow of a negative amount is a full tile *creating* energy, so it gets the
+    /// same refusal everything else here gets.
+    ///
+    /// This is why SPEC section 4's rule is written as a transfer rather than as a clamp.
+    /// A clamp is a line that lowers a tile with nothing on the other end of it, which is a
+    /// hole in the world that no account is watching; and a clamp handed a negative amount
+    /// is a tile that fills itself. Neither can be written here, and only because
+    /// `overflow` goes through the same gate as every other movement of energy.
+    #[test]
+    #[should_panic(expected = "an energy movement of -5")]
+    fn overflow_cannot_run_backwards() {
+        let mut ledger = Ledger::new(100.0);
+        ledger.overflow(-5.0);
+    }
+
     /// Energy vanishes, and the run stops.
     ///
     /// Every other test in this file is a statement about what the ledger does. This one
@@ -723,10 +819,10 @@ mod tests {
     // about the ledger alone, which is the half that can be settled now.
     // ---------------------------------------------------------------------------------
 
-    /// The seven things that can happen to a unit of energy.
+    /// The eight things that can happen to a unit of energy.
     ///
-    /// Written out as a list so that the machine can pick from it, and so that adding an
-    /// eighth operation to [`Ledger`] without adding it here is a change somebody has to
+    /// Written out as a list so that the machine can pick from it, and so that adding a
+    /// ninth operation to [`Ledger`] without adding it here is a change somebody has to
     /// make on purpose.
     #[derive(Debug, Clone, Copy)]
     enum Move {
@@ -734,16 +830,18 @@ mod tests {
         Scavenge,
         Predate,
         Spend,
+        Overflow,
         Die,
         Decay,
         Light,
     }
 
-    const EVERY_MOVE: [Move; 7] = [
+    const EVERY_MOVE: [Move; 8] = [
         Move::Harvest,
         Move::Scavenge,
         Move::Predate,
         Move::Spend,
+        Move::Overflow,
         Move::Die,
         Move::Decay,
         Move::Light,
@@ -794,6 +892,10 @@ mod tests {
                     Move::Scavenge => ledger.scavenge(amount),
                     Move::Predate => ledger.predate(amount),
                     Move::Spend => ledger.spend(amount),
+                    Move::Overflow => {
+                        field -= amount;
+                        ledger.overflow(amount);
+                    }
                     Move::Die => ledger.die(amount),
                     Move::Decay => {
                         field += amount;
@@ -919,13 +1021,16 @@ mod tests {
         let mut ledger = Ledger::new(field);
 
         // A whole life happening in a dark world: harvest, death, scavenging, predation,
-        // upkeep, rot. Energy moves everywhere, and none of it is new.
+        // upkeep, a tile spilling what it could not hold, rot. Energy moves everywhere, and
+        // none of it is new.
         field -= 10.0;
         ledger.harvest(10.0);
         ledger.die(4.0);
         ledger.scavenge(2.5);
         ledger.predate(1.25);
         ledger.spend(0.5);
+        field -= 0.25;
+        ledger.overflow(0.25);
         field += 1.5;
         ledger.decay(1.5);
 

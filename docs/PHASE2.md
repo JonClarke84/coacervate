@@ -13,8 +13,56 @@ property test*, and `.\scripts\check.ps1` exits 0.
 | | |
 | --- | --- |
 | **Phase 2** | in progress |
-| **Current group** | B — the resource field |
-| **Suite** | green — **43 tests** (35 sim, 8 app) |
+| **Current group** | C — cells and physics |
+| **Suite** | green — **60 tests** (52 sim, 8 app) |
+| **Invariant** | relative error **1.74e-10** over 100,000 ticks, default config, non-trending. Tolerance is 1e-3, so about six orders of magnitude of headroom. |
+
+## What this phase changed in the spec
+
+Three corrections, all found by writing the tests before the code. Each is now written into
+`SPEC.md` with its reasoning.
+
+**The regrowth formula destroyed energy.** SPEC wrote `tile += min(regrowth, target - tile)`
+with the comment "never exceeds target". Read literally that is a *subtraction* whenever a
+tile sits above its target — light running backwards, with no account to put the difference
+in. Not hypothetical: ceilings fall with depth, so diffusion permanently pushes energy into
+dimmer rows. It produced a *false* equilibrium propped up by a leak.
+
+**Clamping light to a source was not enough either, and this is the one that mattered.**
+With light unable to remove energy, diffusion still carries it downward and deep tiles sit
+above their targets forever. The field fills until it is **level** — every tile at the
+deepest ceiling in the world, no depth structure left. Swimming upward would pay nothing,
+and section 4's claim that "the gradient is what gives movement a reason to exist" would
+quietly stop being true. So a tile genuinely cannot hold more than its target now, and the
+excess moves `field → dissipated`: energy sinking below the light is energy the system
+loses, which is what the biological pump does in a real ocean.
+
+**`diffusion` is bounded at 0.25, not 1.0, and the ledger cannot catch it.** An explicit
+five-point stencil overshoots above a quarter and compounds until the numbers stop being
+finite — but overshoot *moves* energy rather than inventing it, so the invariant reports a
+healthy world right up until the field is nonsense. Now a validation error that says it is a
+stability limit rather than a preference.
+
+## Two bugs worth remembering
+
+**Diffusion leaked 70% of an evenly-filled world in 100 ticks.** The naive per-tile gather —
+add four neighbours, subtract four times me, treat a missing neighbour as nothing — passes a
+test that drops a spike in the middle of an empty world, because the spike never reaches an
+edge. Rewritten as a list of neighbour *pairs*, one flow per pair applied to both ends
+together. Edges then need no special case: the last row simply appears in fewer pairs, so
+there is no route out of the world to write down and therefore none to write down wrongly.
+
+**Rounding lost energy steadily, and inside tolerance.** The obvious implementation gives
+2.8e-4 after 100,000 ticks — well within the 1e-3 allowed, and *growing*, crossing the line
+around a million ticks. An overnight run is tens of millions, so it would have failed with
+no bug to find. The cause is the shape of the field, not arithmetic bias: a few tiles lose a
+lot each while many gain a millionth each, and a millionth added to a tile holding eight
+units rounds to nothing. Fixed by leaving the part of a movement that will not fit in the
+flux array rather than discarding it — energy is then never lost, only ever *in transit*.
+
+**Ecological consequence for Phase 4:** the standing field now settles at ~184,030 at the
+default config rather than creeping past 238,600 towards ~313,000. Carrying capacity is
+roughly a quarter lower than the old numbers implied, and now genuinely stable.
 
 **Carried into Phase 3:** SPEC section 5 now says explicitly that seeding an organism must
 take its starting energy out of `field`. A seeded organism feels like it comes from outside
@@ -105,20 +153,37 @@ and each move rounds. That drift is the phase's headline risk and the headline t
 
 ### Group B — the resource field
 
-- [ ] **B1. `the_grid_is_allocated_once_at_the_size_the_config_asks_for`**
-- [ ] **B2. `light_falls_off_with_depth`** — `light_profile(y) = 1 - gradient × (y/height)`;
+- [x] **B1. `the_grid_is_allocated_once_at_the_size_the_config_asks_for`**
+- [x] **B2. `light_falls_off_with_depth`** — `light_profile(y) = 1 - gradient × (y/height)`;
   brightest at the surface, dimmest at the floor. *SPEC section 4: the gradient is what
-  gives movement a reason to exist.*
-- [ ] **B3. `patchiness_is_stable_across_runs`** — the spatial noise is a pure function of
-  the world seed, computed once at construction, never per tick.
-- [ ] **B4. `a_tile_regrows_towards_its_target_and_stops_there`**
-- [ ] **B5. `regrowth_credits_influx_with_the_realised_change`** — see design decision 2.
-- [ ] **B6. `diffusion_moves_energy_sideways`**
-- [ ] **B7. `diffusion_does_not_leak_at_the_edges`** — the world wraps horizontally and is
-  closed vertically. *A closed vertical axis that quietly loses energy at the floor is the
-  most likely conservation bug in this phase.*
-- [ ] **B8. `the_field_reaches_a_ceiling`** — total influx is fixed, so the field is bounded.
-  This is SPEC section 4's carrying capacity, and the pressure everything later grows from.
+  gives movement a reason to exist.* Sampled at the **middle** of each row's band of depth:
+  sampling the upper edge would put the whole grid half a tile too shallow, and the middle
+  is the only choice under which the average over rows equals the average over the world's
+  depth. Note the world's `height` in world units cancels entirely — a field of a given
+  shape is lit identically whether the world is a micrometre or a mile deep.
+- [x] **B3. `patchiness_is_stable_across_runs`** — value noise on a 16-tile lattice, hashed
+  from the world seed, bilinear with smoothstep easing. Pure function of seed and position,
+  computed once at construction, never touching the world RNG stream. 16 tiles is 128 world
+  units — about twenty cell widths, so crossing a patch is a real journey, and it divides
+  both default grid dimensions exactly so the horizontal wrap has no seam (measured: 0.005
+  across the join against 0.032 between ordinary neighbours). Pinned by a golden test.
+  **Open question Q7 is answered.**
+- [x] **B4. `a_tile_regrows_towards_its_target_and_stops_there`** — ⚠️ **corrected SPEC.**
+  See "What this phase changed in the spec" below.
+- [x] **B5. `regrowth_credits_influx_with_the_realised_change`** — see design decision 2.
+  Each side is widened to `f64` *before* subtracting, not after: the difference of two `f32`
+  values is not always an `f32`, and rounding it would defeat the one number this design
+  exists to keep exact.
+- [x] **B6. `diffusion_moves_energy_sideways`**
+- [x] **B7. `diffusion_does_not_leak_at_the_edges`** — ⚠️ **caught a real 70% leak.** See
+  below.
+- [x] **B8. `the_field_reaches_a_ceiling`** — settles with the depth gradient intact: rows
+  fall monotonically from surface to floor, top row **3.26×** the bottom. The floor sits
+  exactly on its own ceiling and sheds everything that reaches it.
+  *Note the world no longer freezes bitwise, and cannot* — a field with a gradient has light
+  falling and the same amount leaving every tick forever, so "at rest" means no tile moves by
+  more than a millionth of what it holds. Verified not to be a slack bar hiding a world still
+  filling: the tick before it is met, some tile is still moving seven times further.
 
 ### Group C — cells and physics
 
