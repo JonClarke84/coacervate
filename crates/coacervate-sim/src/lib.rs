@@ -29,12 +29,16 @@
 //!   a lineage gain a body part rather than only a better version of the one it had.
 //! - [`organism`] — a genome, the energy it is running on and the fixed stretch of the
 //!   world's arenas its body lives in. The first thing in the project that is alive.
+//! - [`behaviour`] — what those cells do: harvest the light, shade one another out of it, eat
+//!   what they are touching, work their muscles and sense which way things lie. The income
+//!   side of the ledger, and every unit of it moved through an account.
 //! - [`world`] — all of the above owned in one place, and the tick that moves it: the light
 //!   falling, the energy spreading, the tiles shedding what they cannot hold, and the bodies
 //!   being pushed about — with the books checked as it goes.
 
 #![forbid(unsafe_code)]
 
+pub mod behaviour;
 pub mod cell;
 pub mod config;
 pub mod development;

@@ -194,6 +194,54 @@ impl CellKind {
         }
     }
 
+    /// How much of a devorocyte's bite this kind of cell turns aside, between nought and
+    /// one.
+    ///
+    /// SPEC section 6 gives a devorocyte's function as draining another organism's cells
+    /// "at a rate reduced by that cell's toughness", and gives a sclerocyte "high spring
+    /// stiffness, high toughness" as its whole specialisation. It gives **no numbers**.
+    /// These six were chosen in Phase 4; `behaviour.rs` is where they are used and
+    /// `toughness_is_what_makes_a_sclerocyte_the_answer_to_predation` is where the shape of
+    /// the table is argued.
+    ///
+    /// It lives here beside the radius and the upkeep for the reason this module's
+    /// documentation already gives about those two: a kind is a *trade-off*, and a trade-off
+    /// split across three files is one nobody can see. A sclerocyte is the widest cell in the
+    /// world, the cheapest to run, contributes nothing at all, and is nine times harder to
+    /// eat than the photocyte feeding the lineage. Those four numbers only mean something
+    /// together.
+    ///
+    /// # Why the values are what they are
+    ///
+    /// A photocyte and a gonocyte are soft, because they are what a predator is actually
+    /// after: the one that earns the lineage's energy and the one that hoards it. If either
+    /// were armoured there would be nothing in the world worth eating, and SPEC section 10's
+    /// hope that a herbivore/predator split *might* appear would have been decided in
+    /// advance by this table.
+    ///
+    /// A myocyte and a devorocyte sit in the middle: contractile and feeding tissue is
+    /// fibrous rather than defended, so it costs a predator something without being a
+    /// deterrent.
+    ///
+    /// A sensocyte is nought - the smallest cell in the world, and the one with least of
+    /// itself to put in the way.
+    ///
+    /// A sclerocyte is 0.9, which is a tenfold reduction. That number is chosen against the
+    /// rate in `behaviour.rs` rather than pulled out of the air: it is what makes eating a
+    /// sclerocyte cost a devorocyte more in upkeep than the bite returns, so armour does not
+    /// merely slow a predator down, it makes that predator worse off for trying. Anything
+    /// much below it and armour is a tax rather than a defence; anything at one and armour is
+    /// immunity, which is a designed outcome rather than an evolved one.
+    #[must_use]
+    pub const fn toughness(self) -> f32 {
+        match self {
+            Self::Photocyte | Self::Gonocyte => 0.10,
+            Self::Devorocyte | Self::Myocyte => 0.30,
+            Self::Sclerocyte => 0.90,
+            Self::Sensocyte => 0.00,
+        }
+    }
+
     /// What this kind of cell costs its organism per tick simply for existing, from SPEC
     /// section 6's table.
     ///
@@ -377,6 +425,89 @@ mod tests {
         assert_eq!(cell.kind, CellKind::Sclerocyte);
         assert_eq!(cell.state, 0, "a new cell is at developmental state zero");
         assert_eq!(cell.energy_flow, 0.0, "a new cell has gained nothing yet");
+    }
+
+    /// ⭐ A sclerocyte is hard to eat and a sensocyte is not, and that difference is the
+    /// whole of SPEC section 6's "the answer to predation".
+    ///
+    /// SPEC gives a devorocyte's function as draining another organism's cells "at a rate
+    /// reduced by that cell's toughness", and gives a sclerocyte "high toughness" and no
+    /// metabolic function at all. It gives **no numbers**, so the six here were chosen in
+    /// Phase 4 and this test is where they are written down. See [`CellKind::toughness`] for
+    /// the reasoning behind each one.
+    ///
+    /// # What actually has to be true, rather than what the numbers happen to be
+    ///
+    /// The exact values are tunable and the relationships between them are not, so the
+    /// claims below are mostly about the *shape* of the table. A sclerocyte has to be the
+    /// toughest thing in the world by a wide margin, or a lineage that grows armour has paid
+    /// for a cell that contributes nothing and gets nothing back, and SPEC's sentence about
+    /// it being the answer to predation is false. The cells that carry the world's energy -
+    /// the photocyte that earns it and the gonocyte that stores it - have to be soft, or
+    /// there is nothing worth eating and the predator/herbivore split SPEC section 10 hopes
+    /// to see can never appear.
+    ///
+    /// And nothing may reach one. A toughness of one is a cell that cannot be eaten at all,
+    /// which is a wall rather than a trade-off: a lineage that reached it would be immune
+    /// for ever rather than expensive to eat, and that is a designed outcome rather than an
+    /// evolved one.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "these six numbers were chosen rather than measured, so the comparison has \
+                  to be with the number itself; an approximate match would wave through a \
+                  row that had been edited by accident"
+    )]
+    fn toughness_is_what_makes_a_sclerocyte_the_answer_to_predation() {
+        let chosen = [
+            (CellKind::Photocyte, 0.10),
+            (CellKind::Devorocyte, 0.30),
+            (CellKind::Myocyte, 0.30),
+            (CellKind::Sclerocyte, 0.90),
+            (CellKind::Sensocyte, 0.00),
+            (CellKind::Gonocyte, 0.10),
+        ];
+
+        assert_eq!(
+            CellKind::ALL.len(),
+            chosen.len(),
+            "a kind has been added without deciding how hard it is to eat, so it has \
+             silently taken whatever the match arm's fallback gives it"
+        );
+
+        for (kind, toughness) in chosen {
+            assert_eq!(
+                kind.toughness(),
+                toughness,
+                "Phase 4 gives {kind:?} a toughness of {toughness}"
+            );
+            assert!(
+                (0.0..1.0).contains(&kind.toughness()),
+                "{kind:?} has a toughness of {}, and a toughness of one or more is a cell \
+                 that cannot be eaten however long a predator spends on it",
+                kind.toughness()
+            );
+        }
+
+        // The two relationships the model rests on, checked rather than eyeballed off the
+        // table above.
+        for kind in CellKind::ALL {
+            if kind != CellKind::Sclerocyte {
+                assert!(
+                    CellKind::Sclerocyte.toughness() > kind.toughness() * 2.0,
+                    "a sclerocyte is only {} against {kind:?}'s {}, so armour is not worth \
+                     what it costs and SPEC section 6's claim that it is the answer to \
+                     predation is not true of this table",
+                    CellKind::Sclerocyte.toughness(),
+                    kind.toughness()
+                );
+            }
+        }
+        assert!(
+            CellKind::Photocyte.toughness() < 0.5 && CellKind::Gonocyte.toughness() < 0.5,
+            "the two cells that hold a lineage's energy are armoured, so there is nothing \
+             in the world worth the trouble of eating"
+        );
     }
 
     /// The seven pieces of arithmetic `physics.rs` is built out of do what they say.

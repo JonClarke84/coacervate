@@ -17,11 +17,14 @@
 //! gives them in that order and gives the reason - a ceiling enforced before the energy has
 //! finished moving is not a ceiling.
 //!
-//! The physics goes last, and the order still genuinely does not matter: nothing that moves a
-//! cell reads a tile, and nothing that moves energy reads a position. It is written this way
-//! for where Phase 4's work has to go. Harvesting sits between the two halves, and it wants a
-//! field the light has already fallen on and cells that have not yet swum away from the tile
-//! they were sitting on.
+//! The behaviour goes between the water and the bodies, which is where Phase 2 said it would
+//! have to: harvesting wants a field the light has already fallen on and cells that have not
+//! yet swum away from the tile they were sitting on. It also has to run before the physics for
+//! a second reason that only arrived with it - a myocyte's whole function is to change the
+//! rest length of a spring, and a spring changed after the forces have been worked out is a
+//! spring that does nothing until next tick.
+//!
+//! The physics goes last.
 //!
 //! # The books are checked here rather than by the things that move the energy
 //!
@@ -55,10 +58,11 @@
 //! with every cell it allows - and nothing here has any way to grow one. At SPEC section 3's
 //! defaults that is four thousand organisms of sixty-four cells apiece: **256,000 cells,
 //! about 7 MB, and 252,000 springs at about 6 MB**. The dense copies the tick hands to the
-//! physics are the same two arenas again, plus one index per cell to put the crowd back where
-//! it came from, so another 15 MB; the physics builds its own working arrays at 15 MB more;
+//! physics are the same two arenas again, plus two indices per cell - one to put the crowd
+//! back where it came from and one saying whose cell it is - so another 17 MB; the physics
+//! builds its own working arrays at 15 MB more and the behaviour pass at 11 MB more than that;
 //! the four thousand organisms are a third of a megabyte and the resource field is under half
-//! of one. A default world is therefore around **44 MB**, against CLAUDE.md's resident target
+//! of one. A default world is therefore around **57 MB**, against CLAUDE.md's resident target
 //! of 2 GB.
 //!
 //! The cell and spring arenas are built at their full *length* rather than merely reserved,
@@ -104,9 +108,16 @@
 //!
 //! # What is deliberately not here
 //!
-//! **Living.** Nothing eats, spends, reproduces or dies. An organism exists, occupies a slot,
-//! sits where it was put and gets older; harvesting, upkeep, reproduction, death and detritus
-//! are all Phase 4. The tick moves the water and the bodies and nothing else.
+//! **Dying, and being born.** Organisms now eat and pay for moving - `behaviour.rs` is the
+//! whole of that - but nothing charges upkeep, nothing dies, nothing rots and nothing
+//! reproduces. Those are Phase 4's Groups B and C, and the order is deliberate: building the
+//! costs before the income would mean every intermediate state of the project is a world where
+//! everything starves, and no test in between could tell a balance problem from a missing
+//! feature.
+//!
+//! **Detritus.** `behaviour.rs` defines what a grain of it is and a devorocyte can eat one,
+//! but nothing here ever makes one, so the tick hands the behaviour pass an empty drift. Group
+//! B is where a death produces detritus and where the arena that holds it gets sized.
 //!
 //! **A runner.** Nothing here decides when a run ends. SPEC section 3's `max_wall_clock_hours`
 //! is a wall-clock bound, and a wall clock is exactly what a deterministic simulation must
@@ -114,6 +125,7 @@
 //! **the world cannot time itself**, by design. Whatever ends a run does it from outside, by
 //! counting the ticks this module has taken.
 
+use crate::behaviour::{Behaviour, Detritus, Living};
 use crate::cell::{Cell, CellKind, Vec2};
 use crate::config::Config;
 use crate::development::develop;
@@ -179,6 +191,9 @@ pub struct World {
     /// What pushes the cells around, and the arrays it needs to do it.
     physics: Physics,
 
+    /// What the cells do for themselves: eat, sense, and work their muscles.
+    behaviour: Behaviour,
+
     /// Every cell the world could ever hold, arranged in slots of `max_cells_per_organism`.
     ///
     /// Full length from the moment the world is built rather than filled as organisms
@@ -221,6 +236,15 @@ pub struct World {
 
     /// Which cell of the arena each cell of the crowd came from, so it can be written back.
     live: Vec<usize>,
+
+    /// Which organism each cell of the crowd belongs to.
+    ///
+    /// Built beside the crowd rather than worked out from `live` on demand, because the
+    /// behaviour pass asks the question in its innermost loops - a devorocyte has to know
+    /// whether the cell it is touching is its own, and a sensocyte has to know whether the
+    /// cell it can smell is somebody else's - and a division per candidate pair is a division
+    /// a few million times a tick.
+    owner: Vec<usize>,
 
     /// Which tiles the body being seeded is standing on, each named once.
     ///
@@ -273,6 +297,7 @@ impl World {
             grid,
             ledger,
             physics: Physics::new(config),
+            behaviour: Behaviour::new(config),
             cells: vec![Cell::new(CellKind::Photocyte, Vec2::ZERO); capacity],
             // A spring joining a cell to itself, which is what an unused slot holds and what
             // nothing ever looks at. It is never handed to the physics: only the springs an
@@ -293,6 +318,7 @@ impl World {
             crowd: Vec::with_capacity(capacity),
             bonds: Vec::with_capacity(adhesions),
             live: Vec::with_capacity(capacity),
+            owner: Vec::with_capacity(capacity),
             beneath: Vec::with_capacity(cells_per_slot(&config.limits)),
             rng: WorldRng::from_seed(config.world.seed),
             ticks: 0,
@@ -325,6 +351,24 @@ impl World {
         self.grid.tick(&mut self.ledger);
 
         self.gather();
+
+        // Nothing in this phase makes detritus, so the behaviour pass is handed an empty
+        // drift. Group B is what fills it, and the arena that holds it is sized there rather
+        // than guessed at here.
+        let mut drift: [Detritus; 0] = [];
+        self.behaviour.run(
+            Living {
+                cells: &mut self.crowd,
+                springs: &mut self.bonds,
+                owner: &self.owner,
+                organisms: &mut self.organisms,
+                detritus: &mut drift,
+            },
+            &mut self.grid,
+            &mut self.ledger,
+            self.ticks,
+        );
+
         self.physics.step(&mut self.crowd, &self.bonds);
         self.scatter();
 
@@ -499,6 +543,7 @@ impl World {
         self.crowd.clear();
         self.bonds.clear();
         self.live.clear();
+        self.owner.clear();
 
         for slot in 0..self.organisms.len() {
             let Some((cells, springs)) = self.organisms[slot]
@@ -515,6 +560,7 @@ impl World {
             let first_cell = cell_slot(slot, &self.config.limits).start;
             for index in first_cell..first_cell + cells {
                 self.live.push(index);
+                self.owner.push(slot);
                 self.crowd.push(self.cells[index]);
             }
 
@@ -1141,6 +1187,163 @@ mod tests {
         );
     }
 
+    /// A genome that grows one photocyte with one myocyte sprung to it, and gives that myocyte
+    /// a rhythm.
+    ///
+    /// Two genes, and the second is the one that matters here: it answers to the daughter's
+    /// state, so it is what `behaviour.rs` looks up when it asks how that myocyte oscillates.
+    /// Its action is `Terminate`, so it does nothing at all to the body - which is the point.
+    /// A gene can carry a cell's behaviour without carrying any of its development.
+    fn a_swimmer(limits: &LimitsConfig) -> Genome {
+        let blank = Gene {
+            trigger_state: State::ZERO,
+            min_step: 0,
+            max_step: 0,
+            action: Action::Terminate,
+            angle: 0.0,
+            adhere: false,
+            child_state: State::ZERO,
+            child_kind: CellKind::Photocyte,
+            rest_length: 0.0,
+            stiffness: 0.0,
+            new_kind: CellKind::Photocyte,
+            new_state: State::ZERO,
+            osc_freq: 0.0,
+            osc_phase: 0.0,
+            sensor_gain: 0.0,
+            sensor_target: SensorTarget::Light,
+        };
+
+        Genome::new(
+            vec![
+                Gene {
+                    action: Action::Divide,
+                    adhere: true,
+                    child_state: State::new(1),
+                    child_kind: CellKind::Myocyte,
+                    rest_length: 8.0,
+                    stiffness: 10.0,
+                    ..blank
+                },
+                Gene {
+                    trigger_state: State::new(1),
+                    max_step: u8::MAX,
+                    osc_freq: 3.0,
+                    ..blank
+                },
+            ],
+            limits,
+        )
+    }
+
+    /// ⭐ A tick actually feeds the bodies in the world, and the books know about it.
+    ///
+    /// Everything `behaviour.rs` does is proved in `behaviour.rs`, against scenes built by
+    /// hand so that a claim about a shadow is a claim about a shadow. This is the other half:
+    /// that a [`World`] hands its bodies to that pass at all, in the right order, and puts the
+    /// results back where they came from.
+    ///
+    /// # It asserts the accounts moved, not that they balance
+    ///
+    /// SPEC section 5's lesson, which Phase 2 learned twice: a conservation check cannot see
+    /// energy that was never declared. A world whose behaviour pass had been quietly left out
+    /// of the tick would balance its books perfectly for ever. So what is measured is that the
+    /// **field went down**, that **biomass went up** by the same amount, and that the organisms
+    /// are holding it.
+    ///
+    /// # And that a myocyte does not eat its own genome
+    ///
+    /// The rest length a gene asked for lives in the world's spring arena; what a myocyte
+    /// works is the *copy* the tick hands the physics, which is rebuilt from the arena every
+    /// tick. Get that the wrong way round and each tick's contraction is applied on top of the
+    /// last one's, and a body winds itself up until it tears apart - slowly enough that the
+    /// first thousand ticks look fine. So after five hundred ticks the arena is checked
+    /// against the number in the genome, exactly, while the body is checked for having
+    /// actually been worked.
+    #[test]
+    fn a_tick_feeds_the_bodies_in_the_world() {
+        let mut world = World::new(&config(|raw| {
+            raw.world.width = 512.0;
+            raw.world.height = 288.0;
+            raw.world.grid_cols = 64;
+            raw.world.grid_rows = 36;
+            raw.limits.max_organisms = 8;
+            raw.limits.max_cells_per_organism = 8;
+        }));
+        let limits = world.config().limits.clone();
+
+        // The field fills under the light first. A world starts dark.
+        for _ in 0..1_000 {
+            world.tick();
+        }
+
+        let slot = world
+            .seed(a_swimmer(&limits), Vec2::new(100.0, 60.0), 0.0)
+            .expect("an empty world has room for an organism");
+
+        let field_before = world.grid().total_energy();
+        let biomass_before = world.ledger().biomass();
+
+        world.tick();
+
+        let holding = world.organisms()[slot]
+            .as_ref()
+            .expect("nothing dies in this group")
+            .energy();
+        let field_after = world.grid().total_energy();
+
+        assert!(
+            holding > 0.0,
+            "an organism with a photocyte in it earned nothing over a tick of a lit world, \
+             so the behaviour pass is not being run at all"
+        );
+        assert!(
+            (field_before - field_after - holding) > -1e-9,
+            "the field went down by {} and the organism is holding {holding}, so it has been \
+             given energy the water did not pay for",
+            field_before - field_after
+        );
+        assert!(
+            (world.ledger().biomass() - biomass_before - holding).abs() < 1e-9,
+            "the biomass account moved by {} while the only organism in the world gained \
+             {holding}",
+            world.ledger().biomass() - biomass_before
+        );
+
+        // The renderer's number is written, and written where the renderer will look for it -
+        // in the arena, which means the crowd was copied home again.
+        assert!(
+            world.cells_of(slot)[0].energy_flow > 0.0,
+            "the photocyte gained {holding} and its `energy_flow` says {}",
+            world.cells_of(slot)[0].energy_flow
+        );
+
+        // Five hundred ticks of a working muscle.
+        for _ in 0..500 {
+            world.tick();
+        }
+
+        assert!(
+            (world.springs_of(slot)[0].rest_length - 8.0).abs() < f32::EPSILON,
+            "the spring in the world's arena is asking for {} rather than the eight units \
+             its gene asked for, so each tick's contraction is being applied on top of the \
+             last one's and this body is winding itself up",
+            world.springs_of(slot)[0].rest_length
+        );
+
+        let body = world.cells_of(slot);
+        let apart = (body[1].pos - body[0].pos).length();
+        assert!(
+            (apart - 8.0).abs() > 0.01,
+            "the two cells are {apart} apart after five hundred ticks of a myocyte working \
+             the spring between them, so nothing has been worked"
+        );
+        assert!(
+            world.ledger().biomass() > 0.0,
+            "the world's only organism has spent everything it earned"
+        );
+    }
+
     /// The arenas are the size the configuration asks for, and they are that size for the
     /// whole run.
     ///
@@ -1194,16 +1397,17 @@ mod tests {
             + default_world.springs.len() * size_of::<Spring>();
         let mirrors = default_world.crowd.capacity() * size_of::<Cell>()
             + default_world.bonds.capacity() * size_of::<Spring>()
-            + default_world.live.capacity() * size_of::<usize>();
+            + default_world.live.capacity() * size_of::<usize>()
+            + default_world.owner.capacity() * size_of::<usize>();
         assert!(
             (12_000_000..15_000_000).contains(&arenas),
             "the two arenas of a default world cost {arenas} bytes, against the 13,216,000 \
              recorded here"
         );
         assert!(
-            (14_000_000..17_000_000).contains(&mirrors),
+            (16_000_000..19_000_000).contains(&mirrors),
             "the dense copies the physics is handed cost {mirrors} bytes, against the \
-             15,264,000 recorded here"
+             17,312,000 recorded here"
         );
 
         let odd_shape = World::new(&config(|raw| {
@@ -1498,14 +1702,40 @@ mod tests {
     /// realised harvests, so anything larger than that means one of them has been written to
     /// without the other, which is precisely the bookkeeping that goes wrong.
     ///
+    /// # ⭐ Group A moved this test's centre of gravity, and the numbers are worth reading
+    ///
+    /// It was written when a body sat in the water and did nothing. Its organisms now *eat*,
+    /// which makes it the first thing in the project to run a whole tick with income in it -
+    /// and the figures that come out are the best evidence Group A has about whether the
+    /// energy economy will balance in Group D.
+    ///
+    /// Eight four-celled photocyte bodies, seeded holding two units apiece, are holding
+    /// **104,497 between them after 120,000 ticks.** That is 0.109 per organism per tick, or
+    /// 0.027 per photocyte, against the 0.004 a photocyte costs to keep - a margin of nearly
+    /// **seven times upkeep**, and these bodies are deliberately seeded on top of one another
+    /// so each is shading the others. An unshaded one does better.
+    ///
+    /// The field meanwhile is still full: 11,759 against a ceiling of about 11,520 plus what
+    /// is in transit. Thirty-two photocytes are not making a dent in a 2,304-tile world;
+    /// they are living off the flux through the tiles they stand on, which the light refills
+    /// as fast as they draw it down.
+    ///
+    /// **What that means for Group D:** income is not the problem. Upkeep would have to be
+    /// several times what SPEC section 6's table says before a photosynthetic body could not
+    /// pay for itself, so the risk at the far end of Phase 4 is a *bloom* rather than a
+    /// famine - a world that fills to the population cap and stagnates, which is the failure
+    /// mode CLAUDE.md warns about under "too much light". `influx` and `upkeep_scale` are the
+    /// two levers, and this is the number to tune them against.
+    ///
     /// # The drift settles, and what settles is not what a reader would expect
     ///
     /// The same argument as Phase 2's: an error that is inside the tolerance at ten thousand
     /// ticks and *growing* is a run that stops in the small hours with no bug to find. So the
     /// worst discrepancy over the whole run is compared against the worst over its first
     /// tenth, and an error accumulating in one direction would be ten times larger by the end.
-    /// **Measured: 6.12e-9 over the whole run against 2.94e-9 over its first tenth** - a
-    /// factor of two where a leak would give ten.
+    /// **Measured with Group A live: 1.482e-9 over the whole run, and the same 1.482e-9 over
+    /// its first tenth** - the worst moment of the run is inside its first twelve thousand
+    /// ticks, which is as flat as this claim can come out.
     ///
     /// That claim is about the *relative* error, and the distinction is worth spelling out
     /// because the absolute figure behaves differently and would alarm anybody who looked at
@@ -1525,8 +1755,12 @@ mod tests {
     /// bearing rather than cosmetic - an overnight run of tens of millions of ticks sits at
     /// seven parts in a billion, a hundred and fifty thousand times inside the 1e-3 allowed.
     ///
-    /// Recorded 31 July 2026, Windows 11 x86-64: relative error **5.88e-9** after 120,000
-    /// ticks, against SPEC section 5's tolerance of 1e-3.
+    /// Recorded 31 July 2026, Windows 11 x86-64: relative error **1.238e-9** after 120,000
+    /// ticks, against SPEC section 5's tolerance of 1e-3. (Before Group A gave the organisms
+    /// anything to do, the same run finished at 5.88e-9. Harvesting *lowered* the drift, which
+    /// is not a surprise once said out loud: energy an organism is holding sits in a 64-bit
+    /// account, and energy in the field sits in 32-bit tiles being added to and diffused
+    /// every tick.)
     ///
     /// # Why this one is marked `ignore` and still runs on every check
     ///
@@ -1649,6 +1883,13 @@ mod tests {
         assert!(
             (alive - 16.0).abs() < 1e-6,
             "eight organisms seeded with two units each left {alive} in the biomass account"
+        );
+        assert!(
+            ledger.biomass() > 50_000.0,
+            "the eight bodies are holding {} between them after a hundred and twenty \
+             thousand ticks of harvesting, against the 104,497 recorded here - so either \
+             they have stopped eating or the rate has moved",
+            ledger.biomass()
         );
         assert!(
             (ledger.biomass() - holding).abs() < 1e-9,

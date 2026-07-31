@@ -202,6 +202,34 @@ impl Organism {
         self.age += 1;
     }
 
+    /// `amount` has come in.
+    ///
+    /// ⚠️ **Never call this without moving the same amount in the ledger.** An organism's
+    /// energy and the ledger's `biomass` account are two records of one quantity, and SPEC
+    /// section 5 spells out what happens when they part company: the books balance perfectly
+    /// while a body stands in the world holding energy nobody counted, and nothing announces
+    /// it until that energy is moved out of an account that never received it - hours into a
+    /// run, with no cause to find.
+    ///
+    /// This is why the field is private and why there is no setter. The only callers are
+    /// `world.rs`, at a birth, and `behaviour.rs`, which does every one of its movements in
+    /// one place for exactly this reason.
+    pub(crate) fn gain(&mut self, amount: f64) {
+        self.energy += amount;
+    }
+
+    /// `amount` has gone out.
+    ///
+    /// The same warning as [`Organism::gain`], and one more. **This does not refuse to take
+    /// an organism below nothing**, and that is deliberate rather than missing. SPEC section
+    /// 5 is explicit that the invariant says energy is conserved and *not* that any account
+    /// is solvent - "spending more than an organism holds drives `biomass` negative while the
+    /// books still balance perfectly". Insolvency is not a bookkeeping error to be prevented
+    /// here; it is what Group B turns into death.
+    pub(crate) fn lose(&mut self, amount: f64) {
+        self.energy -= amount;
+    }
+
     /// This organism's own generator, wound forward to wherever it had got to.
     ///
     /// Rebuilt from the world's seed and this organism's serial every time it is asked for,

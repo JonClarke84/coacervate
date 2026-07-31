@@ -438,7 +438,12 @@ pub struct Spring {
 /// that has no cases in it, which matters: written as a pair of `if`s, one of them is only
 /// reached by cells near one particular edge and is therefore the half that gets tested by
 /// accident and the half that does not.
-fn wrapped_offset(from: Vec2, to: Vec2, width: f32) -> Vec2 {
+///
+/// Shared with `behaviour.rs`, which measures how far a cell is to the side of the one it is
+/// shading and has to answer that question by the same rule the physics measures a collision
+/// by. Two versions of "the world wraps" would be two rules about one thing, and the one
+/// written down twice is the one that ends up disagreeing with itself at the join.
+pub(crate) fn wrapped_offset(from: Vec2, to: Vec2, width: f32) -> Vec2 {
     let across = to.x - from.x;
 
     Vec2::new(across - width * (across / width).round(), to.y - from.y)
