@@ -14,12 +14,19 @@
 //!   unit is ever invented or lost.
 //! - [`grid`] — the field of energy the light falls on, which is the only thing in the
 //!   world there is to eat.
+//! - [`cell`] — the smallest thing in the world that has a position, and the six kinds one
+//!   can specialise into. Their size and their upkeep, and none of their behaviour.
+//! - [`physics`] — what moves them: springs between the cells of a body, repulsion between
+//!   bodies, and the neighbour search that stops looking for either from costing
+//!   everything.
 
 #![forbid(unsafe_code)]
 
+pub mod cell;
 pub mod config;
 pub mod grid;
 pub mod ledger;
+pub mod physics;
 pub mod rng;
 
 #[cfg(test)]

@@ -425,10 +425,35 @@ vel = (vel + force × dt) × drag        // drag ≈ 0.92, so velocity ≈ force
 pos += vel × dt
 ```
 
-Neighbour queries use a **uniform spatial hash** sized to the largest cell radius. This is
-the single most important performance decision on the CPU side: it takes collision detection
-from O(n²) to roughly O(n), which at a few thousand cells is a larger win than any language
-or hardware choice.
+Neighbour queries use a **uniform spatial hash** sized to **twice** the largest cell radius.
+This is the single most important performance decision on the CPU side: it takes collision
+detection from O(n²) to roughly O(n), which at a few thousand cells is a larger win than any
+language or hardware choice.
+
+*Twice*, not once — an earlier draft said the largest radius and that is half of what is
+needed. Two cells touch when they are `r₁ + r₂` apart, so with buckets one radius wide a
+3×3 neighbourhood misses genuinely overlapping pairs. Buckets should also divide the world
+width a whole number of times, so the horizontal wrap falls exactly on a bucket edge.
+
+### Things the physics does not have, and Phase 3 should know it
+
+- **There is no mass.** Force translates directly into a velocity change, so a sclerocyte
+  and a sensocyte accelerate identically despite one being nearly three times the area.
+  Being big is free in the physics; it costs only upkeep.
+- **Momentum is not a strategy.** Measured at the shipped drag of 0.92: a cell shoved at 60
+  units per second travels 11.5 units and stops — under two body-widths. There is no
+  gliding and no coasting. If a lineage ever appears to coast, something is wrong with the
+  drag rather than clever about the lineage.
+- **Springs are not found by the spatial hash** and have no length limit. They are resolved
+  from the flat list, so a spring created between cells on opposite sides of the world will
+  work — and will haul them together through the seam. Development should not create one.
+- **A body straddling the seam has no single position.** Wrapping is handled per pair, so
+  the physics is fine, but averaging cell positions to find a body's centre will put that
+  centre in the middle of the world for a body sitting on the join. Species clustering,
+  rendering and the inspector all need to know this.
+- **Vertical closure is about cell centres, not bodies.** A cell resting on the floor has its
+  centre at `y = height` and half of itself below. If bodies should sit fully inside the
+  world, the clamp needs insetting by the radius; the literal reading is what is implemented.
 
 Boundaries: the world wraps horizontally and is closed vertically (surface and floor).
 Wrapping horizontally prevents edge-hugging strategies from dominating; a closed vertical

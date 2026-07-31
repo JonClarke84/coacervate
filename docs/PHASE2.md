@@ -13,8 +13,8 @@ property test*, and `.\scripts\check.ps1` exits 0.
 | | |
 | --- | --- |
 | **Phase 2** | in progress |
-| **Current group** | C — cells and physics |
-| **Suite** | green — **60 tests** (52 sim, 8 app) |
+| **Current group** | D — the done-criterion |
+| **Suite** | green — **68 tests** (60 sim, 8 app) |
 | **Invariant** | relative error **1.74e-10** over 100,000 ticks, default config, non-trending. Tolerance is 1e-3, so about six orders of magnitude of headroom. |
 
 ## What this phase changed in the spec
@@ -187,20 +187,35 @@ and each move rounds. That drift is the phase's headline risk and the headline t
 
 ### Group C — cells and physics
 
-- [ ] **C1. `a_cell_has_the_fields_spec_section_6_gives_it`**
-- [ ] **C2. `the_spatial_hash_finds_the_same_neighbours_as_checking_everything`** *(property
+- [x] **C1. `a_cell_has_the_fields_spec_section_6_gives_it`** — `Vec2`, `CellKind` (radius
+  and upkeep only), `Cell`. No cell *function* — harvesting, predation, oscillation and
+  sensing are Phases 3 and 4.
+- [x] **C2. `the_spatial_hash_finds_the_same_neighbours_as_checking_everything`** *(property
   test)* — the hash is an optimisation, and the only way to trust an optimisation is to
   check it against the slow, obviously-correct version. *SPEC section 8 calls this the
-  single most important performance decision on the CPU side.*
-- [ ] **C3. `overlapping_cells_push_apart`**
-- [ ] **C4. `a_spring_pulls_towards_its_rest_length`**
-- [ ] **C5. `motion_is_viscous_not_ballistic`** — with drag at 0.92 a cell coasts to a halt
-  rather than sailing on. SPEC section 8: at cell scale inertia is nearly irrelevant, which
-  is both physically right and numerically far more stable.
-- [ ] **C6. `the_world_wraps_sideways_and_is_closed_top_and_bottom`**
-- [ ] **C7. `physics_is_stable_under_a_pile_up`** — a crowd of overlapping cells must not
-  explode. *The classic failure of a spring-and-collision system, and it fails loudly rather
-  than subtly, which is why it is worth a test rather than a hope.*
+  single most important performance decision on the CPU side.* Proptest shrank its red
+  straight to **seam crossings**, which is exactly where it would have been wrong.
+  ⚠️ **This test had a gap and it was closed:** it measured every candidate with its own
+  independently-written separation helper, so it only ever tested candidate *enumeration* —
+  breaking the wrap in the distance calculation was invisible to it. It now also checks the
+  wrapped offset against the slow version and requires it never to exceed half a world.
+- [x] **C3. `overlapping_cells_push_apart`** — ⚠️ **my assertion was wrong and the test
+  caught it.** An overlapping pair does *not* settle at exactly touching; it coasts about
+  four units past contact, because the water is viscous rather than infinitely thick. That
+  is correct for SPEC's model, so the claim now requires the pair to come to *rest* and the
+  measured overshoot is documented.
+- [x] **C4. `a_spring_pulls_towards_its_rest_length`**
+- [x] **C5. `motion_is_viscous_not_ballistic`** — measured: a cell shoved at 60 units/second
+  travels **11.5 units** and stops, under two body-widths.
+- [x] **C6. `the_world_wraps_sideways_and_is_closed_top_and_bottom`**
+- [x] **C7. `physics_is_stable_under_a_pile_up`** — an 8×8 pile stops settling between
+  `collision_stiffness` **3,240 and 3,280**. The shipped default of 40.0 sits about **eighty
+  times below** that — comfortable, not a cliff. Two things worth knowing: it is a figure for
+  a *crowd* (a cell in the middle feels eight contacts, and eight forces of stiffness `k`
+  behave like one of `8k`; a lone pair has no ceiling at all), and instability here does
+  **not** produce infinities, because overlap is bounded by the cells' own width — a runaway
+  world jitters forever instead. *A stability check written as "are the numbers still finite"
+  would therefore pass at every value there is.*
 
 ### Group D — the done-criterion
 
