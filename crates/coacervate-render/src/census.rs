@@ -7,11 +7,25 @@
 //! wrong. This is the reader, and it lives outside the simulation because reading is not
 //! simulating.
 //!
-//! There are two callers and they want the same six numbers for different reasons. The
+//! There are three callers and they want the same six numbers for different reasons. The
 //! progress line a person watches wants them so a run says something while it is happening.
 //! `run.rs`'s ecology test wants them because they are the whole of what "a living,
 //! non-degenerate population" means: not extinct, not pressed against the arena, still
-//! turning over, and not one clone repeated.
+//! turning over, and not one clone repeated. And Phase 6's panel wants them because they are
+//! what the world is doing, written where somebody watching can read it.
+//!
+//! # ⚠️ This module was `coacervate-app`'s until Phase 6, and the move is the whole reason
+//!
+//! The third caller is `panel.rs`, which is in *this* crate, and `coacervate-app` depends on
+//! `coacervate-render` rather than the other way about - so a census left where it was could
+//! not be reached from a panel. The two ways out of that were to move the six numbers or to
+//! compute them twice, and the second is the arrangement this module's own opening paragraph
+//! argues against: **keeping two copies of one quantity in step is the bookkeeping that goes
+//! wrong.** A panel that said 1,712 while the progress line said 1,713 would be a bug nobody
+//! could see and everybody would half-believe.
+//!
+//! Nothing about the numbers changed in the move. `coacervate-app` imports them from here and
+//! `report` prints exactly what it printed.
 //!
 //! # Why the *spread* is here and not only the mean
 //!
@@ -79,6 +93,27 @@ impl Census {
     pub fn deaths(&self) -> u64 {
         self.born - u64::try_from(self.population).expect("a population fits in a machine word")
     }
+}
+
+/// How far this world has got, in millions of years.
+///
+/// ⭐ **CLAUDE.md's deep time, in one place.** *"Tick counts are displayed as millions of
+/// years, so a long run reads as Earth's history rather than a number going up."* Three things
+/// show a person how far a run has got - `main.rs`'s progress line, `window.rs`'s title bar and
+/// Phase 6's panel - and until this existed the first two each did the arithmetic themselves.
+/// A third copy of it is how the panel and the title bar end up disagreeing about what year it
+/// is.
+///
+/// It is presentation and it never enters the physics: `world.rs` keeps the tick count and
+/// `config.world.years_per_tick` is a number nothing in a tick reads.
+#[must_use]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a tick count is turned into a span of geological time for a person to read; the \
+              digits lost are far below the resolution of a figure printed to one decimal place"
+)]
+pub fn millions_of_years(world: &World) -> f64 {
+    world.ticks() as f64 * f64::from(world.config().world.years_per_tick) / 1e6
 }
 
 /// A running mean and standard deviation over a set of counts.

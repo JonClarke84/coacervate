@@ -13,6 +13,7 @@ pollster = { workspace = true }
 bytemuck = { workspace = true }
 png = { workspace = true }
 winit = { workspace = true }
+egui = { workspace = true }
 
 # `workspace = true` INHERITS the workspace table, which is what is wanted. It is not the
 # thing clippy.toml warns about: a package-level [lints.clippy] table with entries of its

@@ -350,8 +350,9 @@ fn wall_clock(hours: f32) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::census::Census;
     use crate::founding::genesis;
+    // ⚠️ `census` was this crate's own module until Phase 6. See `main.rs` for why it moved.
+    use coacervate_render::census::Census;
     use coacervate_sim::config::{Config, RawConfig, RunConfig, spec_defaults};
     use std::time::Instant;
 

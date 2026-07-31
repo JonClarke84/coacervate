@@ -32,12 +32,15 @@
 )]
 
 mod args;
-mod census;
 mod founding;
 mod run;
 
 use args::{Arguments, Settings};
-use census::Census;
+// ⚠️ `census` was this crate's own module until Phase 6 and now lives in `coacervate-render`.
+// Phase 6's panel needs the same six numbers this progress line prints, and a panel cannot reach
+// into the binary that draws it; the alternative was to compute them twice, which is the one
+// thing `census.rs`'s own opening paragraph argues against. Nothing about the numbers changed.
+use coacervate_render::census::{Census, millions_of_years};
 use coacervate_sim::config::RunConfig;
 use coacervate_sim::world::World;
 use run::{Interrupt, Run, Stop};
@@ -169,7 +172,13 @@ fn main() -> ExitCode {
     // change at all, a motion trail is a record of several moments and a run has to be *watched*
     // for one to exist. See `coacervate_render::Dump`.
     let mut filming = if arguments.dump_frame.is_some() && !arguments.window {
-        match coacervate_render::Dump::open() {
+        let opened = if arguments.panel {
+            coacervate_render::Dump::showing_panel()
+        } else {
+            coacervate_render::Dump::open()
+        };
+
+        match opened {
             Ok(dump) => Some(dump),
             Err(problem) => {
                 eprintln!("{problem}");
@@ -196,7 +205,6 @@ fn main() -> ExitCode {
     let interrupt = Interrupt::new();
     listen(&interrupt);
 
-    let years = f64::from(world.config().world.years_per_tick);
     let mut run = Run::new(world, &bounds, &interrupt);
 
     let why = if arguments.window {
@@ -229,7 +237,7 @@ fn main() -> ExitCode {
 
         run.go(|world| {
             if world.ticks().is_multiple_of(REPORT_EVERY) {
-                report(world, years);
+                report(world);
             }
 
             // ⭐ The last hundred moments of the run, eleven ticks apart, which is what a window
@@ -252,7 +260,7 @@ fn main() -> ExitCode {
     if arguments.window {
         heading();
     }
-    report(run.world(), years);
+    report(run.world());
     println!("\n{}", ending(why));
 
     let Some(path) = &arguments.dump_frame else {
@@ -396,18 +404,13 @@ fn heading() {
 ///
 /// The time column is SPEC section 2's deep time: the tick count multiplied by
 /// `world.years_per_tick` and read in millions of years, so a long run reads as Earth's history
-/// rather than as a counter. It is presentation and it never enters the physics.
-fn report(world: &World, years_per_tick: f64) {
+/// rather than as a counter. It is presentation and it never enters the physics. The arithmetic
+/// is `census::millions_of_years`, which the window's title bar and Phase 6's panel also read -
+/// so the three places a person is told how far a run has got cannot disagree.
+fn report(world: &World) {
     let census = Census::of(world);
     let ledger = world.ledger();
-
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "a tick count is turned into a span of geological time for a person to read; \
-                  the digits lost are far below the resolution of a figure printed to one \
-                  decimal place"
-    )]
-    let millions = world.ticks() as f64 * years_per_tick / 1e6;
+    let millions = millions_of_years(world);
 
     println!(
         "{:>9.1} Ma {:>9} {:>6} {:>9.0} {:>8.0} {:>8.0} {:>11.0} {:>11.0} {:>9} {:>9} \

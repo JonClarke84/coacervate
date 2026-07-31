@@ -47,6 +47,7 @@ use crate::camera::Lens;
 use crate::controls::{Ask, Controls, gesture};
 use crate::frame::Renderer;
 use crate::gpu::{self, Gpu};
+use crate::panel::Chrome;
 use crate::scene::Scene;
 use coacervate_sim::world::World;
 use std::path::{Path, PathBuf};
@@ -240,6 +241,9 @@ struct Open {
     renderer: Renderer,
     controls: Controls,
 
+    /// Phase 6's panel, and the switch that takes it away.
+    chrome: Chrome,
+
     /// What the title bar currently says, so it is only written when it changes.
     titled: String,
 }
@@ -311,6 +315,7 @@ impl<W: Watched> Watcher<'_, W> {
         surface.configure(self.gpu.device(), &configuration);
 
         Ok(Open {
+            chrome: Chrome::new(&self.gpu),
             window,
             surface,
             configuration,
@@ -346,9 +351,13 @@ impl<W: Watched> Watcher<'_, W> {
         open.controls.resize((size.width, size.height));
     }
 
-    /// Draw the world as it stands onto the window.
+    /// Draw the world as it stands onto the window, and the chrome over the top of it.
     ///
     /// Whatever the simulation left is what gets drawn. Nothing here ticks anything.
+    ///
+    /// ⭐ **The order is `A1`.** The renderer's composite pass writes every pixel of the target
+    /// and the present is the next thing that happens, so the chrome has to arrive between the
+    /// two - and it has to *load* the target rather than clear it. See `panel.rs`.
     fn draw(&mut self) {
         let Some(open) = &mut self.open else {
             return;
@@ -356,6 +365,9 @@ impl<W: Watched> Watcher<'_, W> {
 
         let scene = Scene::of(self.watched.world());
         let camera = open.controls.lens().camera();
+        let size = (open.configuration.width, open.configuration.height);
+        open.chrome
+            .compose(self.watched.world(), size, scale_of(&open.window));
 
         match open.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(showing)
@@ -364,6 +376,7 @@ impl<W: Watched> Watcher<'_, W> {
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
                 open.renderer.draw(&self.gpu, &scene, &camera, &target);
+                open.chrome.paint(&self.gpu, &target, size);
 
                 open.window.pre_present_notify();
                 self.gpu.queue().present(showing);
@@ -403,15 +416,40 @@ impl<W: Watched> Watcher<'_, W> {
     }
 
     /// Draw what the window is showing, and write it out.
+    ///
+    /// ⚠️ **The panel is on it, and that is the whole point of this being the window's own
+    /// call.** `docs/PHASE5.md`'s C6 settled that a frame dumped from a window is a photograph of
+    /// the window - the view it was left at, at the size it was left at - and the chrome is part
+    /// of what was on the screen. A frame taken in screensaver mode therefore has nothing on it,
+    /// which is the honest answer and is also how somebody keeps a picture of the world.
+    ///
+    /// The headless `--dump-frame` is the other way round: no panel unless `--panel` asks. See
+    /// `lib.rs`'s `Dump`.
     fn write_frame(&mut self, path: &Path) {
         let Some(open) = &mut self.open else {
             return;
         };
 
         let scene = Scene::of(self.watched.world());
-        let drawn = open
-            .renderer
-            .render_through(&self.gpu, &scene, &open.controls.lens().camera());
+
+        // ⚠️ Composed again rather than reusing what the last drawn frame left, and the first
+        // frame this ever wrote is why. `--window --dump-frame` writes after the run has ended,
+        // which is several ticks after the last `draw`, so the panel said 81 alive and 183,328
+        // in the field while the picture beside it - and the closing report - said 183,326. A
+        // photograph in which the caption and the image are of different moments is worse than
+        // either.
+        open.chrome.compose(
+            self.watched.world(),
+            (open.configuration.width, open.configuration.height),
+            scale_of(&open.window),
+        );
+
+        let drawn = open.renderer.render_through_under(
+            &self.gpu,
+            &scene,
+            &open.controls.lens().camera(),
+            &mut open.chrome,
+        );
 
         match drawn.write_png(path) {
             Ok(()) => println!(
@@ -431,19 +469,21 @@ impl<W: Watched> Watcher<'_, W> {
     /// report already does this and the window is the only other place in the program that
     /// shows a tick count to anybody.
     ///
-    /// The title is the whole of this group's interface, and that is on purpose - the panels
-    /// are Phase 6's. Written only when the words change, because a title bar rewritten sixty
-    /// times a second is a taskbar entry that flickers, which is the sort of thing CLAUDE.md's
-    /// "nothing that pulls the eye" is about.
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "a tick count is turned into a span of geological time for a person to read; \
-                  the digits lost are far below the resolution of a figure printed to one \
-                  decimal place. main.rs says the same thing about the same conversion"
-    )]
+    /// Written only when the words change, because a title bar rewritten sixty times a second is
+    /// a taskbar entry that flickers, which is the sort of thing CLAUDE.md's "nothing that pulls
+    /// the eye" is about.
+    ///
+    /// ⚠️ **The title stays even in screensaver mode**, and that is deliberate rather than
+    /// overlooked. The mode hides the program's *chrome*; a window's title bar belongs to the
+    /// desktop, and a window with no name in the taskbar is harder to find rather than calmer.
+    /// Phase 10 is where full screen, if it ever exists, would take the frame away as well.
+    ///
+    /// The arithmetic is `census::millions_of_years`, which is also what the progress line and
+    /// the panel read - so the three things in this program that show a person how far a run has
+    /// got cannot disagree about it.
     fn retitle(&mut self) {
         let world = self.watched.world();
-        let millions = world.ticks() as f64 * f64::from(world.config().world.years_per_tick) / 1e6;
+        let millions = crate::census::millions_of_years(world);
         let alive = world.organisms().iter().flatten().count();
         let said = format!("Coacervate - {millions:.1} Ma, {alive} alive");
 
@@ -470,7 +510,7 @@ impl<W: Watched> ApplicationHandler for Watcher<'_, W> {
                 let size = open.window.inner_size();
                 println!(
                     "A window is open on {}, {} by {} pixels. Drag to pan, wheel to zoom, F12 \
-                     for a frame, close it to stop the run.",
+                     for a frame, S for screensaver mode, close it to stop the run.",
                     self.gpu.name(),
                     size.width,
                     size.height
@@ -501,11 +541,24 @@ impl<W: Watched> ApplicationHandler for Watcher<'_, W> {
             WindowEvent::RedrawRequested => self.draw(),
 
             other => {
-                if let Some(gesture) = gesture(&other)
-                    && let Some(open) = &mut self.open
-                    && let Some(Ask::Dump) = open.controls.apply(gesture)
-                {
-                    self.dump();
+                let asked = gesture(&other).and_then(|gesture| {
+                    self.open
+                        .as_mut()
+                        .and_then(|open| open.controls.apply(gesture))
+                });
+
+                match asked {
+                    Some(Ask::Dump) => self.dump(),
+
+                    // ⭐ **A3.** One line, and every panel in the program goes. `panel.rs`
+                    // explains why it is one line and why it stays one line as panels are added.
+                    Some(Ask::Screensaver) => {
+                        if let Some(open) = &mut self.open {
+                            open.chrome.toggle();
+                        }
+                    }
+
+                    None => {}
                 }
             }
         }
@@ -539,6 +592,22 @@ impl<W: Watched> ApplicationHandler for Watcher<'_, W> {
             open.window.request_redraw();
         }
     }
+}
+
+/// What one of egui's points is worth in pixels on this window.
+///
+/// Windows reports a display scale of 1, 1.25, 1.5 or 2 - a handful of exact values, every one
+/// of which an `f32` holds exactly. Handing it to the chrome rather than assuming one is what
+/// makes the panel the same physical size as everything else on a scaled display, instead of
+/// being two-thirds of it.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a display scale is one of a handful of exact quarters, which f32 represents \
+              exactly; there is no lossless conversion from f64 and nothing here to be lost. \
+              controls.rs makes the same allowance about a pointer position"
+)]
+fn scale_of(window: &Window) -> f32 {
+    window.scale_factor() as f32
 }
 
 #[cfg(test)]
@@ -718,13 +787,28 @@ mod tests {
     /// wall-clock bound and extinction all arrive without anybody touching the window, and a
     /// window that stayed open showing a run that had ended would be a program that never
     /// finished.
+    ///
+    /// ⚠️ **The budget here is deliberately enormous, and Phase 6 is why.** This test's claim is
+    /// about a run *running out*, and nothing in it is about a clock - but `advance` also comes
+    /// back when its budget is spent, so with the real eight milliseconds the test was quietly
+    /// asserting that three cost-free ticks and two calls to `Instant::now` fit inside eight
+    /// milliseconds of wall clock. They do, on an idle machine. They did not on the run of
+    /// `scripts/check.ps1` immediately after Phase 6 Group A added five tests to this crate,
+    /// three of which open render pipelines and block on the card from other threads: this one
+    /// failed with *"a run with three ticks left in it did not report itself over inside one
+    /// frame"*, because the thread had been descheduled mid-loop and `advance` broke on the
+    /// budget with a tick still to go.
+    ///
+    /// A budget nothing can exhaust removes the clock from a test that was never about one.
+    /// `the_simulation_and_the_display_run_at_their_own_speeds` is where the budget *is* the
+    /// claim, and it keeps the real one.
     #[test]
     fn a_run_that_ends_on_its_own_closes_the_window() {
         let mut run = Counted::new(3, true, Duration::ZERO);
 
         assert!(
-            !advance(&mut run, BUDGET),
-            "a run with three ticks left in it did not report itself over inside one frame"
+            !advance(&mut run, Duration::from_secs(600)),
+            "a run with three ticks left in it did not report itself over"
         );
         assert_eq!(
             run.ticks(),

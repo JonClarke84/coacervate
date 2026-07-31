@@ -55,6 +55,28 @@ winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
 # Writing the frame out. Chosen over `image`, which pulls in a decoder for every format
 # it knows and a colour-management stack, for the one format this project ever writes.
 png = "0.18.1"
+# The panels. Phase 6.
+#
+# ⚠️ NOTE THE ABSENCE OF `egui-wgpu`, AND DO NOT ADD IT WITHOUT READING THIS.
+#
+#   egui 0.35.0        the newest there is
+#   egui-wgpu 0.35.0   the newest there is, and it requires wgpu ^29.0
+#   wgpu 30.0.0        what this renderer is written against, and 30 is outside ^29
+#
+# Cargo would resolve that by compiling wgpu 29 *and* wgpu 30, and the two crates'
+# types do not unify: egui-wgpu's `Renderer::render` wants a wgpu-29 `RenderPass` and
+# every pass in `frame.rs` is a wgpu-30 one. It is a hard type error, not a warning.
+#
+# The two ways out were to move wgpu back to 29 -- which is a rewrite of a working
+# renderer, since `CurrentSurfaceTexture`, `Queue::present`, `SurfaceColorSpace`,
+# `multiview_mask` and `depth_slice` are all wgpu 30 -- or to paint egui's own output
+# with the wgpu we already have. `panel.rs` is the second, and it is about two hundred
+# lines because egui hands over a triangle list and one texture atlas and asks for
+# nothing else. Delete it and take the dependency the day egui-wgpu names wgpu 30.
+#
+# `bytemuck` because a vertex buffer wants bytes; the default features are the fonts,
+# which a panel with no glyphs in it would be short of.
+egui = { version = "0.35.0", features = ["bytemuck"] }
 
 [workspace.lints.rust]
 # Belt and braces with the #![forbid(unsafe_code)] in each crate root. This form is a

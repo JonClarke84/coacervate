@@ -592,7 +592,14 @@ tick has to take, and a second answer to *"what tick is on the screen?"*. Not wo
 something needs it. If Group D's motion trails make the frame rate matter more than the tick
 rate, the cheaper move is to lower the budget rather than to add a thread.
 
-**Q24** (new, Group C) — **screensaver mode was deferred and there is nothing to hide yet.**
+**Q24** (new, Group C) — **answered in Phase 6 Group A**, and the argument below is what it was
+answered by: screensaver mode is `S`, it arrived *with* the first panel rather than after it, and
+the mechanism is one line at the top of `panel.rs`'s `Chrome::compose` that runs above every
+widget in the program — so a panel added in a later group is hidden by it without anybody
+remembering. Stated as a measurement: a frame taken in screensaver mode is **byte-for-byte
+identical** to one rendered by a build with no chrome in it at all. See `docs/PHASE6.md`.
+
+The original note follows. **Screensaver mode was deferred and there is nothing to hide yet.**
 CLAUDE.md lists it under *Character of the thing* and the phase table puts it in Phase 10. Group
 C's entire interface is a title bar; a toggle that hid it would be a toggle for the window
 decorations, which is not what the mode is for. It belongs with Phase 6's panels, which are the

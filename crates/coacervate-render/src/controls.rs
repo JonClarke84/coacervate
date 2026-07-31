@@ -22,9 +22,24 @@
 //! | The wheel | Zooms, anchored on whatever the pointer is over |
 //! | The pointer leaving the window | Lets go, so the view does not jump when it comes back |
 //! | `F12` | Dumps the frame - CLAUDE.md's *"F12 while running dumps the current frame"* |
+//! | `S` | Screensaver mode: every panel goes away, and only the world is left |
 //!
-//! There is nothing else, and that is deliberate: every key this group binds is a key Phase 6
-//! cannot have, and Phase 6 is the one with panels in it.
+//! There is nothing else, and that is deliberate: every key bound here is a key a later group
+//! cannot have.
+//!
+//! # ⚠️ Why `S`, and why it is the second key this program ever bound
+//!
+//! CLAUDE.md's *Character of the thing*: *"A screensaver mode that hides all UI and shows only
+//! the world."* `S` for screensaver, which is the only mnemonic there is for it. `F11` was the
+//! obvious alternative and is wrong: on Windows that key means *full screen* everywhere else,
+//! and this mode is not that - the window stays exactly the size it was and only the chrome
+//! goes.
+//!
+//! `docs/PHASE5.md`'s **Q24** is why it is here in Group A of Phase 6 rather than in Phase 10,
+//! where the phase table puts it. Group C deferred it with the argument that *"a mode that hides
+//! chrome is much easier to keep working if it exists from the first piece of chrome onwards"* -
+//! and `panel.rs` is where that promise is actually kept, in one line at the top of
+//! `Chrome::compose` that a panel added later cannot get round.
 
 use crate::camera::Lens;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -66,6 +81,9 @@ pub enum Gesture {
 
     /// `F12`: write the frame on the screen out to a file.
     Dump,
+
+    /// `S`: take every panel away, or put them back.
+    Screensaver,
 }
 
 /// What the window has to do about a gesture, over and above moving the camera.
@@ -73,6 +91,9 @@ pub enum Gesture {
 pub enum Ask {
     /// Write the frame out. See `window.rs`.
     Dump,
+
+    /// ⭐ **A3.** Turn screensaver mode on, or off. See `panel.rs`.
+    Screensaver,
 }
 
 /// What a window event means here, if it means anything.
@@ -136,6 +157,7 @@ pub fn key(key: PhysicalKey, state: ElementState, repeat: bool) -> Option<Gestur
 
     match key {
         PhysicalKey::Code(KeyCode::F12) => Some(Gesture::Dump),
+        PhysicalKey::Code(KeyCode::KeyS) => Some(Gesture::Screensaver),
         _ => None,
     }
 }
@@ -192,6 +214,7 @@ impl Controls {
             Gesture::Release => self.held = false,
             Gesture::Wheel(notches) => self.lens.zoom(notches, self.pointer),
             Gesture::Dump => return Some(Ask::Dump),
+            Gesture::Screensaver => return Some(Ask::Screensaver),
         }
 
         None
@@ -416,14 +439,71 @@ mod tests {
             "F12 held down asks for a frame per keyboard repeat"
         );
 
-        // Nothing else is bound. Phase 6 is where keys start meaning things.
-        for other in [KeyCode::Escape, KeyCode::Space, KeyCode::KeyS, KeyCode::F11] {
+        // Nothing else is bound beyond `S`, which Phase 6 added.
+        for other in [KeyCode::Escape, KeyCode::Space, KeyCode::KeyD, KeyCode::F11] {
             assert_eq!(
                 key(PhysicalKey::Code(other), ElementState::Pressed, false),
                 None,
-                "{other:?} does something, and Group C binds one key"
+                "{other:?} does something, and this program binds two keys"
             );
         }
+    }
+
+    /// ⭐ **A3, at the keyboard end.** `S` asks for screensaver mode, once per press.
+    ///
+    /// The same three claims `F12` makes, and for the same reasons - a mode toggled on the
+    /// release as well as the press would never change at all, and one toggled on the keyboard
+    /// repeat would flicker the whole interface on and off about thirty times a second, which is
+    /// the single loudest thing this program could possibly do and precisely what CLAUDE.md's
+    /// *"no flashing"* is about.
+    ///
+    /// The last claim is the one that is about *this* key rather than about keys in general:
+    /// asking for screensaver mode must not move the camera. A mode that hid the panels and
+    /// nudged the view would make its own before-and-after frames incomparable, and comparing
+    /// them byte for byte is how `screensaver_mode_hides_every_panel` is stated.
+    #[test]
+    fn s_asks_for_screensaver_mode_once_per_press() {
+        let mut controls = zoomed_in();
+        let looking = controls.lens().camera();
+
+        assert_eq!(
+            key(
+                PhysicalKey::Code(KeyCode::KeyS),
+                ElementState::Pressed,
+                false
+            ),
+            Some(Gesture::Screensaver)
+        );
+        assert_eq!(
+            controls.apply(Gesture::Screensaver),
+            Some(Ask::Screensaver),
+            "S was recognised and then did not reach the window"
+        );
+        assert_eq!(
+            controls.lens().camera(),
+            looking,
+            "hiding the panels moved the camera, so the world would not be the same picture \
+             underneath them"
+        );
+
+        assert_eq!(
+            key(
+                PhysicalKey::Code(KeyCode::KeyS),
+                ElementState::Released,
+                false
+            ),
+            None,
+            "letting go of S toggles the mode back, so it can never be entered"
+        );
+        assert_eq!(
+            key(
+                PhysicalKey::Code(KeyCode::KeyS),
+                ElementState::Pressed,
+                true
+            ),
+            None,
+            "S held down toggles the whole interface on and off per keyboard repeat"
+        );
     }
 
     /// A touchpad's pixel-by-pixel scrolling zooms at about the rate a wheel notch does.

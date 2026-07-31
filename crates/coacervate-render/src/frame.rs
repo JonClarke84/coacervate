@@ -47,6 +47,7 @@
 
 use crate::camera::Camera;
 use crate::gpu::Gpu;
+use crate::panel::Chrome;
 use crate::scene::{Grain, Instance, Scene};
 use bytemuck::Zeroable as _;
 use std::path::Path;
@@ -679,11 +680,49 @@ impl Renderer {
     /// finished frame back. Both are conditions under which nothing further can be done.
     #[must_use]
     pub fn render_through(&mut self, gpu: &Gpu, scene: &Scene, camera: &Camera) -> Frame {
+        self.render_through_over(gpu, scene, camera, None)
+    }
+
+    /// The same, with whatever the chrome last composed drawn over the top of it.
+    ///
+    /// ⭐ **This is the only difference between a frame with a panel on it and a frame without
+    /// one**, and it is deliberately a difference of one call rather than of a second path: the
+    /// world underneath is drawn by exactly the code every other frame in this project is drawn
+    /// by. `egui_draws_over_the_world_without_clearing_it` is what holds it to that.
+    ///
+    /// # Panics
+    ///
+    /// If the world holds more than four billion living cells, or if the card fails to hand the
+    /// finished frame back.
+    #[must_use]
+    pub fn render_through_under(
+        &mut self,
+        gpu: &Gpu,
+        scene: &Scene,
+        camera: &Camera,
+        chrome: &mut Chrome,
+    ) -> Frame {
+        self.render_through_over(gpu, scene, camera, Some(chrome))
+    }
+
+    /// Both of the above. Split out so that the two differ in one argument and nothing else.
+    fn render_through_over(
+        &mut self,
+        gpu: &Gpu,
+        scene: &Scene,
+        camera: &Camera,
+        chrome: Option<&mut Chrome>,
+    ) -> Frame {
         let target = self
             .working
             .picture
             .create_view(&wgpu::TextureViewDescriptor::default());
         let draws = self.draw(gpu, scene, camera, &target);
+
+        if let Some(chrome) = chrome {
+            chrome.paint(gpu, &target, (self.width, self.height));
+        }
+
         let pixels = self.copy_back(gpu);
 
         Frame {

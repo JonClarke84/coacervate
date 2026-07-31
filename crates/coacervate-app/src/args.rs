@@ -76,6 +76,20 @@ pub struct Arguments {
     /// costing a display's worth of drawing for nobody, and it would fail outright on a machine
     /// with no graphics card that is otherwise perfectly able to run the simulation.
     pub window: bool,
+
+    /// Draw the panel on the frame `--dump-frame` writes.
+    ///
+    /// ⚠️ **Off by default, and the default is the interesting decision.** CLAUDE.md gives frame
+    /// dumping one job - *"Claude reads those PNGs directly to see what it has built"* - and
+    /// every measurement `coacervate-render` makes is taken off a frame drawn this way. A panel
+    /// on all of them would be a permanent blind spot over the top-left corner of the one
+    /// instrument this project has for looking at itself, and a frame is a picture of the
+    /// *world*.
+    ///
+    /// It affects the headless dump only. A window has always dumped whatever it was showing -
+    /// `docs/PHASE5.md`'s C6 - and what it is showing includes the panel, unless `S` has taken
+    /// it away.
+    pub panel: bool,
 }
 
 /// Why a command line could not be understood.
@@ -163,9 +177,15 @@ Usage: coacervate [options]
                        through whatever view it had been left at.
   --window             Watch the run in a window. Drag to pan, the wheel to
                        zoom, F12 to write the frame on the screen out to
-                       runs/<id>/frames/. Closing the window finishes the tick
-                       in progress and stops the run. Without this the run is
-                       headless and reports itself as a column of numbers.
+                       runs/<id>/frames/, S for screensaver mode, which hides
+                       every panel and leaves only the world. Closing the
+                       window finishes the tick in progress and stops the run.
+                       Without this the run is headless and reports itself as
+                       a column of numbers.
+  --panel              Draw the panel on the frame --dump-frame writes. Off by
+                       default: a dumped frame is a picture of the world. This
+                       does nothing to a window, which always shows the panel
+                       until S takes it away.
   --help               Show this and stop.
 
 With no options at all it runs the settings built into the program until it is
@@ -193,6 +213,7 @@ impl Arguments {
                 // same thing twice and there is no second reading of it to be guessed at,
                 // which is the whole of why the others are refused.
                 "--window" => parsed.window = true,
+                "--panel" => parsed.panel = true,
                 "--config" => {
                     once(&mut parsed.config, "--config")?;
                     parsed.config = Some(PathBuf::from(value(&mut line, "--config")?));
@@ -474,6 +495,7 @@ mod tests {
             "--dump-frame",
             "frames/one.png",
             "--window",
+            "--panel",
         ]))
         .expect("a line with every option on it must be understood");
 
@@ -482,7 +504,18 @@ mod tests {
         assert_eq!(asked.ticks, Some(12_345));
         assert_eq!(asked.dump_frame, Some(PathBuf::from("frames/one.png")));
         assert!(asked.window);
+        assert!(asked.panel);
         assert!(!asked.help);
+
+        // ⚠️ And a dumped frame has no panel on it unless one is asked for. CLAUDE.md gives
+        // frame dumping one job - looking at what has been built - and a panel over the corner
+        // of every frame the project ever measures would be a permanent blind spot in it.
+        assert!(
+            !Arguments::parse(line(&["--dump-frame", "frames/one.png"]))
+                .expect("a plain dump is a request")
+                .panel,
+            "a dumped frame has the panel drawn on it without being asked"
+        );
 
         // ⚠️ And a run is headless unless a window is asked for. A twelve-hour run started by a
         // scheduled task on a machine nobody is sitting at must not open one, and on a machine
@@ -791,6 +824,7 @@ mod tests {
             "--ticks",
             "--dump-frame",
             "--window",
+            "--panel",
             "--help",
         ] {
             assert!(
@@ -805,9 +839,11 @@ mod tests {
              far - so the wait looks like a program that has hung"
         );
 
-        // The window has no menu, no panel and no legend - Phase 6 is where those arrive - so
-        // the help text is the only place its two gestures and its one key are written down.
-        for gesture in ["F12", "wheel", "Drag"] {
+        // The window has no menu and no legend, so the help text is the only place its two
+        // gestures and its two keys are written down. `S` is Phase 6's screensaver mode, which
+        // is invisible by definition: a person who does not know the key cannot discover the
+        // mode by looking at the window, because what it does is take things away.
+        for gesture in ["F12", "wheel", "Drag", "S for screensaver"] {
             assert!(
                 HELP.contains(gesture),
                 "the window answers to {gesture} and nothing anywhere says so"

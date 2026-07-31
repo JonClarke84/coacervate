@@ -16,8 +16,10 @@
 //!
 //! Group D is the rest of SPEC section 12: a floating-point target, a separable-Gaussian bloom, a
 //! tone-mapped composite, an accumulation buffer, the depth gradient, the light shafts and the
-//! marine snow. The panels, the sliders and the charts are Phase 6's, and this crate has no
-//! `egui` in it yet.
+//! marine snow.
+//!
+//! Phase 6 adds the chrome over the top of all of it: one read-only panel, and the switch that
+//! takes it away. The sliders and the charts are Groups B and C of that phase.
 //!
 //! # The pieces
 //!
@@ -27,6 +29,8 @@
 //! | [`scene`] | The five things SPEC section 12 says a cell carries, and the drift |
 //! | [`camera`] | Where the world is on the frame, seam included, and the hands on it |
 //! | [`frame`] | The five passes, the offscreen targets, the copy back, and the PNG |
+//! | [`census`] | What the population looks like from outside, and what year it is |
+//! | [`panel`] | The chrome: one panel over the world, and screensaver mode |
 //! | [`controls`] | What a person did, and what the camera does about it |
 //! | [`window`] | The window, the event loop, `F12`, and a clean way to stop |
 //!
@@ -36,6 +40,7 @@
 //! | `post.wgsl` | The motion trail, and the two halves of the separable Gaussian |
 //! | `water.wgsl` | The depth gradient, the light shafts, the bloom composite and the tone map |
 //! | `snow.wgsl` | The marine snow, which is the actual detritus |
+//! | `panel.wgsl` | egui's own triangles, over the finished picture. See [`panel`] for why this is not `egui-wgpu` |
 //!
 //! # ⚠️ One thing about colour that is *not* in this crate
 //!
@@ -57,9 +62,11 @@
 )]
 
 pub mod camera;
+pub mod census;
 pub mod controls;
 pub mod frame;
 pub mod gpu;
+pub mod panel;
 pub mod scene;
 pub mod window;
 
@@ -133,10 +140,20 @@ pub const TRAIL_FRAMES: u64 = 100;
 pub struct Dump {
     gpu: gpu::Gpu,
     renderer: frame::Renderer,
+
+    /// The panel, if this dump was asked for one. See [`Dump::showing_panel`].
+    chrome: Option<panel::Chrome>,
 }
 
 impl Dump {
     /// Open a device and build everything a dumped frame needs.
+    ///
+    /// ⚠️ **No panel.** A dumped frame is a picture of the *world*, and CLAUDE.md asks for frames
+    /// so that visual work can be judged - *"Claude reads those PNGs directly to see what it has
+    /// built"*. Every measurement in `frame.rs` is taken off a frame like this, and a panel
+    /// covering the top-left corner of all of them would be a permanent blind spot in the one
+    /// instrument this project has for looking at itself. [`Dump::showing_panel`] is the way to
+    /// get one with the chrome on, and it exists because A4 needs exactly that.
     ///
     /// # Errors
     ///
@@ -145,7 +162,28 @@ impl Dump {
         let gpu = gpu::Gpu::open().map_err(DumpError::NoGpu)?;
         let renderer = frame::Renderer::new(&gpu, DUMP_WIDTH, DUMP_HEIGHT);
 
-        Ok(Self { gpu, renderer })
+        Ok(Self {
+            gpu,
+            renderer,
+            chrome: None,
+        })
+    }
+
+    /// The same, with the panel drawn on the frame as well. `--panel`.
+    ///
+    /// The frame a *window* dumps has always shown whatever the window was showing - that is
+    /// `docs/PHASE5.md`'s C6 - so `--window --dump-frame` gets the panel without asking. This is
+    /// the headless path saying the same thing on purpose, and it is what A4 was looked at
+    /// through.
+    ///
+    /// # Errors
+    ///
+    /// If there is no graphics adapter. See [`DumpError`].
+    pub fn showing_panel() -> Result<Self, DumpError> {
+        let mut dump = Self::open()?;
+        dump.chrome = Some(panel::Chrome::new(&dump.gpu));
+
+        Ok(dump)
     }
 
     /// Which tick a run has to start showing this a world on for the trail to be full.
@@ -176,9 +214,19 @@ impl Dump {
     ///
     /// If the file cannot be written. See [`DumpError`].
     pub fn write(&mut self, world: &World, path: &Path) -> Result<(), DumpError> {
+        let size = self.size();
         let scene = scene::Scene::of(world);
-        let camera = camera::Camera::showing_all_of((scene.width, scene.height), self.size());
-        let drawn = self.renderer.render_through(&self.gpu, &scene, &camera);
+        let camera = camera::Camera::showing_all_of((scene.width, scene.height), size);
+
+        let drawn = match &mut self.chrome {
+            None => self.renderer.render_through(&self.gpu, &scene, &camera),
+            Some(chrome) => {
+                // A dumped frame's pixels are its own, so a point is a pixel.
+                chrome.compose(world, size, 1.0);
+                self.renderer
+                    .render_through_under(&self.gpu, &scene, &camera, chrome)
+            }
+        };
 
         drawn.write_png(path).map_err(DumpError::Unwritable)
     }
