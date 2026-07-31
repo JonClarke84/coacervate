@@ -435,7 +435,17 @@ const MAX_DEV_STEPS_CEILING: u32 = 255;
 ///
 /// A quarter itself is allowed. A limit that cannot be reached is a limit one step lower
 /// with nobody able to tell which.
-const DIFFUSION_STABILITY_LIMIT: f32 = 0.25;
+///
+/// ⭐ **Public since Phase 6, and the reason is the one thing a slider must not be able to
+/// do.** `panel.rs` puts `light.diffusion` on a slider, and a slider whose far end was
+/// written out as `0.25` in a second file would be one edit away from being able to express
+/// a value this gate refuses - and, worse, one edit away from being able to express a value
+/// this gate *would* refuse if it were asked, in a program where the only reason it is asked
+/// is that somebody remembered to ask it. The slider's upper end is this constant, so the
+/// two cannot drift apart; and [`RawConfig::validate`] is still run over every change, so
+/// the bound is a convenience and the gate is the guarantee. See
+/// `coacervate_render::settings`.
+pub const DIFFUSION_STABILITY_LIMIT: f32 = 0.25;
 
 // ---------------------------------------------------------------------------------------
 // The three kinds of bound

@@ -37,18 +37,42 @@ struct View {
     origin: vec2<f32>,
     // How much world the frame covers, in world units.
     span: vec2<f32>,
-    // How far a cell's light reaches, as a multiple of its own radius.
-    glow: f32,
-    // How bright the very centre of one cell is, before anything is added to it.
-    peak: f32,
     // How big the frame is, in pixels. Read by `snow.wgsl` and not here.
     frame: vec2<f32>,
     // How far the light shafts have drifted. Read by `water.wgsl` and not here.
     phase: f32,
-    unused: f32,
+    // ⚠️ Three scalars and **not** a `vec3<f32>`, which is what this was written as first. WGSL
+    // gives a `vec3` an alignment of sixteen, so one placed after five `vec2`s and an `f32`
+    // starts at byte 48 rather than 36 and takes the record to 64 - while `camera.rs`'s
+    // `[f32; 3]` starts at 36 and leaves it at 48. The two would have been different records
+    // with the same name. `frame.rs` states `min_binding_size` for exactly this, and that is
+    // what caught it: *"Buffer structure size 64… ended up greater than the given
+    // min_binding_size, which is 48"*, at pipeline creation rather than in the picture.
+    unused_a: f32,
+    unused_b: f32,
+    unused_c: f32,
+};
+
+// ⭐ **Phase 6, B5.** Everything about what the picture looks like, in one record - `docs/
+// PHASE5.md`'s Q26. `camera.rs` builds it and this is its layout field for field. Two of the ten
+// are read here; the rest belong to `water.wgsl` and to the blend state of the trail.
+struct Look {
+    // How far a cell's light reaches, as a multiple of its own radius.
+    glow: f32,
+    // How bright the very centre of one cell is, before anything is added to it.
+    peak: f32,
+    bloom: f32,
+    knee: f32,
+    abyss: vec3<f32>,
+    deepens: f32,
+    surface: vec3<f32>,
+    lean: f32,
+    shafts: vec3<f32>,
+    trail_fade: f32,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
+@group(1) @binding(0) var<uniform> look: Look;
 
 // SPEC section 12's five, and `scene.rs`'s `Instance` field for field.
 struct Cell {
@@ -158,7 +182,7 @@ fn vertex(@builtin(vertex_index) vertex: u32, cell: Cell) -> Lit {
         }
     }
 
-    let reach = cell.radius * view.glow;
+    let reach = cell.radius * look.glow;
     let at = vec2<f32>(x, cell.position.y) + corner * reach;
     let across = (at - view.origin) / view.span;
 
@@ -178,7 +202,7 @@ fn vertex(@builtin(vertex_index) vertex: u32, cell: Cell) -> Lit {
         hue_to_rgb(cell.hue),
         clamp(saturation_of(cell.kind) + well * FED_SATURATION, 0.0, 1.0),
     );
-    out.light = tint * view.peak * (1.0 + fed);
+    out.light = tint * look.peak * (1.0 + fed);
 
     return out;
 }

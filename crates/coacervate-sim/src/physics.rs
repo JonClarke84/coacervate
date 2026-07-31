@@ -555,6 +555,18 @@ impl Physics {
         }
     }
 
+    /// Take the `[physics]` table again, on a running world.
+    ///
+    /// SPEC section 3 does not lock `[physics]`, so drag, stiffness and damping can all be
+    /// turned mid-run. Nothing here is a size, so nothing here is allocated: `width` and
+    /// `height` come from `[world]`, which is locked, and every array was built from
+    /// `[limits]`, which is locked too. See [`crate::world::World::retune`].
+    pub fn retune(&mut self, config: &Config) {
+        self.drag = config.physics.drag;
+        self.collision_stiffness = config.physics.collision_stiffness;
+        self.spring_damping = config.physics.spring_damping;
+    }
+
     /// Move every cell on by one tick.
     ///
     /// SPEC section 8's four lines, in its order: gather the forces, then let them change

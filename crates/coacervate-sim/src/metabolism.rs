@@ -246,6 +246,21 @@ impl Metabolism {
         }
     }
 
+    /// Take the two live numbers of the `[metabolism]` table again, on a running world.
+    ///
+    /// ⭐ **`upkeep_scale` is the one SPEC section 3 calls a temperature**, and raising it is the
+    /// environmental event that section's measurements are about: at 3 and above a founder dies
+    /// of old age before it has earned the reproduction threshold, and nothing is ever born.
+    /// This is the line that makes that a thing somebody can do to a run rather than a thing
+    /// they have to restart it to try.
+    ///
+    /// `limits`, `floor` and `room` are `[limits]`' and `[world]`'s and do not move. See
+    /// [`crate::world::World::retune`].
+    pub fn retune(&mut self, config: &Config) {
+        self.upkeep_scale = f64::from(config.metabolism.upkeep_scale);
+        self.gene_cost = f64::from(config.metabolism.gene_cost);
+    }
+
     /// Charge everything alive for the tick it has just had, and take away whatever did not
     /// survive it.
     ///

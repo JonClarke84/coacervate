@@ -568,6 +568,15 @@ impl Behaviour {
         }
     }
 
+    /// Take `metabolism.movement_cost` again, on a running world.
+    ///
+    /// The one number in this module that a configuration decides and SPEC section 3 does not
+    /// lock. `width` is `[world]`'s and every array here was sized from `[limits]`, so neither
+    /// moves. See [`crate::world::World::retune`].
+    pub fn retune(&mut self, config: &Config) {
+        self.movement_cost = f64::from(config.metabolism.movement_cost);
+    }
+
     /// Let every cell do what its kind does, for one tick.
     ///
     /// Read everything, then change everything. See the module documentation for why that is

@@ -168,6 +168,20 @@ impl Reproduction {
         }
     }
 
+    /// Take the reproduction threshold, the offspring's share and the whole `[mutation]` table
+    /// again, on a running world.
+    ///
+    /// ⚠️ **`limits` and `world` are deliberately not touched.** Both are locked by SPEC section
+    /// 3, and both are load-bearing here rather than incidental: `limits` is what
+    /// `development.rs` and `mutation.rs` are held inside - the genome cap CLAUDE.md marks
+    /// critical is in it - and `world` is where a newborn is put down. See
+    /// [`crate::world::World::retune`].
+    pub fn retune(&mut self, config: &Config) {
+        self.threshold = f64::from(config.metabolism.reproduction_threshold);
+        self.share = f64::from(config.metabolism.offspring_share);
+        self.mutation = config.mutation.clone();
+    }
+
     /// Give every organism that can afford one, and has somewhere to put one, a child.
     ///
     /// SPEC section 10's sentence, clause by clause, and nothing else: there is no courtship,

@@ -388,29 +388,7 @@ impl Grid {
         let rows = usize::try_from(rows_down).expect("a grid dimension fits in a machine word");
         let tile_count = cols * rows;
 
-        let light = &config.light;
-
-        let regrowth: Vec<f32> = (0..rows_down)
-            .map(|row| {
-                narrowed(f64::from(light.influx) * light_profile(row, rows_down, light.gradient))
-            })
-            .collect();
-
-        // Worked out here, once, and then never again: what the light's blotchiness does
-        // to a tile is a fixed feature of the world, not something that happens to it each
-        // tick. See `patchiness_is_stable_across_runs`.
-        let noise = PatchNoise::new(config.world.seed, cols_across, rows_down);
-        let patchiness = f64::from(light.patchiness);
-
-        let mut targets = Vec::with_capacity(tile_count);
-        for row in 0..rows_down {
-            let ceiling = f64::from(light.cap) * light_profile(row, rows_down, light.gradient);
-            for col in 0..cols_across {
-                targets.push(narrowed(ceiling * (1.0 + patchiness * noise.at(col, row))));
-            }
-        }
-
-        Self {
+        let mut grid = Self {
             cols,
             rows,
             across_per_unit: f64::from(cols_across) / f64::from(config.world.width),
@@ -418,11 +396,71 @@ impl Grid {
             last_col: f64::from(cols_across - 1),
             last_row: f64::from(rows_down - 1),
             tiles: vec![0.0; tile_count],
-            targets,
-            regrowth,
+            targets: vec![0.0; tile_count],
+            regrowth: vec![0.0; rows],
             flux: vec![0.0; tile_count],
-            diffusion: light.diffusion,
+            diffusion: 0.0,
+        };
+        grid.relight(config);
+
+        grid
+    }
+
+    /// Work out what the light does to this field, from a configuration's `[light]` table.
+    ///
+    /// ⭐ **Called by [`Grid::new`] and by nothing else until Phase 6, and that is the point of
+    /// it being a method rather than four lines inside the constructor.** SPEC section 3:
+    /// *"`[world]`, `[limits]` and `seed` lock at run start; the rest can be changed live, which
+    /// is how environmental events work."* `[light]` is not locked, so a run can be dimmed while
+    /// it is going - and what a tile's ceiling is, and what the light offers a row, are both
+    /// worked out *once* from `cap`, `gradient`, `patchiness` and `influx` rather than on every
+    /// tick. A live change therefore has to reach these two tables, and the only way to be sure
+    /// it computes them the same way the constructor did is for there to be one computation.
+    ///
+    /// ⚠️ **Nothing here is allocated and nothing here is resized.** Every vector is already the
+    /// size the grid's own dimensions imply, and those come from `[world]`, which is locked. So
+    /// this is a live change that cannot violate CLAUDE.md's *"allocate once, never grow"*.
+    ///
+    /// ⚠️ **The tiles are left holding whatever they were holding.** A ceiling lowered under a
+    /// full field leaves every tile above its target, which is a state SPEC section 4 already
+    /// has an answer for: [`Grid::spill`] moves the excess `field → dissipated` at the end of the
+    /// tick it is noticed on. So the energy that no longer fits is *accounted for* rather than
+    /// deleted, and the ledger goes on balancing across the change. Clamping the tiles here
+    /// instead would destroy that energy with no account to put it in, which is the exact
+    /// failure SPEC section 4's opening paragraphs are about.
+    pub fn relight(&mut self, config: &Config) {
+        let light = &config.light;
+        let cols_across = config.world.grid_cols.get();
+        let rows_down = config.world.grid_rows.get();
+
+        for (row, offered) in self.regrowth.iter_mut().enumerate() {
+            let row = u32::try_from(row).expect("a grid row fits in the type it was counted in");
+            *offered =
+                narrowed(f64::from(light.influx) * light_profile(row, rows_down, light.gradient));
         }
+
+        // Worked out here, once, and then never again until somebody turns the light down:
+        // what the light's blotchiness does to a tile is a fixed feature of the world, not
+        // something that happens to it each tick. See `patchiness_is_stable_across_runs`.
+        //
+        // ⚠️ The noise is seeded from `world.seed`, which is locked, so the *pattern* of the
+        // blotches is the same before and after a change and only its depth moves. A retune
+        // that re-drew the pattern would rearrange the whole field under a running population.
+        let noise = PatchNoise::new(config.world.seed, cols_across, rows_down);
+        let patchiness = f64::from(light.patchiness);
+
+        for row in 0..rows_down {
+            let ceiling = f64::from(light.cap) * light_profile(row, rows_down, light.gradient);
+            let down = usize::try_from(row).expect("a grid row fits in a machine word");
+
+            for col in 0..cols_across {
+                let across = usize::try_from(col).expect("a grid column fits in a machine word");
+                self.targets[down * self.cols + across] =
+                    narrowed(ceiling * (1.0 + patchiness * noise.at(col, row)));
+            }
+        }
+
+        self.diffusion = light.diffusion;
     }
 
     /// Which tile of the field a point in the world is standing on.

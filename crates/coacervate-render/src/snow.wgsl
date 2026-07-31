@@ -20,11 +20,13 @@ struct View {
     world: vec2<f32>,
     origin: vec2<f32>,
     span: vec2<f32>,
-    glow: f32,
-    peak: f32,
     frame: vec2<f32>,
     phase: f32,
-    unused: f32,
+    // Three scalars rather than a `vec3<f32>`, which would be aligned to sixteen and would make
+    // this a sixty-four-byte record against `camera.rs`'s forty-eight. See `cells.wgsl`.
+    unused_a: f32,
+    unused_b: f32,
+    unused_c: f32,
 };
 
 @group(0) @binding(0) var<uniform> view: View;

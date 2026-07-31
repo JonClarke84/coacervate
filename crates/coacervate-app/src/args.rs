@@ -312,6 +312,20 @@ pub struct Settings {
     /// Where it came from.
     source: Source,
 
+    /// ⭐ **The document as values, before the gate, with the command line's overrides in it.**
+    ///
+    /// Phase 6 is what wants it. `config.rs`'s two-of-everything arrangement exists so that a
+    /// number can be *held* before it is checked, and `coacervate_render::settings` needs
+    /// exactly that: a slider edits the transcript and puts the whole of it back through
+    /// `RawConfig::validate`, so the panel has to start from a transcript.
+    ///
+    /// ⚠️ **Kept rather than reconstructed**, and the alternative is what makes it worth a note.
+    /// A `Config` could be widened back into a `RawConfig` field by field - but narrowing is
+    /// lossy by design (`config.rs`: *"something has to give up those digits"*), so a document
+    /// rebuilt from one would read `0.0010000000474974513` where the file said `0.001`. The
+    /// panel would open showing numbers nobody typed.
+    raw: RawConfig,
+
     /// What was read out of it, checked, with any overrides from the command line applied.
     config: Config,
 }
@@ -421,14 +435,18 @@ impl Settings {
             raw.run.max_ticks = ticks;
         }
 
-        let config = raw.validate().map_err(|problem| SettingsError::Refused {
-            source: source.clone(),
-            problem,
-        })?;
+        let config = raw
+            .clone()
+            .validate()
+            .map_err(|problem| SettingsError::Refused {
+                source: source.clone(),
+                problem,
+            })?;
 
         Ok(Self {
             document,
             source,
+            raw,
             config,
         })
     }
@@ -437,6 +455,12 @@ impl Settings {
     #[must_use]
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// The same, as the document said them, before the gate. See [`Settings::raw`].
+    #[must_use]
+    pub fn raw(&self) -> &RawConfig {
+        &self.raw
     }
 
     /// Where they came from.

@@ -669,6 +669,66 @@ impl World {
         &self.config
     }
 
+    /// ⭐ **Change the conditions a running world is living under.** SPEC section 3's live half.
+    ///
+    /// > `[world]`, `[limits]` and `seed` lock at run start; the rest can be changed live,
+    /// > **which is how environmental events work.**
+    ///
+    /// That last clause is the whole reason this exists, and it is worth reading it the way it
+    /// is meant: raising `metabolism.upkeep_scale` here is not a settings change, it is the
+    /// weather turning. SPEC section 3 has the measurements - at 3 and above a founder dies of
+    /// old age before it has earned the reproduction threshold - and section 11's event log
+    /// lists *"environmental changes made by the user"* among the things worth recording.
+    ///
+    /// # ⚠️ There is one copy of each number and this is why it is a method here
+    ///
+    /// The tick does not read `Config`. `grid.rs` precomputes each tile's ceiling and each
+    /// row's regrowth, `physics.rs` and `metabolism.rs` hold their numbers widened, and
+    /// `reproduction.rs` keeps the whole `[mutation]` table - because reading a configuration
+    /// on the inside of a loop over a quarter of a million cells is not what a configuration is
+    /// for. So a change that only replaced [`World::config`] would move the number **the panel
+    /// reads back** and leave every number the simulation actually charges exactly where it
+    /// was: a world reporting weather it is not having. This walks all five.
+    ///
+    /// # ⚠️ Nothing here allocates, and that is a guarantee rather than an observation
+    ///
+    /// CLAUDE.md: *"Every arena is allocated at startup at fixed capacity derived from the
+    /// config, and never resized… A simulation that cannot allocate cannot leak."* Every arena
+    /// in this world is sized from `[world]` or `[limits]`, and those are exactly the tables
+    /// this refuses to change - so the guarantee is not weakened by a run being retunable. The
+    /// refusal is a panic and not a returned error, in CLAUDE.md's terms: *"invariants are
+    /// asserted at runtime, not just in tests"*. `panel.rs` never offers a locked setting, so
+    /// reaching this is a program that has gone wrong rather than a person who typed something.
+    ///
+    /// # Panics
+    ///
+    /// If `[world]`, `[limits]` or the seed differ from the ones this world was built with.
+    pub fn retune(&mut self, config: &Config) {
+        assert!(
+            config.world == self.config.world,
+            "world.{{width, height, grid_cols, grid_rows, years_per_tick, seed}} lock at run \
+             start - SPEC section 3 - and every arena in this world was sized from them. Asked \
+             for {:?} on a world built as {:?}",
+            config.world,
+            self.config.world
+        );
+        assert!(
+            config.limits == self.config.limits,
+            "limits.max_organisms, limits.max_cells_per_organism, limits.max_genes and \
+             limits.max_dev_steps lock at run start - SPEC section 3 - and every arena in this \
+             world was sized from them. Asked for {:?} on a world built as {:?}",
+            config.limits,
+            self.config.limits
+        );
+
+        self.grid.relight(config);
+        self.physics.retune(config);
+        self.behaviour.retune(config);
+        self.metabolism.retune(config);
+        self.reproduction.retune(config);
+        self.config = config.clone();
+    }
+
     /// Who is in each slot, and nothing in the slots that are free.
     #[must_use]
     pub fn organisms(&self) -> &[Option<Organism>] {
@@ -4188,6 +4248,143 @@ mod tests {
              the seed is barely reaching the world it is supposed to be shaping",
             first.len()
         );
+    }
+
+    /// ⭐ **Phase 6, B1.** The live settings really do change what a running world does.
+    ///
+    /// SPEC section 3: *"`[world]`, `[limits]` and `seed` lock at run start; the rest can be
+    /// changed live, **which is how environmental events work**."* That last clause is the whole
+    /// of why [`World::retune`] exists. Raising `metabolism.upkeep_scale` mid-run is not a
+    /// settings change - it is the weather turning, and SPEC section 3's own measurements say
+    /// what it does: *"`3` and `4` both go extinct with the founder's death, before a single
+    /// birth"*, because upkeep shortens a life in proportion while lengthening the time it takes
+    /// to earn the reproduction threshold.
+    ///
+    /// So the claim is stated the way somebody watching would state it: **the same world, from
+    /// the same tick, spends more when the temperature goes up.** Two copies of one world are
+    /// ticked side by side and only one of them is retuned, so the difference is the setting and
+    /// nothing else.
+    ///
+    /// ⚠️ The second half is the one that would go wrong quietly. A retune that only replaced
+    /// `World::config` - the field the panel reads back - would make the *panel* say the
+    /// temperature had risen while `metabolism.rs`, which holds its own copy of the number, went
+    /// on charging the old one. That is a world that reports weather it is not having, and it is
+    /// exactly the failure `census.rs`'s opening paragraph is about: two copies of one quantity,
+    /// out of step.
+    #[test]
+    fn the_live_settings_can_be_changed_while_a_run_is_going() {
+        let settled = a_lit_world(|_| {});
+        let mut unchanged = World::new(&settled);
+        for _ in 0..300 {
+            unchanged.tick();
+        }
+
+        // The same world, to the last bit: same seed, same configuration, same number of ticks.
+        let mut warmed = World::new(&settled);
+        for _ in 0..300 {
+            warmed.tick();
+        }
+        // Bit for bit, and deliberately: SPEC section 2's determinism is what makes the
+        // comparison below a measurement of the *setting* rather than of two similar worlds.
+        #[expect(
+            clippy::float_cmp,
+            reason = "two worlds built from one seed and one configuration and ticked the same \
+                      number of times are the same world to the last bit - SPEC section 2 - and \
+                      an approximate match here would let a difference that is not the retune \
+                      through into the comparison this test is actually about"
+        )]
+        {
+            assert_eq!(
+                warmed.ledger().dissipated(),
+                unchanged.ledger().dissipated(),
+                "the two worlds were not identical before one of them was retuned"
+            );
+        }
+
+        // Something alive in both, or "the warmer world spends more" is a claim about nothing.
+        let limits = settled.limits.clone();
+        for world in [&mut unchanged, &mut warmed] {
+            let middle = Vec2::new(
+                world.config().world.width * 0.5,
+                world.config().world.height * 0.5,
+            );
+            let purse = a_quarter_of_the_tile(world, middle);
+            world
+                .seed(a_chain(3, &limits), middle, purse)
+                .expect("a lit world can afford one body");
+        }
+
+        // The weather turns.
+        let warmer = config(|raw| {
+            raw.light.influx = 0.012;
+            raw.metabolism.upkeep_scale = 4.0;
+        });
+        warmed.retune(&warmer);
+
+        let spent_before = (
+            unchanged.ledger().dissipated(),
+            warmed.ledger().dissipated(),
+        );
+        for _ in 0..200 {
+            unchanged.tick();
+            warmed.tick();
+        }
+        let cold = unchanged.ledger().dissipated() - spent_before.0;
+        let hot = warmed.ledger().dissipated() - spent_before.1;
+
+        assert!(
+            hot > cold * 2.0,
+            "two hundred ticks cost the world at upkeep_scale 1.0 {cold} and the same world at \
+             4.0 {hot}, so raising the temperature mid-run changed what the panel says and not \
+             what living costs - which means `metabolism.rs` is still charging the old number"
+        );
+
+        // And the panel's copy agrees with the one that is being charged.
+        assert!(
+            (warmed.config().metabolism.upkeep_scale - 4.0).abs() < f32::EPSILON,
+            "the world reports an upkeep_scale of {} after being retuned to 4.0",
+            warmed.config().metabolism.upkeep_scale
+        );
+
+        // ⭐ `[light]` as well, and this one has to reach `grid.rs`'s precomputed tables rather
+        // than a single field. A tile's ceiling and the light offered to its row are both worked
+        // out once, at construction, from `light.cap` and `light.gradient` - so a retune that
+        // forgot them would leave the water filling to the old ceiling for ever.
+        let mut dimmed = World::new(&settled);
+        for _ in 0..800 {
+            dimmed.tick();
+        }
+        let full = dimmed.grid().total_energy();
+        dimmed.retune(&config(|raw| {
+            raw.light.influx = 0.012;
+            raw.light.cap = 1.0;
+        }));
+        for _ in 0..50 {
+            dimmed.tick();
+        }
+        assert!(
+            dimmed.grid().total_energy() < full * 0.5,
+            "the ceiling was lowered from 8.0 to 1.0 and the field went from {full} to {}, so \
+             `light.cap` did not reach the tile targets it decides",
+            dimmed.grid().total_energy()
+        );
+    }
+
+    /// ⭐ **Phase 6, B2, at the near end.** The locked settings cannot be changed, and saying so
+    /// is a panic rather than a shrug.
+    ///
+    /// CLAUDE.md's memory guarantee is *"every arena is allocated at startup at fixed capacity
+    /// derived from the config, and never resized"*, and SPEC section 3 locks `[world]`,
+    /// `[limits]` and `seed` for exactly that reason. `panel.rs` never offers them, which is B2 -
+    /// but *"the interface does not offer it"* is a promise about a screen, and the arenas are a
+    /// promise about memory. This is the second one, asserted where the change would arrive:
+    /// CLAUDE.md's *"invariants are asserted at runtime, not just in tests"*.
+    #[test]
+    #[should_panic(expected = "limits.max_organisms")]
+    fn the_locked_settings_cannot_be_changed_while_a_run_is_going() {
+        let mut world = World::new(&a_lit_world(|_| {}));
+
+        world.retune(&a_lit_world(|raw| raw.limits.max_organisms = 8));
     }
 
     // ---------------------------------------------------------------------------------

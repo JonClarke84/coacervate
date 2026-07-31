@@ -44,11 +44,13 @@
 //! same ticks in the same order and produce the same world.
 
 use crate::camera::Lens;
-use crate::controls::{Ask, Controls, gesture};
+use crate::controls::{Ask, Controls, Pace, gesture};
 use crate::frame::Renderer;
 use crate::gpu::{self, Gpu};
 use crate::panel::Chrome;
 use crate::scene::Scene;
+use crate::settings::Dials;
+use coacervate_sim::config::Config;
 use coacervate_sim::world::World;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -115,6 +117,19 @@ pub trait Watched {
 
     /// Ask the run to stop at the end of the tick it is in.
     fn ask_to_stop(&self);
+
+    /// ⭐ **`B1` and `B4`.** The conditions have changed; go on under these.
+    ///
+    /// SPEC section 3: *"`[world]`, `[limits]` and `seed` lock at run start; the rest can be
+    /// changed live, **which is how environmental events work**."* This is the whole of the join
+    /// between a slider and a running world, and it is on this trait rather than reaching into
+    /// `World` for the reason the trait exists: `max_ticks_per_second` is a fact about the *run*
+    /// and not about the world, so a window that set the world's conditions itself would leave
+    /// the pacing behind. The implementation is `Run::retune`, and it does both.
+    ///
+    /// ⚠️ It takes a configuration that has already been through `RawConfig::validate` - which is
+    /// what possession of a [`Config`] means, and the whole of why `settings.rs` exists.
+    fn retune(&mut self, config: &Config);
 }
 
 /// Why a window could not be opened, or could not carry on.
@@ -177,6 +192,7 @@ pub fn show(
     watched: &mut impl Watched,
     frames: &Path,
     last: Option<&Path>,
+    dials: Dials,
 ) -> Result<(), WindowError> {
     let gpu = Gpu::open().map_err(WindowError::NoGpu)?;
     let events = EventLoop::new().map_err(WindowError::NoDisplay)?;
@@ -191,6 +207,9 @@ pub fn show(
         gpu,
         frames: frames.to_path_buf(),
         last: last.map(Path::to_path_buf),
+        dials: Some(dials),
+        pace: Pace::new(),
+        applied: 0,
         open: None,
         trouble: None,
     };
@@ -212,10 +231,17 @@ pub fn show(
 /// That is deliberate and it is the same rule `run.rs` keeps: a tick is the unit, and a stop
 /// that could arrive halfway through one would leave a world with the light fallen and nothing
 /// fed.
-fn advance(watched: &mut impl Watched, budget: Duration) -> bool {
+fn advance(watched: &mut impl Watched, budget: Duration, pace: &mut Pace) -> bool {
     let spent_by = Instant::now() + budget;
 
-    while watched.due() {
+    // ⭐ **`B4`.** The fourth thing that can end this loop, and the only one a person controls
+    // directly. It is asked **inside** the loop rather than around it because a step has to be
+    // one tick and a frame's budget is worth about eleven of them - see `controls.rs`'s `Pace`.
+    //
+    // ⚠️ A paused run comes back `true`. Pausing is not a bound and does not end anything: the
+    // window goes on drawing the world it was left with, which is what a person pausing is asking
+    // to look at.
+    while pace.allows() && watched.due() {
         if !watched.tick() {
             return false;
         }
@@ -257,13 +283,29 @@ struct Watcher<'run, W: Watched> {
     /// Where to write the last frame, if `--dump-frame` asked for one.
     last: Option<PathBuf>,
 
+    /// The settings, until the window is open and the chrome can hold them.
+    ///
+    /// `Option` because a `Chrome` cannot exist before winit hands over a window and the card
+    /// hands over a device, and the settings arrive before either. Taken exactly once.
+    dials: Option<Dials>,
+
+    /// ⭐ **`B4`.** Whether the run is going, and any tick it has been asked for.
+    pace: Pace,
+
+    /// How many accepted changes have been handed to the run.
+    ///
+    /// Compared against `Dials::accepted` once a frame. A count rather than a flag because the
+    /// question is *"is what the world is living under still what the panel says"*, and a person
+    /// dragging a slider produces a change on most frames for as long as the hand is moving.
+    applied: u64,
+
     open: Option<Open>,
     trouble: Option<WindowError>,
 }
 
 impl<W: Watched> Watcher<'_, W> {
     /// Open the window, and everything that hangs off it.
-    fn opened(&self, events: &ActiveEventLoop) -> Result<Open, WindowError> {
+    fn opened(&mut self, events: &ActiveEventLoop) -> Result<Open, WindowError> {
         let attributes = Window::default_attributes()
             .with_title("Coacervate")
             .with_inner_size(OPENS_AT)
@@ -314,8 +356,13 @@ impl<W: Watched> Watcher<'_, W> {
         };
         surface.configure(self.gpu.device(), &configuration);
 
+        let dials = self
+            .dials
+            .take()
+            .expect("a window is opened once, and the settings go into its chrome");
+
         Ok(Open {
-            chrome: Chrome::new(&self.gpu),
+            chrome: Chrome::new(&self.gpu, dials),
             window,
             surface,
             configuration,
@@ -359,13 +406,49 @@ impl<W: Watched> Watcher<'_, W> {
     /// and the present is the next thing that happens, so the chrome has to arrive between the
     /// two - and it has to *load* the target rather than clear it. See `panel.rs`.
     fn draw(&mut self) {
+        // ⭐ **`B1`, `B4` and `B5`.** Everything a slider did last frame reaches the run and the
+        // renderer here, before the picture that shows it - so a frame never has a panel saying
+        // one thing and a world doing another.
+        //
+        // ⚠️ **`Dials::config` is the only route to the world.** A `Config` exists because
+        // `RawConfig::validate` produced one, so what arrives here is by construction a document
+        // the gate accepted. See `settings.rs`.
+        let (changed, look, asks) = match &mut self.open {
+            None => return,
+            Some(open) => (
+                open.chrome.dials().accepted(),
+                open.chrome.look(),
+                open.chrome.asked(),
+            ),
+        };
+
+        if changed != self.applied {
+            self.applied = changed;
+            let config = self
+                .open
+                .as_ref()
+                .map(|open| open.chrome.dials().config().clone());
+
+            if let Some(config) = config {
+                self.watched.retune(&config);
+            }
+        }
+
+        // And what the panel's own buttons asked for on the composition before this one.
+        for ask in asks {
+            self.asked(ask);
+        }
+
         let Some(open) = &mut self.open else {
             return;
         };
 
+        open.renderer.looks(look);
+
         let scene = Scene::of(self.watched.world());
         let camera = open.controls.lens().camera();
         let size = (open.configuration.width, open.configuration.height);
+        open.chrome.pausing(self.pace.paused());
         open.chrome
             .compose(self.watched.world(), size, scale_of(&open.window));
 
@@ -395,6 +478,30 @@ impl<W: Watched> Watcher<'_, W> {
                 open.surface
                     .configure(self.gpu.device(), &open.configuration);
             }
+        }
+    }
+
+    /// Do one of the things a key or a button asked for.
+    ///
+    /// ⭐ One place, whether it came from the keyboard or from the panel. `controls.rs`'s `Ask`
+    /// carries the same four either way, which is what stops `Space` and the panel's *pause*
+    /// button from being two implementations of pausing that can disagree.
+    fn asked(&mut self, ask: Ask) {
+        match ask {
+            Ask::Dump => self.dump(),
+
+            // ⭐ **A3.** One line, and every panel in the program goes. `panel.rs` explains why
+            // it is one line and why it stays one line as panels are added.
+            Ask::Screensaver => {
+                if let Some(open) = &mut self.open {
+                    open.chrome.toggle();
+                }
+            }
+
+            // ⭐ **`B4`.** Neither of these touches the world: they decide whether `advance` is
+            // allowed to ask for a tick, and `Run::step` goes on being the only loop.
+            Ask::Pause => self.pace.pause(),
+            Ask::Step => self.pace.step(),
         }
     }
 
@@ -509,8 +616,9 @@ impl<W: Watched> ApplicationHandler for Watcher<'_, W> {
             Ok(open) => {
                 let size = open.window.inner_size();
                 println!(
-                    "A window is open on {}, {} by {} pixels. Drag to pan, wheel to zoom, F12 \
-                     for a frame, S for screensaver mode, close it to stop the run.",
+                    "A window is open on {}, {} by {} pixels. Drag to pan, wheel to zoom, Space \
+                     to stop the world and the right arrow for one tick, F12 for a frame, S for \
+                     screensaver mode, close it to stop the run.",
                     self.gpu.name(),
                     size.width,
                     size.height
@@ -541,24 +649,29 @@ impl<W: Watched> ApplicationHandler for Watcher<'_, W> {
             WindowEvent::RedrawRequested => self.draw(),
 
             other => {
-                let asked = gesture(&other).and_then(|gesture| {
-                    self.open
-                        .as_mut()
-                        .and_then(|open| open.controls.apply(gesture))
-                });
-
-                match asked {
-                    Some(Ask::Dump) => self.dump(),
-
-                    // ⭐ **A3.** One line, and every panel in the program goes. `panel.rs`
-                    // explains why it is one line and why it stays one line as panels are added.
-                    Some(Ask::Screensaver) => {
-                        if let Some(open) = &mut self.open {
-                            open.chrome.toggle();
-                        }
+                let Some(gesture) = gesture(&other) else {
+                    return;
+                };
+                let asked = self.open.as_mut().and_then(|open| {
+                    // ⭐⭐ **`Q27`, and the order of these three lines is the whole of it.**
+                    //
+                    // The event is turned into egui's before the camera sees it, because the
+                    // translation reads where the pointer *was* - `controls.rs` says why. It is
+                    // pushed onto the chrome's own queue rather than into a context, so it goes
+                    // in through `Chrome::compose`'s `RawInput` with everything else and there
+                    // is still exactly one composition route. And the camera is told whether
+                    // the chrome wanted the pointer, which is what stops a drag on a slider
+                    // from panning the world underneath it.
+                    let scale = scale_of(&open.window);
+                    if let Some(felt) = open.controls.felt(gesture, scale) {
+                        open.chrome.feels(felt);
                     }
 
-                    None => {}
+                    open.controls.apply(gesture, open.chrome.wants_pointer())
+                });
+
+                if let Some(asked) = asked {
+                    self.asked(asked);
                 }
             }
         }
@@ -570,7 +683,7 @@ impl<W: Watched> ApplicationHandler for Watcher<'_, W> {
     /// often as the machine can manage - and since the drawing waits for the display, that is
     /// about sixty times a second.
     fn about_to_wait(&mut self, events: &ActiveEventLoop) {
-        if !advance(self.watched, BUDGET) {
+        if !advance(self.watched, BUDGET, &mut self.pace) {
             // The run is over: its bounds arrived, or the window was closed and the tick it was
             // in has finished. Either way there is nothing further to show.
             //
@@ -613,10 +726,16 @@ fn scale_of(window: &Window) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{BUDGET, Watched, advance};
+    use crate::controls::Pace;
     use coacervate_sim::config::spec_defaults;
     use coacervate_sim::world::World;
     use std::cell::Cell;
     use std::time::{Duration, Instant};
+
+    /// A run nobody has paused, which is what every test below but one is about.
+    fn going() -> Pace {
+        Pace::new()
+    }
 
     /// A run that counts what is asked of it, in place of one that simulates anything.
     ///
@@ -635,6 +754,8 @@ mod tests {
         costs: Duration,
         /// Set by [`Watched::ask_to_stop`], exactly as `Interrupt::ask` is.
         asked: Cell<bool>,
+        /// How many times the conditions have been changed under this run.
+        retuned: Cell<u32>,
     }
 
     impl Counted {
@@ -650,6 +771,7 @@ mod tests {
                 due,
                 costs,
                 asked: Cell::new(false),
+                retuned: Cell::new(0),
             }
         }
 
@@ -684,6 +806,13 @@ mod tests {
         fn ask_to_stop(&self) {
             self.asked.set(true);
         }
+
+        /// What a run does with a change is `run.rs`'s business and is tested there. What these
+        /// tests are about is the shape of the loop, so this counts and does nothing.
+        fn retune(&mut self, config: &coacervate_sim::config::Config) {
+            self.world = World::new(config);
+            self.retuned.set(self.retuned.get() + 1);
+        }
     }
 
     /// ⭐ **C4.** The simulation and the display run at their own speeds.
@@ -707,7 +836,7 @@ mod tests {
     fn the_simulation_and_the_display_run_at_their_own_speeds() {
         // Not due: the cap is holding it back, and no amount of frame time changes that.
         let mut waiting = Counted::new(1_000_000, false, Duration::ZERO);
-        assert!(advance(&mut waiting, BUDGET));
+        assert!(advance(&mut waiting, BUDGET, &mut going()));
         assert_eq!(
             waiting.ticks(),
             0,
@@ -717,7 +846,7 @@ mod tests {
 
         // Due, and cheap: many ticks in one frame.
         let mut running = Counted::new(1_000_000, true, Duration::ZERO);
-        assert!(advance(&mut running, BUDGET));
+        assert!(advance(&mut running, BUDGET, &mut going()));
         assert!(
             running.ticks() > 1,
             "one frame's worth of budget took {} ticks, so the simulation is running at the \
@@ -728,7 +857,11 @@ mod tests {
         // Due, and slow: the budget is what brings it back.
         let mut expensive = Counted::new(1_000_000, true, Duration::from_millis(2));
         let started = Instant::now();
-        assert!(advance(&mut expensive, Duration::from_millis(20)));
+        assert!(advance(
+            &mut expensive,
+            Duration::from_millis(20),
+            &mut going()
+        ));
         let took = started.elapsed();
 
         assert!(
@@ -740,6 +873,70 @@ mod tests {
             took < Duration::from_millis(500),
             "a frame spent {took:?} inside the simulation, so the window is unresponsive for \
              that long at a time"
+        );
+    }
+
+    /// ⭐⭐ **`B4`.** A paused run stops advancing, and a step advances it by exactly one tick.
+    ///
+    /// [`Pace`] on its own is tested in `controls.rs`; this is the claim that matters, which is
+    /// about the loop it sits inside. The failure it exists to catch is the obvious way to write
+    /// pausing - a check *around* `advance` rather than inside it, so that a step takes as many
+    /// ticks as fit in a frame's budget. At the shipped budget that is about eleven, and eleven
+    /// ticks is not a step; it is the thing a person pressed the key to avoid.
+    ///
+    /// ⚠️ **A paused run still answers `true`.** Pausing is not a bound: the run has not ended,
+    /// the window goes on drawing, and the world stays exactly where the hand stopped it. A pause
+    /// that came back `false` would close the window, which is the same key doing the opposite of
+    /// what it says.
+    #[test]
+    fn the_run_can_be_paused_and_stepped() {
+        let mut run = Counted::new(1_000_000, true, Duration::ZERO);
+        let mut pace = Pace::new();
+
+        assert!(advance(&mut run, BUDGET, &mut pace));
+        let ran = run.ticks();
+        assert!(ran > 1, "the run was not going in the first place");
+
+        // The key.
+        pace.pause();
+        for frame in 0..5 {
+            assert!(
+                advance(&mut run, BUDGET, &mut pace),
+                "a paused run reported itself over on frame {frame}, so pausing closes the window"
+            );
+            assert_eq!(
+                run.ticks(),
+                ran,
+                "a paused run took {} ticks over {} frames - so what is on the screen is a moving \
+                 world with the word \"paused\" written over it",
+                run.ticks() - ran,
+                frame + 1
+            );
+        }
+
+        // ⭐ And a step is *one*. This is the assertion the whole item is about: `advance` is
+        // given a whole frame's budget and a run whose ticks cost nothing, so a pause examined
+        // once per frame rather than once per tick would take hundreds of them here.
+        pace.step();
+        assert!(advance(&mut run, BUDGET, &mut pace));
+        assert_eq!(
+            run.ticks(),
+            ran + 1,
+            "one press of the step key took {} ticks, because the pause is examined once per \
+             frame instead of once per tick",
+            run.ticks() - ran
+        );
+
+        // And it stops again by itself.
+        assert!(advance(&mut run, BUDGET, &mut pace));
+        assert_eq!(run.ticks(), ran + 1, "a step left the run running");
+
+        // Letting go starts it again.
+        pace.pause();
+        assert!(advance(&mut run, BUDGET, &mut pace));
+        assert!(
+            run.ticks() > ran + 1,
+            "the run did not start again when it was un-paused"
         );
     }
 
@@ -756,7 +953,7 @@ mod tests {
     fn closing_the_window_stops_the_run_gracefully() {
         let mut run = Counted::new(1_000_000, true, Duration::from_millis(1));
 
-        assert!(advance(&mut run, Duration::from_millis(5)));
+        assert!(advance(&mut run, Duration::from_millis(5), &mut going()));
         let before = run.ticks();
         assert!(before > 0, "the run had not started");
 
@@ -765,7 +962,7 @@ mod tests {
         assert!(run.asked.get(), "closing the window asked the run nothing");
 
         assert!(
-            !advance(&mut run, BUDGET),
+            !advance(&mut run, BUDGET, &mut going()),
             "a run that has been asked to stop carried on being ticked"
         );
         assert_eq!(
@@ -777,7 +974,7 @@ mod tests {
 
         // And it stays stopped. A window that closed and then went on ticking would be a run
         // nobody could see and nobody had stopped.
-        assert!(!advance(&mut run, BUDGET));
+        assert!(!advance(&mut run, BUDGET, &mut going()));
         assert_eq!(run.ticks(), before);
     }
 
@@ -807,7 +1004,7 @@ mod tests {
         let mut run = Counted::new(3, true, Duration::ZERO);
 
         assert!(
-            !advance(&mut run, Duration::from_secs(600)),
+            !advance(&mut run, Duration::from_secs(600), &mut going()),
             "a run with three ticks left in it did not report itself over"
         );
         assert_eq!(

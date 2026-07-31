@@ -68,6 +68,7 @@ pub mod frame;
 pub mod gpu;
 pub mod panel;
 pub mod scene;
+pub mod settings;
 pub mod window;
 
 use coacervate_sim::world::World;
@@ -176,12 +177,19 @@ impl Dump {
     /// the headless path saying the same thing on purpose, and it is what A4 was looked at
     /// through.
     ///
+    /// ⭐ It takes the run's own settings, because Phase 6's panel *shows* them - see
+    /// `settings.rs`. Nothing here can change one: [`Chrome::feels`] is never called on this
+    /// path, so the composition it goes through is exactly the window's with an empty event
+    /// queue. That is `Q27`'s property, and this is where it is easiest to see.
+    ///
+    /// [`Chrome::feels`]: panel::Chrome::feels
+    ///
     /// # Errors
     ///
     /// If there is no graphics adapter. See [`DumpError`].
-    pub fn showing_panel() -> Result<Self, DumpError> {
+    pub fn showing_panel(dials: settings::Dials) -> Result<Self, DumpError> {
         let mut dump = Self::open()?;
-        dump.chrome = Some(panel::Chrome::new(&dump.gpu));
+        dump.chrome = Some(panel::Chrome::new(&dump.gpu, dials));
 
         Ok(dump)
     }

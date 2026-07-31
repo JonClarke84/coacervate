@@ -1,8 +1,35 @@
-//! Where the world is on the frame.
+//! Where the world is on the frame, and what it is drawn to look like.
 //!
-//! Two things live here. [`Camera`] is what the shader is told - an origin and a span, and
-//! nothing that can move - and [`Lens`] is Group C's addition: the same view with a person's
-//! hands on it.
+//! Three things live here. [`Camera`] is what the shader is told about *where* - an origin and a
+//! span, and nothing that can move - [`Lens`] is Group C's addition, the same view with a
+//! person's hands on it, and [`Look`] is Phase 6's: every number that decides what the picture
+//! looks like, in one record on the card.
+//!
+//! # ⭐ Phase 6, `B5`: the look is a uniform and not a constant
+//!
+//! `docs/PHASE5.md`'s **Q26**, in full:
+//!
+//! > Phase 6 will want to move some of these numbers, and none of them can be moved at run time.
+//! > Everything Group D tunes is a constant compiled into a shader or into `camera.rs`: the
+//! > bloom's strength and radius, the trail's fade, the peak brightness, the tone map's knee,
+//! > the water's colour and gradient, the shafts' strength. A panel with a slider on any of them
+//! > needs those values in the `View` uniform instead - which is a straightforward change and
+//! > should be made **once**, for all of them together, rather than one at a time as each slider
+//! > is asked for.
+//!
+//! [`Look`] is that, done once. What it changed about the *shape* of things is worth saying,
+//! because it is not quite what the question asked for: the numbers did not go into [`View`],
+//! they went into a record beside it, and [`View`]'s two look-ish fields - `glow` and `peak` -
+//! came **out** and joined them. So the split is now the honest one. [`View`] says where the
+//! world is; [`Look`] says how it is drawn. A slider belongs to exactly one of them and there is
+//! no third place for a number about the picture to live.
+//!
+//! ⚠️ **The guard tying `PEAK` and `TONE_KNEE` survived the move twice over.** It was a `const`
+//! block - *"a peak of more than half the tone map's knee leaves no room for two cells to add up
+//! to exactly twice one"* - and a `const` block cannot see a value somebody is dragging. So it is
+//! now both: the same `const` assertion still holds over [`PEAK`] and [`crate::frame::TONE_KNEE`],
+//! which are the **defaults**, and [`Look::compresses`] is the runtime form, asserted every time
+//! a look reaches the card. See [`Look::sane`].
 //!
 //! # ⚠️ The camera moves only when it is moved
 //!
@@ -72,10 +99,14 @@ pub const GLOW: f32 = 2.6;
 /// bodies pressed together are no longer four bodies clipped to white.
 pub const PEAK: f32 = 0.34;
 
-/// What the shader is told: where the world is, and how to draw light in it.
+/// What the shader is told about **where the world is**.
 ///
 /// `repr(C)` and `Pod` for the same reason [`crate::scene::Instance`] is - this becomes the
 /// bytes of a uniform buffer, and the layout is `cells.wgsl`'s `View` struct field for field.
+///
+/// ⭐ Phase 6 took `glow` and `peak` out of here and put them in [`Look`], where everything else
+/// about how the picture is drawn now lives. Nothing in this record is a matter of taste any
+/// more: every field is a fact about the camera or the frame.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 pub struct View {
@@ -87,12 +118,6 @@ pub struct View {
 
     /// How much world the frame covers, in world units.
     pub span: [f32; 2],
-
-    /// [`GLOW`], handed on.
-    pub glow: f32,
-
-    /// [`PEAK`], handed on.
-    pub peak: f32,
 
     /// How big the frame is, in pixels.
     ///
@@ -108,10 +133,166 @@ pub struct View {
     /// Nothing at all.
     ///
     /// A uniform buffer's contents have to be a whole number of sixteen-byte blocks, and the
-    /// eight fields above are forty-four bytes. Named rather than left to `repr(C)`'s tail
+    /// five fields above are thirty-six bytes. Named rather than left to `repr(C)`'s tail
     /// padding, because `bytemuck::Pod` will not derive for a struct with padding in it - and
     /// that refusal is the right one: padding is bytes nobody wrote being sent to the card.
-    pub unused: f32,
+    pub unused: [f32; 3],
+}
+
+/// ⭐⭐ **`B5`.** Every number that decides what the picture looks like, in one record.
+///
+/// See this module's header for **Q26**, which is the question this answers. Before Phase 6 all
+/// ten of these were compile-time constants in three different files - two in `camera.rs`, one
+/// in `frame.rs` and seven in `water.wgsl` - and a slider on any of them meant a separate small
+/// change to the uniform, the shader and the pipeline layout. They moved together, once.
+///
+/// # The layout, which is written twice and has to match
+///
+/// `water.wgsl` and `cells.wgsl` both declare this struct. WGSL gives `vec3<f32>` an alignment of
+/// sixteen bytes and a size of twelve, so a `vec3` followed by an `f32` occupies exactly one
+/// sixteen-byte block with nothing between them - which is what `[f32; 3]` followed by `f32`
+/// does in `repr(C)` as well. The three colours are therefore each paired with the scalar that
+/// belongs beside them, and the record is sixty-four bytes with no padding anywhere.
+/// `the_look_is_what_the_shaders_declare` measures that rather than trusting it.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+pub struct Look {
+    /// How far a cell's light reaches, as a multiple of its own radius. Was [`GLOW`].
+    pub glow: f32,
+
+    /// How bright the very centre of one cell is, before anything is added to it. Was [`PEAK`].
+    pub peak: f32,
+
+    /// How much of the blurred frame is added back over the top. Was `water.wgsl`'s `BLOOM`.
+    pub bloom: f32,
+
+    /// Where the tone map stops being the identity. Was [`crate::frame::TONE_KNEE`], and it is
+    /// still that as a default - see [`Look::sane`] for the guard that ties it to `peak`.
+    pub knee: f32,
+
+    /// The colour of the water where the light has not reached it. Was `water.wgsl`'s `ABYSS`.
+    pub abyss: [f32; 3],
+
+    /// How sharply the water darkens with depth. Was `water.wgsl`'s `DEEPENS`.
+    pub deepens: f32,
+
+    /// How much light there is at the surface, over and above the abyss. Was `SURFACE`.
+    pub surface: [f32; 3],
+
+    /// How far a shaft leans over as it goes down. Was `water.wgsl`'s `LEAN`.
+    pub lean: f32,
+
+    /// How bright the light shafts are at the surface. Was `water.wgsl`'s `SHAFTS`.
+    pub shafts: [f32; 3],
+
+    /// What is left of a motion trail after one frame.
+    ///
+    /// ⚠️ **The one field here no shader reads**, and it is here anyway. It is a blend constant
+    /// rather than a number in an expression - `frame.rs` hands it to `set_blend_constant` - so
+    /// the card gets it by a different road from the other nine. Keeping it in this record is
+    /// the point of Q26's word *"together"*: there is one place a person changes what the
+    /// picture looks like, and a tenth number kept somewhere else would be the one that got
+    /// forgotten. The shaders declare it and do not use it, so the two declarations stay
+    /// field-for-field identical.
+    pub trail_fade: f32,
+}
+
+impl Look {
+    /// The picture Group D of Phase 5 shipped, which is what these numbers were before they
+    /// could be moved.
+    ///
+    /// ⭐ **Every value here is Group D's, to the digit**, and that is the whole regression guard
+    /// on `B5`: a frame drawn through this is required to be byte-for-byte the frame the
+    /// constants drew. Each one's reasoning is on the field that carries it or on the constant
+    /// it came from; what follows is only where it used to live.
+    pub const DEFAULT: Self = Self {
+        glow: GLOW,
+        peak: PEAK,
+
+        // ⚠️ Small, and for the same reason the shafts are faint. A bloom is what makes a bright
+        // thing look like it is *emitting* rather than being painted, and it is also the single
+        // easiest way to turn a calm picture into a glaring one. At a third the halo is visible
+        // as a softness around a body and around a colony, and no part of the frame that was
+        // dark becomes bright.
+        bloom: 0.33,
+        knee: crate::frame::TONE_KNEE,
+
+        // Not black. A frame of pure black is a frame with no depth in it and nothing for the
+        // deep colonies to sit against, and the sea is not black at four hundred metres either -
+        // it is the blue that is left when everything else has been absorbed.
+        abyss: [0.0020, 0.0038, 0.0075],
+
+        // SPEC section 4 has the light itself fall off with depth and `light.gradient` is 0.75,
+        // so the floor of the world receives a quarter of what the surface does. This is steeper
+        // than that on purpose: what is being drawn is not the light falling but the light
+        // *coming back*, which has crossed the depth twice.
+        deepens: 3.0,
+
+        // Cool and green-blue, which is what the top of a water column looks like and is also
+        // the useful choice: SPEC section 6's cells are drawn across the whole colour wheel and
+        // a background biased to one end of it would flatter half of them and hide the other
+        // half. Its luminance is about 0.069 against a lone cell's 0.34, so a body in the
+        // brightest water is still five times the water it is in.
+        surface: [0.0230, 0.0520, 0.0760],
+
+        // Light entering the sea at an angle; a perfectly vertical shaft reads as a stripe.
+        lean: 0.22,
+
+        // ⚠️ **A tenth of the surface water and no more.** CLAUDE.md: *"nothing that pulls the
+        // eye. When something dramatic happens in the simulation, the log says so - the screen
+        // does not shout."* A shaft is the easiest thing here to overdo, and an overdone one is
+        // a bright bar crossing the picture that the eye goes to every time instead of to the
+        // organisms. At this strength they are a texture in the water rather than an object.
+        shafts: [0.0090, 0.0165, 0.0225],
+
+        // See `frame.rs`'s `TRAIL_FADE`, which is where the measurement that set this is
+        // written down.
+        trail_fade: crate::frame::TRAIL_FADE,
+    };
+
+    /// Whether a two-celled body would be compressed by the tone map.
+    ///
+    /// ⭐⭐ **This is the `const` assertion Group D wrote, in the form a slider left it in.**
+    /// `water.wgsl` is the identity below the knee, which is what makes SPEC section 12's *"two
+    /// overlapping cells are exactly twice one"* true of the **finished picture** and not merely
+    /// of an intermediate buffer nobody can look at - and it is what
+    /// `neighbouring_cells_merge_into_one_silhouette` measures off a PNG and gets exactly two
+    /// from. Two cells at a peak above half the knee sum past it, the composite bends them, and
+    /// that measurement becomes approximate.
+    ///
+    /// A `const` block could hold it while both numbers were constants. It cannot hold it while
+    /// somebody is dragging one, so [`Look::sane`] is asserted instead, at the one place a look
+    /// reaches the card. The `const` block still exists over the defaults - see
+    /// `the_glow_reaches_past_the_cell_and_leaves_room_to_be_added_to`.
+    #[must_use]
+    pub fn compresses(&self) -> bool {
+        self.peak * 2.0 > self.knee
+    }
+
+    /// The same claim, asserted.
+    ///
+    /// CLAUDE.md: *"invariants are asserted at runtime, not just in tests"*. `frame.rs` calls
+    /// this on every look it is given, so there is no route to the card that does not pass it.
+    ///
+    /// # Panics
+    ///
+    /// If the peak is not positive, or if two cells at it would be compressed by the tone map.
+    pub fn sane(&self) {
+        assert!(
+            self.peak > 0.0 && !self.compresses(),
+            "a peak of {} against a tone-map knee of {} leaves no room for two cells to add up \
+             to exactly twice one, which is the whole of SPEC section 12's additive technique \
+             and the thing `neighbouring_cells_merge_into_one_silhouette` measures off a frame",
+            self.peak,
+            self.knee
+        );
+    }
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 /// How much closer one notch of the wheel brings the world.
@@ -167,11 +348,9 @@ impl Camera {
             world: [world.0, world.1],
             origin: self.origin,
             span: self.span,
-            glow: GLOW,
-            peak: PEAK,
             frame: [frame.0, frame.1],
             phase,
-            unused: 0.0,
+            unused: [0.0, 0.0, 0.0],
         }
     }
 
@@ -404,7 +583,7 @@ fn pixels(count: u32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Camera, GLOW, Lens, PEAK, TIGHTEST, View};
+    use super::{Camera, GLOW, Lens, Look, PEAK, TIGHTEST, View};
 
     /// SPEC section 3's world, which every test below is set in.
     const WORLD: (f32, f32) = (2048.0, 1152.0);
@@ -801,17 +980,73 @@ mod tests {
                 world: [2048.0, 1152.0],
                 origin: [0.0, 0.0],
                 span: [2048.0, 1152.0],
-                glow: GLOW,
-                peak: PEAK,
                 frame: [1920.0, 1080.0],
                 phase: 0.25,
-                unused: 0.0,
+                unused: [0.0, 0.0, 0.0],
             }
         );
 
         // `cells.wgsl`, `water.wgsl` and `snow.wgsl` all declare this struct, and a uniform
         // buffer has to be a whole number of sixteen-byte blocks.
         assert_eq!(size_of::<View>(), 48);
+    }
+
+    /// ⭐ **`B5`.** The look is one sixty-four-byte record, and it is the one the shaders declare.
+    ///
+    /// A uniform's layout is written out twice - once in Rust and once in WGSL - and nothing
+    /// checks that the two agree. `wgpu` will happily bind a buffer of the right *size* whose
+    /// fields land in different places, and the result is a picture drawn with the bloom
+    /// strength in the tone-map knee: wrong, plausible, and impossible to find from either file
+    /// alone.
+    ///
+    /// So the size is pinned, and it is pinned at the number WGSL's own alignment rules give.
+    /// `vec3<f32>` has an alignment of sixteen and a size of twelve, so each of the three
+    /// colours takes a block with its neighbouring scalar tucked into the last four bytes of it.
+    /// Four scalars, then three of those blocks: 16 + 48. A field inserted anywhere but at the
+    /// end of one of those groups changes this number.
+    #[test]
+    fn the_look_is_what_the_shaders_declare() {
+        assert_eq!(size_of::<Look>(), 64);
+
+        // ⚠️ And it has no padding in it, which `bytemuck::Pod` already refuses to derive for -
+        // this says it out loud, because the reason is worth keeping: padding is bytes nobody
+        // wrote being sent to the card.
+        assert_eq!(
+            size_of::<Look>(),
+            4 * 4 + 3 * (3 * 4 + 4),
+            "the look has padding in it somewhere"
+        );
+
+        // The defaults are Group D's picture, and `B5`'s whole regression guard is that a frame
+        // drawn through them is the frame the constants drew.
+        let look = Look::DEFAULT;
+        look.sane();
+        assert!(
+            (look.glow - GLOW).abs() < f32::EPSILON && (look.peak - PEAK).abs() < f32::EPSILON,
+            "the default look is not the one `camera.rs`'s constants describe"
+        );
+        assert!(
+            (look.knee - crate::frame::TONE_KNEE).abs() < f32::EPSILON,
+            "the default knee is not `frame.rs`'s TONE_KNEE, so the tests that measure the tone \
+             map off a frame are measuring a different curve from the one being drawn"
+        );
+    }
+
+    /// ⭐⭐ **The guard that had to survive `B5`**, now that both of its numbers can be dragged.
+    ///
+    /// Group D's `const` block still holds over the defaults - see
+    /// `the_glow_reaches_past_the_cell_and_leaves_room_to_be_added_to` below - and this is the
+    /// half a `const` block cannot do. A peak past half the knee is a peak at which two
+    /// overlapping cells no longer come out of the composite at exactly twice one, which is the
+    /// measurement SPEC section 12's additive technique is stated as.
+    #[test]
+    #[should_panic(expected = "leaves no room for two cells")]
+    fn a_peak_past_half_the_knee_stops_the_frame_rather_than_quietly_compressing_it() {
+        Look {
+            peak: crate::frame::TONE_KNEE * 0.5 + 0.01,
+            ..Look::DEFAULT
+        }
+        .sane();
     }
 
     /// ⭐ The glow reaches beyond the cell, and one cell alone does not fill the range.

@@ -171,9 +171,15 @@ fn main() -> ExitCode {
     // rather than after the whole simulation has been computed - and, the reason this had to
     // change at all, a motion trail is a record of several moments and a run has to be *watched*
     // for one to exist. See `coacervate_render::Dump`.
+    // ⭐ **Phase 6's settings, as the panel holds them.** Built from the same document `args.rs`
+    // just put through the gate, which is why this cannot fail: `Dials::new` validates, and this
+    // exact `RawConfig` was validated four lines ago. See `coacervate_render::settings`.
+    let dials = coacervate_render::settings::Dials::new(settings.raw().clone())
+        .expect("this document has already been through the gate");
+
     let mut filming = if arguments.dump_frame.is_some() && !arguments.window {
         let opened = if arguments.panel {
-            coacervate_render::Dump::showing_panel()
+            coacervate_render::Dump::showing_panel(dials.clone())
         } else {
             coacervate_render::Dump::open()
         };
@@ -217,7 +223,12 @@ fn main() -> ExitCode {
             frames.display()
         );
 
-        match coacervate_render::window::show(&mut run, &frames, arguments.dump_frame.as_deref()) {
+        match coacervate_render::window::show(
+            &mut run,
+            &frames,
+            arguments.dump_frame.as_deref(),
+            dials,
+        ) {
             Ok(()) => run
                 .stopped()
                 .expect("a window stays open until the run it is showing is over"),
@@ -345,6 +356,16 @@ impl coacervate_render::window::Watched for Run {
 
     fn ask_to_stop(&self) {
         Self::ask_to_stop(self);
+    }
+
+    /// ⭐ **Phase 6, `B1`.** The one method on this trait that changes anything, and the whole of
+    /// what a slider does to a running world.
+    ///
+    /// It is still not a way for a window to *reach* the world: what crosses is a
+    /// `coacervate_sim::config::Config`, which exists only because `RawConfig::validate` produced
+    /// one, and `Run::retune` decides what to do with it. See `run.rs`.
+    fn retune(&mut self, config: &coacervate_sim::config::Config) {
+        Self::retune(self, config);
     }
 }
 

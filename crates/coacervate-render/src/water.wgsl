@@ -23,15 +23,56 @@
 // sums clipped to white, and the sum that makes the silhouette existed and could not be seen.
 // Here a crowd summing to 1.4 and a crowd summing to 2.0 are still two different colours.
 
+//
+// ## ⭐ Phase 6, B5: seven of this file's constants are now a uniform
+//
+// `docs/PHASE5.md`'s Q26 - the water's colour and gradient, the shafts' strength and lean, the
+// bloom's strength and the tone map's knee were all compiled in here, so a slider on any of them
+// meant editing a shader and rebuilding. They live in `camera.rs`'s `Look` now, which arrives at
+// `@group(3)`. Nothing about the arithmetic changed; the numbers arrive by a different road.
+
 struct View {
     world: vec2<f32>,
     origin: vec2<f32>,
     span: vec2<f32>,
-    glow: f32,
-    peak: f32,
     frame: vec2<f32>,
     phase: f32,
-    unused: f32,
+    // Three scalars rather than a `vec3<f32>`, which would be aligned to sixteen and would make
+    // this a sixty-four-byte record against `camera.rs`'s forty-eight. See `cells.wgsl`.
+    unused_a: f32,
+    unused_b: f32,
+    unused_c: f32,
+};
+
+// Everything about what the picture looks like. `camera.rs`'s `Look`, field for field; see
+// `cells.wgsl`, which declares the same record and reads the two fields this one does not.
+struct Look {
+    glow: f32,
+    peak: f32,
+    // How much of the blurred frame is added back over the top.
+    //
+    // ⚠️ Small, and for the same reason the shafts are faint. A bloom is what makes a bright
+    // thing look like it is *emitting* rather than being painted, and it is also the single
+    // easiest way to turn a calm picture into a glaring one. At a third the halo is visible as a
+    // softness around a body and around a colony, and no part of the frame that was dark
+    // becomes bright.
+    bloom: f32,
+    // Where the tone map stops being the identity. See this file's header.
+    knee: f32,
+    // The colour of the water where the light has not reached it.
+    abyss: vec3<f32>,
+    // How sharply the water darkens with depth.
+    deepens: f32,
+    // How much light there is at the surface, over and above the abyss.
+    surface: vec3<f32>,
+    // How far a shaft leans over as it goes down, as a fraction of the world's width per world's
+    // depth. Light entering the sea at an angle; a perfectly vertical shaft reads as a stripe.
+    lean: f32,
+    // How bright the light shafts are at the surface.
+    shafts: vec3<f32>,
+    // Read by `frame.rs`'s blend state and by nothing in any shader. Declared so that this
+    // record and `camera.rs`'s are the same record.
+    trail_fade: f32,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -39,6 +80,7 @@ struct View {
 @group(1) @binding(1) var lens: sampler;
 @group(2) @binding(0) var halo: texture_2d<f32>;
 @group(2) @binding(1) var halo_lens: sampler;
+@group(3) @binding(0) var<uniform> look: Look;
 
 struct Covered {
     @builtin(position) clip: vec4<f32>,
@@ -57,81 +99,42 @@ fn cover(@builtin(vertex_index) vertex: u32) -> Covered {
     return out;
 }
 
-// The colour of the water where the light has not reached it.
+// The water at a place in the world, before anything living is added to it.
 //
-// Not black. A frame of pure black is a frame with no depth in it and nothing for the deep
-// colonies to sit against, and the sea is not black at four hundred metres either - it is the
-// blue that is left when everything else has been absorbed.
-const ABYSS: vec3<f32> = vec3<f32>(0.0020, 0.0038, 0.0075);
-
-// How much light there is at the surface, over and above the abyss.
-//
-// Cool and green-blue, which is what the top of a water column looks like and is also the useful
-// choice: SPEC section 6's cells are drawn across the whole colour wheel and a background biased
-// to one end of it would flatter half of them and hide the other half. Its luminance is about
-// 0.069 against a lone cell's 0.34, so a body in the brightest water is still five times the
-// water it is in.
-const SURFACE: vec3<f32> = vec3<f32>(0.0230, 0.0520, 0.0760);
-
-// How sharply the water darkens with depth.
-//
-// SPEC section 4 has the light itself fall off with depth and `light.gradient` is 0.75, so the
-// floor of the world receives a quarter of what the surface does. This is steeper than that on
-// purpose: what is being drawn is not the light falling but the light *coming back*, which has
-// crossed the depth twice. Group B's frame found depth to be the dominant axis of this world - the
+// ⚠️ `look.deepens` is what Group B's frame found: depth is the dominant axis of this world - the
 // four shallow colonies several times the area of the four deep ones - and a background that says
 // so is a background that explains the population.
-const DEEPENS: f32 = 3.0;
-
-// How bright the light shafts are at the surface.
-//
-// ⚠️ **A tenth of the surface water and no more.** CLAUDE.md: *"no flashing, no sudden camera
-// moves, nothing that pulls the eye. When something dramatic happens in the simulation, the log
-// says so - the screen does not shout."* A shaft is the easiest thing in this file to overdo, and
-// an overdone one is a bright bar crossing the picture that the eye goes to every time instead of
-// to the organisms. At this strength they are a texture in the water rather than an object in it.
-const SHAFTS: vec3<f32> = vec3<f32>(0.0090, 0.0165, 0.0225);
-
-// How far a shaft leans over as it goes down, as a fraction of the world's width per world's
-// depth. Light entering the sea at an angle; a perfectly vertical shaft reads as a stripe.
-const LEAN: f32 = 0.22;
-
-// Where the tone map stops being the identity. See this file's header.
-const KNEE: f32 = 0.75;
-
-// How much of the blurred frame is added back over the top.
-//
-// ⚠️ Small, and for the same reason the shafts are faint. A bloom is what makes a bright thing
-// look like it is *emitting* rather than being painted, and it is also the single easiest way to
-// turn a calm picture into a glaring one. At a third the halo is visible as a softness around a
-// body and around a colony, and no part of the frame that was dark becomes bright.
-const BLOOM: f32 = 0.33;
-
-// The water at a place in the world, before anything living is added to it.
 fn water_at(place: vec2<f32>) -> vec3<f32> {
     // A frame taller than the world shows water that is not there - see `camera.rs` - and it is
     // drawn as the abyss, so the surface and the floor are where the world actually ends rather
     // than being wherever the window happens to stop.
     if place.y < 0.0 || place.y > view.world.y {
-        return ABYSS;
+        return look.abyss;
     }
 
     let depth = clamp(place.y / view.world.y, 0.0, 1.0);
-    let daylight = pow(1.0 - depth, DEEPENS);
+    // ⚠️ **The six bytes.** `B5` set out to make this a uniform without changing a pixel, and it
+    // changed six of the 8,294,400 in the shipped frame, each by exactly one - and this is the
+    // line. Written `pow(1.0 - depth, 3.0)` the compiler folds a literal exponent of three into
+    // `x * x * x`; written against a uniform it has to stay `exp2(deepens * log2(x))`, which is
+    // the same function to within a unit in the last place and not the same arithmetic. Measured
+    // both ways: with the literal back, the frame is byte-for-byte the one Group D drew.
+    // Everything else in this file moved for nothing at all.
+    let daylight = pow(1.0 - depth, look.deepens);
 
     // ⭐ The shafts. The horizontal position is taken as a fraction of the way round the world
     // and every frequency below is a whole number, so the pattern joins up at the seam exactly as
     // the world does - a body swimming across the join does not pass through a discontinuity in
     // the water. `view.phase` is the world's own tick count, very slowly turned into a drift; see
     // `scene.rs` for why it is the world's clock and not a wall clock.
-    let across = (place.x + place.y * LEAN) / view.world.x + view.phase;
+    let across = (place.x + place.y * look.lean) / view.world.x + view.phase;
     let turn = across * 6.2831855;
     let beams = sin(turn * 3.0) * 0.5 + sin(turn * 7.0 + 1.3) * 0.3 + sin(turn * 13.0 + 2.7) * 0.2;
     // Squared, so the pattern is a few soft beams with wide dark water between them rather than
     // a ripple over the whole frame.
     let shaft = max(beams, 0.0) * max(beams, 0.0);
 
-    return ABYSS + SURFACE * daylight + SHAFTS * shaft * daylight;
+    return look.abyss + look.surface * daylight + look.shafts * shaft * daylight;
 }
 
 // One channel, brought inside what a screen can show.
@@ -139,13 +142,13 @@ fn water_at(place: vec2<f32>) -> vec3<f32> {
 // The identity below the knee; above it, an exponential approach to one whose value and slope
 // both match the identity at the knee, so nothing anywhere has an edge in it.
 fn toned(value: f32) -> f32 {
-    if value <= KNEE {
+    if value <= look.knee {
         return value;
     }
 
-    let over = (value - KNEE) / (1.0 - KNEE);
+    let over = (value - look.knee) / (1.0 - look.knee);
 
-    return KNEE + (1.0 - KNEE) * (1.0 - exp(-over));
+    return look.knee + (1.0 - look.knee) * (1.0 - exp(-over));
 }
 
 @fragment
@@ -154,7 +157,7 @@ fn composite(covered: Covered) -> @location(0) vec4<f32> {
 
     let light = textureSampleLevel(lit, lens, covered.uv, 0.0).rgb;
     let bloom = textureSampleLevel(halo, halo_lens, covered.uv, 0.0).rgb;
-    let total = water_at(place) + light + bloom * BLOOM;
+    let total = water_at(place) + light + bloom * look.bloom;
 
     return vec4<f32>(toned(total.r), toned(total.g), toned(total.b), 1.0);
 }

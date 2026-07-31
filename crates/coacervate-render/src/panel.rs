@@ -38,24 +38,49 @@
 //! What egui actually asks a backend for is small: a triangle list in points, a scissor
 //! rectangle per batch, and one texture atlas that changes when a glyph is first drawn.
 //!
-//! # ⚠️ `egui-winit` is deliberately not here yet, and Group B is where it arrives
+//! # ⭐⭐ `Q27`, answered: the input goes *into* the `RawInput`, and `egui-winit` is still absent
 //!
-//! Nothing in Group A is interactive - the panel reads and is never typed into or dragged - so
-//! there is no input to translate. And there is a positive reason to wait, which is the same
-//! one `frame.rs` gives about `F12` and `--dump-frame` going through one renderer: **a headless
-//! dump has no winit window**, so an input path that only existed in the window would mean the
-//! panel on a dumped frame and the panel on the screen were composed by two different routes,
-//! and the frame would stop being evidence about the window. [`Chrome::compose`] is the one
-//! route, and it builds its own [`egui::RawInput`] - which for a panel that answers to nothing
-//! is a screen rectangle and a scale.
+//! Group A deliberately took no input at all, and gave a reason that Group B had to keep:
 //!
-//! The consequence to be honest about: dragging the pointer across the panel pans the camera
-//! underneath it, because nothing is telling the camera that the pointer is over something.
-//! Group B's sliders are the first thing that has to answer a pointer, and that is when
-//! `egui-winit` earns its place.
+//! > A headless dump has no winit window, so an input path that only existed in the window would
+//! > mean the panel on a dumped frame and the panel on the screen were composed by two different
+//! > routes, and the frame would stop being evidence about the window.
+//!
+//! A slider is the first thing in this program that has to answer a pointer, so the input path
+//! arrives here - and it arrives in the shape that argument demands. [`Chrome::compose`] is still
+//! **the one composition route**, it still builds its own [`egui::RawInput`], and what changed is
+//! only that the `events` field of that input is no longer empty: [`Chrome::feels`] pushes onto a
+//! queue and `compose` drains it into the input it was already building. There is no second path
+//! and no branch anywhere on whether there is a window.
+//!
+//! ⭐ **The evidence that this is true is that the input is exercisable with no window at all.**
+//! `a_slider_answers_a_pointer_with_no_window_anywhere_near_it` drives a slider from end to end
+//! by pushing three `egui::Event`s and composing - the same three a window pushes, through the
+//! same call - and asserts the setting moved. A test that could not exist if the input lived in
+//! `window.rs`.
+//!
+//! ⚠️ **`egui-winit` is still not taken, and this is now the settled reason rather than a
+//! deferral.** Its whole job is `State::on_window_event`, which takes a `&winit::Window` - the
+//! one object a headless dump has not got. Taking it would mean the window fed egui through
+//! `egui-winit` and a dump fed it through something else, which is exactly the two routes the
+//! paragraph above forbids. What it does that this does not is IME, clipboard, accessibility and
+//! touch, none of which a panel of sliders over a simulation has any use for.
+//! `controls.rs`'s `felt` is the forty lines that stand in for it.
+//!
+//! # ⚠️ A pointer over a panel does not reach the camera
+//!
+//! The other half of `Q27`, and it is in `controls.rs` rather than here, because it is a
+//! decision about the *camera*. This side of it is [`Chrome::wants_pointer`], which is egui's own
+//! answer read off the last composition. `controls.rs`'s `Controls::apply` takes it and refuses a
+//! grab or a wheel that starts over the chrome - and only a grab that *starts* there, so a drag
+//! begun on open water goes on panning when the pointer crosses the panel rather than stopping
+//! dead half way.
 
+use crate::camera::Look;
 use crate::census::{Census, millions_of_years};
+use crate::controls::Ask;
 use crate::gpu::Gpu;
+use crate::settings::{DIALS, Dial, Dials};
 use coacervate_sim::world::World;
 use std::collections::BTreeMap;
 use wgpu::util::DeviceExt as _;
@@ -70,12 +95,54 @@ const WIDTH: f32 = 208.0;
 /// How far the panel sits from the corner of the frame, in points.
 const INSET: f32 = 12.0;
 
+/// The most of a frame's height the controls are ever allowed to take.
+///
+/// ⚠️ **A fraction of the frame and not what is left over, and a window is what found it.** The
+/// panel is a fixed size in egui's *points*, and a point is 1.5 pixels on this machine's display -
+/// so the same panel that is 4.9% of a 1920 by 1080 dumped frame is a quarter of a 1280 by 720
+/// window. Bounded by the leftover room it would simply grow until it ran out, and on a window
+/// somebody had dragged small it would be nearly all of the picture, which is the exact opposite
+/// of SPEC section 12's *recessive*.
+///
+/// At two-fifths, a person who opens every fold at once on a small window gets a panel that
+/// scrolls rather than a panel that eats the world. On the dumped frame this project judges
+/// itself by it binds on nothing: the shipped arrangement is 260 points against a ceiling of 432.
+const CEILING: f32 = 0.4;
+
+/// How far the controls sit below the readings, in points.
+///
+/// Small, and smaller than [`INSET`] on purpose: the two panels are one column down the left-hand
+/// edge of the frame rather than two objects on it, and a gap as wide as the inset would make
+/// them read as the latter.
+const GAP: f32 = 6.0;
+
 /// How many times [`Chrome::compose`] will ask egui for the same panel before giving up.
 ///
-/// Two, and the second is only ever paid on the first composition of a run. See the comment in
-/// [`Chrome::compose`], and `a_panel_appears_on_the_first_frame_it_is_asked_for` for the
-/// measurement that put it there.
-const SETTLES: usize = 2;
+/// ⚠️ **Group A said two and Group B measured four**, and the extra two are the honest cost of a
+/// panel that is more than a list of numbers. What `a_panel_appears_on_the_first_frame_it_is_asked_for`
+/// reports on the very first composition of a run:
+///
+/// | Pass | What comes back | Why |
+/// | --- | --- | --- |
+/// | 0 | `[0, 0] - [230, 169]`, **nothing tessellated** | egui creates its font atlas during this pass, so there are no glyphs to lay anything out with |
+/// | 1 | `[12, 12] - [242, 279]` | laid out, but the scroll area has not measured its own contents yet |
+/// | 2 | `[12, 12] - [242, 288]` | it has now |
+/// | 3 | the same | settled |
+///
+/// The second and third are new in Group B and the second is the interesting one: an
+/// `egui::ScrollArea` sizes itself from **what it held last time**, so a panel with one in it is
+/// nine points shorter on its first frame than on its second. In a window that is one frame at
+/// sixty a second and nobody would ever see it. On a *dumped* frame it is the whole picture -
+/// which is Group A's finding about the font atlas happening a second time, for a second reason,
+/// and is why the loop's condition is now that the panel came out **where it came out last
+/// time** rather than merely that something came out at all.
+///
+/// ⭐ **Eight is a bound and not a cost.** The loop stops the moment the chrome comes out where
+/// it came out last *frame*, so a panel nobody has touched settles on its first pass and pays
+/// nothing; the four above are the opening composition of a run, and a fold being opened costs
+/// two or three. The number is high enough that a panel with every fold open still arrives
+/// settled, which was measured: with all six open it takes three.
+const SETTLES: usize = 8;
 
 /// The size of every glyph in the chrome.
 ///
@@ -136,6 +203,29 @@ const LABEL: egui::Color32 = egui::Color32::from_rgb(96, 112, 122);
 /// of white and they are all organisms; the chrome does not join them.
 const VALUE: egui::Color32 = egui::Color32::from_rgb(158, 176, 186);
 
+/// The rail a slider's handle runs along, and the fill behind a value.
+///
+/// ⚠️ **Barely above the panel it is drawn on**, and that is the whole of how twenty-one sliders
+/// stay recessive. egui's own dark theme draws a slider as a light grey rail with a pale round
+/// grab on it, which on a frame of near-black water is the brightest object in the picture -
+/// twenty-one times over. At this value a rail reads as a groove in the panel rather than as a
+/// thing sitting on it, and the only part of a slider anybody's eye goes to is the number beside
+/// it, which is where CLAUDE.md's *"nothing that pulls the eye"* wants it.
+const TRACK: egui::Color32 = egui::Color32::from_rgb(30, 40, 47);
+
+/// The part of the rail below the handle, and the handle itself.
+///
+/// Between the rail and the numerals: enough that the filled part of a slider says at a glance
+/// where in its range a setting is - which is the one thing a slider is better at than a number -
+/// and not enough to be brighter than the figures on the panel above.
+const LEVEL: egui::Color32 = egui::Color32::from_rgb(74, 92, 102);
+
+/// How wide the rail of a slider is, in points.
+///
+/// The panel is [`WIDTH`] and a setting's name takes most of it, so the rail is what is left. A
+/// name is read once; where the handle is, is what changes.
+const RAIL: f32 = 74.0;
+
 /// The style the whole of the chrome is drawn in.
 ///
 /// Built rather than adjusted. `egui::Style::default()` is a light theme with rounded chunky
@@ -162,8 +252,86 @@ pub fn recessive() -> egui::Style {
     visuals.window_shadow = egui::Shadow::NONE;
     visuals.popup_shadow = egui::Shadow::NONE;
 
+    // ⭐ **Group B: what a slider is allowed to look like.** Every widget state is written out,
+    // because the default dark theme's are the wrong end of the scale in every one of them - a
+    // pale rail, a paler grab, a bright hover, rounded corners and a stroke round each. Twenty-one
+    // of those over a picture of near-black water is a control surface with a simulation behind
+    // it, which is precisely the thing SPEC section 12's *recessive* is asking not to happen.
+    for state in [
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+        &mut visuals.widgets.open,
+    ] {
+        state.bg_fill = TRACK;
+        state.bg_stroke = egui::Stroke::NONE;
+        // ⚠️ **This is the slider's handle, and it is deliberately not [`VALUE`].** egui outlines
+        // a handle in the widget's foreground stroke, and at the readings' own brightness a
+        // column of twelve of them is twelve bright ticks - the brightest things on the panel,
+        // marking nothing a person is reading. At [`LEVEL`] a handle is the same weight as the
+        // filled part of the rail it sits on, which is what it is: a position, not a figure.
+        // The figures keep their own colour, through `override_text_color` below.
+        state.fg_stroke = egui::Stroke::new(1.0, LEVEL);
+        state.corner_radius = egui::CornerRadius::same(1);
+        state.expansion = 0.0;
+        // ⚠️ **The box a slider's own number sits in, and the frame is what changed it.** egui
+        // draws that number as a `DragValue`, which has a filled rectangle behind it - and at
+        // anything visible, twelve of those stacked down the panel are twelve pale chips, easily
+        // the loudest thing in the picture and brighter than the readings panel above them. See
+        // the round-one note in `docs/PHASE6.md`. Drawn as nothing at all, the box disappears
+        // and what is left is a numeral in a column, which is exactly what Group A's typography
+        // already does with the readings.
+        //
+        // ⚠️ Transparent and **not** [`FILL`], which is what round two tried. `FILL` is 85%
+        // opaque and the panel it is drawn over is the same colour at the same opacity, so a box
+        // painted in it comes out *darker* than the panel: the chip is still there, and it is a
+        // hole rather than a tile.
+        state.weak_bg_fill = egui::Color32::TRANSPARENT;
+    }
+    // The one place a widget is allowed to brighten: while a hand is actually on it. Nothing
+    // moves on its own here, so this is only ever visible under a pointer that is being held -
+    // and it is what tells somebody the number beside a slider can be dragged too.
+    visuals.widgets.hovered.weak_bg_fill = TRACK;
+    visuals.widgets.active.weak_bg_fill = TRACK;
+    visuals.widgets.hovered.bg_fill = LEVEL;
+    visuals.widgets.active.bg_fill = LEVEL;
+    visuals.selection.bg_fill = LEVEL;
+    visuals.selection.stroke = egui::Stroke::new(1.0, VALUE);
+
+    // ⭐ Every figure a widget writes, in the same colour as every figure the readings panel
+    // writes. Without it a slider's own number would be its handle's colour, and the handle is
+    // deliberately dim - see above. Anything set with `RichText::color` overrides this, which is
+    // how the labels stay dimmer than their values.
+    visuals.override_text_color = Some(VALUE);
+
+    // ⭐ The filled half of a rail. This is what makes a column of sliders readable at a glance
+    // without reading any of the numbers: how far along each one is, as a bar. egui draws it in
+    // `selection.bg_fill`, which is why that is [`LEVEL`] above.
+    visuals.slider_trailing_fill = true;
+    visuals.handle_shape = egui::style::HandleShape::Rect { aspect_ratio: 0.4 };
+
     let spacing = egui::style::Spacing {
         item_spacing: egui::vec2(6.0, 3.0),
+        slider_width: RAIL,
+        // A slider's own number is drawn in a drag box, and the default is wide enough for six
+        // digits and a sign. Four places after the point is the most any dial here shows.
+        interact_size: egui::vec2(40.0, 14.0),
+        // The triangle a fold opens with. Small, because it is the only thing on the panel that
+        // is a *control* rather than a reading, and it should read as a bullet.
+        icon_width: 10.0,
+        icon_width_inner: 5.0,
+        icon_spacing: 4.0,
+        indent: 8.0,
+        // ⚠️ **A solid bar rather than egui's floating one, and the frame is why.** With every
+        // fold open the controls are taller than the room the panel is given, so the last row
+        // visible is cut in half - which with a bar that only appears while something is being
+        // scrolled reads as a rendering fault rather than as *there is more below this*. Four
+        // points wide and drawn in the rail's own colour: a groove at the panel's edge.
+        scroll: egui::style::ScrollStyle {
+            bar_width: 4.0,
+            floating: false,
+            ..egui::style::ScrollStyle::solid()
+        },
         ..egui::style::Spacing::default()
     };
 
@@ -280,6 +448,31 @@ pub struct Chrome {
     painter: Painter,
     hidden: bool,
 
+    /// ⭐ **`B1`, `B2` and `B3`.** The settings, and the gate in front of them. See
+    /// [`crate::settings`], which is where every argument about them is written down.
+    dials: Dials,
+
+    /// ⭐ **`B5`.** What the picture is drawn to look like. See [`crate::camera::Look`].
+    look: Look,
+
+    /// Whether the run is paused, so the panel can say so. Set by whoever owns the pacing -
+    /// `window.rs` - because the panel reports the run rather than being it.
+    paused: bool,
+
+    /// ⭐ **`Q27`.** What a person has done that egui has not been told about yet.
+    ///
+    /// Drained into the `events` field of the [`egui::RawInput`] that [`Chrome::compose`] was
+    /// already building. That is the whole of the input path: there is no second route, and a
+    /// headless composition simply finds this empty.
+    pending: Vec<egui::Event>,
+
+    /// Whether the last composition wanted the pointer: egui's own answer, kept so
+    /// `controls.rs` can ask it without reaching into a context.
+    wants_pointer: bool,
+
+    /// What the last composition's buttons asked the window to go and do.
+    asked: Vec<Ask>,
+
     /// The last composition, tessellated and waiting to be painted.
     jobs: Vec<egui::ClippedPrimitive>,
 
@@ -291,14 +484,26 @@ pub struct Chrome {
     /// know which pixels of the frame it is entitled to demand are untouched.
     occupied: Option<[u32; 4]>,
 
+    /// The same, in points, as the last composition left it.
+    ///
+    /// What [`SETTLES`] is compared against: a composition is done when the chrome comes out
+    /// where it came out last time, which for a panel nothing has changed is true on the first
+    /// pass.
+    settled: Option<egui::Rect>,
+
     /// What one of egui's points is worth in pixels.
     scale: f32,
 }
 
 impl Chrome {
-    /// Build the chrome, styled.
+    /// Build the chrome, styled, over these settings.
+    ///
+    /// The dials are handed in rather than made here because they are **this run's**: a run
+    /// started with `--config` is running under a document of its own, and a panel that showed
+    /// SPEC's defaults instead would be a panel lying about the world underneath it. `main.rs`
+    /// builds them from the same document `args.rs` validated.
     #[must_use]
-    pub fn new(gpu: &Gpu) -> Self {
+    pub fn new(gpu: &Gpu, dials: Dials) -> Self {
         let context = egui::Context::default();
         context.all_styles_mut(|style| *style = recessive());
 
@@ -306,11 +511,60 @@ impl Chrome {
             context,
             painter: Painter::new(gpu),
             hidden: false,
+            dials,
+            look: Look::DEFAULT,
+            paused: false,
+            pending: Vec::new(),
+            wants_pointer: false,
+            asked: Vec::new(),
             jobs: Vec::new(),
             deltas: egui::TexturesDelta::default(),
             occupied: None,
+            settled: None,
             scale: 1.0,
         }
+    }
+
+    /// The settings as the panel now has them, checked.
+    #[must_use]
+    pub const fn dials(&self) -> &Dials {
+        &self.dials
+    }
+
+    /// What the picture is to be drawn to look like.
+    #[must_use]
+    pub const fn look(&self) -> Look {
+        self.look
+    }
+
+    /// Tell the panel whether the run is paused, so it can say so.
+    pub const fn pausing(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
+    /// ⭐ **`Q27`.** Something a person did, for egui to be told about at the next composition.
+    ///
+    /// This is the whole of the input path. It is a queue rather than a call into egui because
+    /// [`Chrome::compose`] is the only place an [`egui::RawInput`] is built, and an event handed
+    /// straight to a context would be a second way in.
+    pub fn feels(&mut self, event: egui::Event) {
+        self.pending.push(event);
+    }
+
+    /// Whether the pointer is over something the chrome owns.
+    ///
+    /// egui's own answer, taken off the last composition: it is true while the pointer is inside
+    /// a panel's rectangle and while a widget is being dragged, wherever the pointer has got to.
+    /// `controls.rs` is what does something with it. Always false in screensaver mode, because
+    /// there is nothing there.
+    #[must_use]
+    pub const fn wants_pointer(&self) -> bool {
+        self.wants_pointer
+    }
+
+    /// What the panel's buttons asked for since this was last called, and clear the list.
+    pub fn asked(&mut self) -> Vec<Ask> {
+        std::mem::take(&mut self.asked)
     }
 
     /// Whether screensaver mode is on: no panels, only the world.
@@ -353,6 +607,13 @@ impl Chrome {
         if self.hidden {
             self.jobs.clear();
             self.occupied = None;
+            self.settled = None;
+            // ⚠️ And the pointer is nobody's but the camera's while the chrome is away. Without
+            // this line, screensaver mode would leave whatever the last composition happened to
+            // want, and a person who pressed `S` while the pointer was over where the panel had
+            // been would find the camera would not drag there.
+            self.wants_pointer = false;
+            self.pending.clear();
             return;
         }
 
@@ -386,33 +647,60 @@ impl Chrome {
         // pass like anything else. ⚠️ Not on `output.shapes` - egui hands back shapes on that
         // first pass and they tessellate to nothing at all, which is a difference that cost an
         // afternoon.
-        let mut placed = None;
+        // ⭐ **`Q27`.** The queue goes into the input this loop was already building, and nowhere
+        // else.
+        //
+        // ⚠️⚠️ **Only the first pass gets it, and that is load-bearing.** A settle pass is the
+        // *same* composition asked for again, so an event handed to two of them happens twice -
+        // and the two things on this panel that answer a click both break in ways nobody would
+        // look for. A fold would open and close again in one frame, so a person clicking `light`
+        // would see nothing happen at all. A button would ask twice, so the pause key on the
+        // panel would toggle the run back to where it was. Neither shows up in the source and
+        // both are one line away.
+        let mut felt = std::mem::take(&mut self.pending);
+
+        // Cleared once and then accumulated, for the same reason. Only the pass that was given
+        // the events can produce an ask, so there is nothing to double up and nothing to lose.
+        self.asked.clear();
+
+        // ⭐ Where the chrome came out **last frame**, so that a steady panel settles on its
+        // first pass and only a panel that has actually changed shape costs a second. See
+        // [`SETTLES`].
+        let mut placed = self.settled;
         let mut jobs = Vec::new();
 
         for _ in 0..SETTLES {
-            let (output, at) = self.pass(&rows, frame, scale);
+            let (output, at) = self.pass(&rows, frame, scale, std::mem::take(&mut felt));
 
             self.deltas.append(output.textures_delta);
-            placed = at;
-            jobs = self
+            let drawn = self
                 .context
                 .tessellate(output.shapes, output.pixels_per_point);
+            let settled = !drawn.is_empty() && at == placed;
 
-            if !jobs.is_empty() {
+            placed = at;
+            jobs = drawn;
+
+            if settled {
                 break;
             }
         }
 
+        self.settled = placed;
+
+        self.wants_pointer =
+            self.context.is_pointer_over_egui() || self.context.egui_wants_pointer_input();
         self.occupied = placed.map(|rect| pixels_of(rect, scale, frame));
         self.jobs = jobs;
     }
 
-    /// One pass of egui over this world, and where the panel came out.
+    /// One pass of egui over this world, and where the chrome came out.
     fn pass(
-        &self,
+        &mut self,
         rows: &[Reading],
         frame: (u32, u32),
         scale: f32,
+        felt: Vec<egui::Event>,
     ) -> (egui::FullOutput, Option<egui::Rect>) {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -420,33 +708,88 @@ impl Chrome {
                 egui::vec2(points(frame.0) / scale, points(frame.1) / scale),
             )),
             max_texture_side: Some(self.painter.largest_texture),
+            // ⭐⭐ **`Q27` in one line.** Everything a person did, in the input `Chrome::compose`
+            // has built since Group A. A dumped frame's is empty and nothing else differs.
+            events: felt,
             ..egui::RawInput::default()
         };
 
+        // How tall the frame is in egui's points, and the most of it the controls may have. See
+        // [`CEILING`], which a window measured.
+        let tall = points(frame.1) / scale;
+        let ceiling = tall - INSET * 2.0;
+        let allowed = tall * CEILING;
+
+        // The closure below writes into three of this struct's fields while `run_ui` is reading
+        // another, so `self` is taken apart into the fields rather than passed whole. The
+        // context is an `Arc` handle and cloning one costs a reference count.
+        let Self {
+            context: held,
+            dials,
+            look,
+            paused,
+            asked,
+            ..
+        } = self;
+        let paused = *paused;
+        asked.clear();
+        let held = held.clone();
+
         let mut placed = None;
-        let output = self.context.run_ui(input, |ui| {
+        let output = held.run_ui(input, |ui| {
             let context = ui.ctx().clone();
 
-            placed = Some(
-                egui::Area::new(egui::Id::new("coacervate readings"))
-                    .fixed_pos(egui::pos2(INSET, INSET))
-                    // Read-only, in all three of the ways egui means it. `movable` is what stops
-                    // the panel being dragged around; `interactable` is what stops it taking a
-                    // click at all; `fade_in` is what stops it being a different picture on its
-                    // second frame than on its first, which the byte-for-byte comparison in
-                    // `screensaver_mode_hides_every_panel` would otherwise fail on.
-                    .movable(false)
-                    .interactable(false)
-                    .fade_in(false)
-                    .show(&context, |ui| {
-                        surround().show(ui, |ui| {
-                            ui.set_width(WIDTH);
-                            lay_out(ui, rows);
-                        });
-                    })
-                    .response
-                    .rect,
-            );
+            let readings = egui::Area::new(egui::Id::new("coacervate readings"))
+                .fixed_pos(egui::pos2(INSET, INSET))
+                // Read-only, in all three of the ways egui means it. `movable` is what stops
+                // the panel being dragged around; `interactable` is what stops it taking a
+                // click at all; `fade_in` is what stops it being a different picture on its
+                // second frame than on its first, which the byte-for-byte comparison in
+                // `screensaver_mode_hides_every_panel` would otherwise fail on.
+                .movable(false)
+                .interactable(false)
+                .fade_in(false)
+                .show(&context, |ui| {
+                    surround().show(ui, |ui| {
+                        ui.set_width(WIDTH);
+                        lay_out(ui, rows);
+                    });
+                })
+                .response
+                .rect;
+
+            // ⭐ Group B's panel, directly under Group A's and the same width - one column down
+            // the left-hand edge rather than two objects on the frame. `interactable` is the one
+            // word that differs between the two areas, and it is `B1` to `B5` in a nutshell:
+            // the readings are looked at and the controls are touched.
+            let controls = egui::Area::new(egui::Id::new("coacervate controls"))
+                .fixed_pos(egui::pos2(INSET, readings.max.y + GAP))
+                .movable(false)
+                .interactable(true)
+                .fade_in(false)
+                .show(&context, |ui| {
+                    surround().show(ui, |ui| {
+                        ui.set_width(WIDTH);
+                        // ⚠️ Bounded by the frame rather than by the contents. Every fold open
+                        // at once is taller than a small window, and a panel that ran off the
+                        // bottom would put the settings a person cannot see out of reach with
+                        // no indication that they were there.
+                        egui::ScrollArea::vertical()
+                            .max_height(
+                                (ceiling - readings.height() - GAP)
+                                    .min(allowed)
+                                    .max(GLYPH * 4.0),
+                            )
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                lay_out_controls(ui, dials, look, paused, asked);
+                            });
+                    });
+                })
+                .response
+                .rect;
+
+            placed = Some(readings.union(controls));
         });
 
         (output, placed)
@@ -508,6 +851,285 @@ fn lay_out(ui: &mut egui::Ui, rows: &[Reading]) {
             });
         });
     }
+}
+
+/// ⭐ **`B1`, `B2` and `B4`: the whole of the controls panel.**
+///
+/// # ⚠️ What is open when nobody has touched it, and why that is the whole register argument
+///
+/// CLAUDE.md: *"`egui` panels sit over the world: translucent dark, thin borders, monospace
+/// numerics, **recessive**."* SPEC section 3 asks for twenty-one live settings and ten locked
+/// ones, and thirty-one rows of widgets over a picture of water is a control surface with a
+/// simulation behind it - the exact opposite of that sentence, and it would be no less true for
+/// every individual row being quiet.
+///
+/// So the default is **the run's own controls and six closed folds**: eight rows, about a fifth
+/// of what is here, and the six labels are SPEC section 3's own table names so that anybody who
+/// has read the configuration file already knows which one to open.
+///
+/// `[light]` is the exception and opens by itself, for the reason SPEC section 3 gives about it
+/// in as many words: *"`influx` is the single most consequential slider"*. If somebody opens this
+/// panel to change one thing, that is the thing - and a fold that has to be opened before the
+/// most likely change can be made is a fold in the way.
+///
+/// # Why the run's controls are not behind a fold
+///
+/// Because pausing is not a setting. `B4` is the pair of things a person reaches for while
+/// *watching* - stop, and one more tick - and something that answers a question about the moment
+/// cannot be two clicks away. It is three widgets and it stays at the top.
+fn lay_out_controls(
+    ui: &mut egui::Ui,
+    dials: &mut Dials,
+    look: &mut Look,
+    paused: bool,
+    asked: &mut Vec<Ask>,
+) {
+    // ⭐ **`B4`.** Pause, and one tick at a time.
+    ui.horizontal(|ui| {
+        if ui
+            .add(pressable(if paused { "run" } else { "pause" }))
+            .clicked()
+        {
+            asked.push(Ask::Pause);
+        }
+
+        // A step is only a step while the run is stopped. Enabled during a run it would be a
+        // button that does nothing anybody could see, because the next tick was coming anyway.
+        if ui.add_enabled(paused, pressable("step")).clicked() {
+            asked.push(Ask::Step);
+        }
+
+        // ⚠️ The word, and not a light on the button. A person glancing at this from across a
+        // room needs to know whether the world is moving, and the button says what pressing it
+        // would *do* rather than what the run is doing - which are opposites.
+        ui.label(egui::RichText::new(if paused { "stopped" } else { "" }).color(LABEL));
+    });
+
+    // ⭐ **`B4`.** `max_ticks_per_second`, which SPEC section 3 says is what the `slow` profile
+    // is made of. Nought is its way of writing *uncapped*, so the far end of this dial is "as
+    // fast as the machine goes" and every other position is a real slowing.
+    for dial in DIALS.iter().filter(|dial| dial.table == "run") {
+        slider(ui, dials, dial);
+    }
+
+    ui.add(egui::Separator::default().spacing(7.0));
+
+    // ⭐ **`B1`.** SPEC section 3's live tables, one fold each, in the order that section writes
+    // them.
+    for (table, open) in [
+        ("light", true),
+        ("physics", false),
+        ("metabolism", false),
+        ("mutation", false),
+    ] {
+        fold(ui, table, open, |ui| {
+            for dial in DIALS.iter().filter(|dial| dial.table == table) {
+                slider(ui, dials, dial);
+            }
+        });
+    }
+
+    // ⭐ **`B5`.** The four numbers of `camera.rs`'s `Look` that are worth a hand on them, which
+    // is what Q26 was asking for the day it was written. The tone map's knee is deliberately
+    // *not* one of them - see [`peak_dial`].
+    fold(ui, "view", false, |ui| {
+        look_sliders(ui, look);
+    });
+
+    // ⭐ **`B2`.** Shown, and not editable. See `settings::locked`.
+    fold(ui, "locked", false, |ui| {
+        let rows: Vec<Reading> = crate::settings::locked(dials.config())
+            .into_iter()
+            .map(|(name, value, unit)| Reading { name, value, unit })
+            .collect();
+
+        lay_out(ui, &rows);
+    });
+
+    // ⚠️ **`B3`, as a person would meet it.** The gate refuses in a sentence naming the setting,
+    // and this is that sentence, printed. It cannot be reached by dragging - every dial's range
+    // is inside what validation accepts, which `every_dial_reaches_both_of_its_ends` holds it to
+    // - so a line here means the two have come apart, and the useful thing is to say which
+    // setting and what about it rather than to spring back silently.
+    if let Some(refused) = dials.refused() {
+        ui.add(egui::Separator::default().spacing(7.0));
+        ui.label(
+            egui::RichText::new(refused.to_string())
+                .color(LABEL)
+                .size(GLYPH - 1.0),
+        );
+    }
+}
+
+/// A button, in the register.
+///
+/// ⚠️ **The only widget in the program with a fill on it, and it is the darkest one that still
+/// reads as a box.** Everything else on this panel is text or a rail; a button has to look like
+/// something a finger goes on or nobody will ever press it, and the way to say that quietly is a
+/// hairline in the panel's own border colour rather than a bright face.
+fn pressable(said: &str) -> egui::Button<'static> {
+    egui::Button::new(egui::RichText::new(said).color(VALUE))
+        .fill(TRACK)
+        .stroke(egui::Stroke::new(1.0, EDGE))
+        .corner_radius(egui::CornerRadius::same(1))
+}
+
+/// One of SPEC section 3's tables, as a fold.
+///
+/// Closed unless it is the one somebody most likely came for. See [`lay_out_controls`].
+fn fold(ui: &mut egui::Ui, table: &str, open: bool, contents: impl FnOnce(&mut egui::Ui)) {
+    egui::CollapsingHeader::new(egui::RichText::new(table).color(LABEL))
+        .id_salt(table)
+        .default_open(open)
+        .show_unindented(ui, contents);
+}
+
+/// ⭐⭐ **`B3`, at the near end.** One live setting, as a slider, with the gate behind it.
+///
+/// The two lines that matter are the last two. A slider hands back a number, and that number goes
+/// to [`Dials::set`] - which writes it into a *copy* of the document, puts the copy through
+/// `RawConfig::validate`, and keeps it only if the gate accepted. **There is no assignment here
+/// that goes anywhere near the running world.**
+///
+/// The refusal is dropped on the floor deliberately: `dials` keeps it, and [`lay_out_controls`]
+/// prints it. Handling it here would put the sentence beside the slider, which is a line of text
+/// appearing in the middle of a column of them and pushing everything below it down - a thing
+/// moving on the screen, for CLAUDE.md's purposes.
+fn slider(ui: &mut egui::Ui, dials: &mut Dials, dial: &'static Dial) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(short(dial.label)).color(LABEL));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mut value = dials.value(dial);
+            let places = dial.places;
+            let widget = egui::Slider::new(&mut value, dial.least..=dial.most)
+                .text("")
+                .trailing_fill(true)
+                .custom_formatter(move |value, _| figure(value, places))
+                .custom_parser(|written| written.trim().parse().ok());
+            let widget = match places {
+                Some(places) => widget.fixed_decimals(places),
+                None => widget.integer(),
+            };
+
+            if ui.add(widget).changed() {
+                // ⭐ The gate. What comes back is a refusal or nothing, and `dials` keeps it
+                // either way - see the note above.
+                drop(dials.set(dial, value));
+            }
+        });
+    })
+    .response
+    // The shortened names have their full paths here, so nothing is actually lost by shortening
+    // them. It costs nothing on a frame nobody is hovering over, which is every frame this
+    // project dumps.
+    .on_hover_text(egui::RichText::new(dial.field()).color(LABEL));
+}
+
+/// How many characters wide a setting's value is written.
+///
+/// ⚠️ **Every numeral on the controls panel ends on the same pixel, and this is what does it** -
+/// the same property Group A's third dump-look-adjust round bought for the readings, arrived at
+/// by the opposite route. There the unit was given a reserved column and the number right-aligned
+/// against it; here egui draws a slider's value in a box it sizes to the contents and **centres
+/// the text inside**, so `0` and `0.0010` come out at two different places even though the
+/// sliders beside them line up exactly. Padding to a fixed width in a monospace font puts them
+/// back in a column.
+///
+/// Six is the longest any dial writes: `0.0010` for the light's influx, `0.0200` for the genome
+/// duplication rate, `400.0` for the collision stiffness. ⚠️ It is *leading* whitespace, which
+/// epaint keeps - Group A's note is about **trailing** whitespace, which it trims.
+const FIGURE: usize = 6;
+
+/// One dial's value, padded into that column.
+fn figure(value: f64, places: Option<usize>) -> String {
+    match places {
+        Some(places) => format!("{value:>FIGURE$.places$}"),
+        None => format!("{value:>FIGURE$.0}"),
+    }
+}
+
+/// A setting's name, short enough for a panel [`WIDTH`] points wide.
+///
+/// ⚠️ **Twelve characters is what is left**, and the frame is what measured it. The panel is
+/// [`WIDTH`] points, of which the rail takes [`RAIL`], the numeral column takes [`FIGURE`]
+/// monospace characters and the two gaps take twelve - which leaves about twelve characters for a
+/// name. Nine of SPEC section 3's are longer than that, and a name that overran did not wrap or
+/// clip: it pushed its own numeral right, so `offspring_share0.45` came out as one word with a
+/// number stuck to it. Visible on the dumped frame with every fold open; invisible in the source.
+///
+/// Where a word is dropped it is the one the *fold* already says - `duplication_rate` inside a
+/// fold called `mutation` is a rate, and `spring_damping` inside `physics` is a spring's. The
+/// full path is on every row's tooltip, so nothing is actually lost.
+fn short(label: &str) -> &str {
+    match label {
+        "collision_stiffness" => "stiffness",
+        "spring_damping" => "damping",
+        "movement_cost" => "movement",
+        "reproduction_threshold" => "threshold",
+        "offspring_share" => "offspring",
+        "duplication_rate" => "duplication",
+        "deletion_rate" => "deletion",
+        "insertion_rate" => "insertion",
+        "reorder_rate" => "reorder",
+        "genome_duplication_rate" => "genome_dup",
+        "max_ticks_per_second" => "ticks/s",
+        other => other,
+    }
+}
+
+/// ⭐ **`B5`.** The four of [`Look`]'s ten worth a hand on them.
+///
+/// Not all ten, and the ones left out are left out for reasons rather than for room. The water's
+/// three colours and its gradient are a *palette* - three numbers each that have to move together
+/// to mean anything, which is a colour picker rather than a slider, and a colour picker is a
+/// large bright rectangle in the corner of a frame that is supposed to be recessive. And the tone
+/// map's knee is left out because moving it is how the guard below gets broken; see the peak.
+fn look_sliders(ui: &mut egui::Ui, look: &mut Look) {
+    // ⚠️ **The peak stops at half the knee**, which is `camera.rs`'s `Look::sane` written as a
+    // range rather than as a panic. A peak past it is a peak at which two overlapping cells no
+    // longer come out of the composite at exactly twice one - SPEC section 12's whole additive
+    // technique - and `Renderer::looks` asserts it. A slider that could reach it would be a
+    // slider that stops the program, which is not what a slider is for.
+    let ceiling = look.knee * 0.5;
+
+    for (label, value, range, places) in [
+        ("glow", &mut look.glow, 1.0..=4.0, 2),
+        ("peak", &mut look.peak, 0.05..=f64::from(ceiling), 3),
+        ("bloom", &mut look.bloom, 0.0..=1.0, 2),
+        ("trail", &mut look.trail_fade, 0.0..=0.995, 3),
+    ] {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(label).color(LABEL));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut held = f64::from(*value);
+                let widget = egui::Slider::new(&mut held, range)
+                    .text("")
+                    .trailing_fill(true)
+                    .fixed_decimals(places)
+                    .custom_formatter(move |value, _| figure(value, Some(places)))
+                    .custom_parser(|written| written.trim().parse().ok());
+
+                if ui.add(widget).changed() {
+                    *value = narrowed(held);
+                }
+            });
+        });
+    }
+}
+
+/// One of the look's numbers, as the card holds it.
+///
+/// Every value reaching this came out of a slider whose range is a handful of small decimals, all
+/// of which a 32-bit float holds to seven digits - which is more than the three any of them is
+/// shown to. `config.rs`'s `narrow` is the same conversion where it matters, with a refusal
+/// attached; nothing here decides anything about a *world*.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a number between nought and four, off a slider, on its way to a uniform buffer the \
+              card reads as 32-bit floats. There is nothing here for a wider type to carry"
+)]
+fn narrowed(value: f64) -> f32 {
+    value as f32
 }
 
 /// A frame dimension, as the arithmetic wants it.
@@ -944,12 +1566,19 @@ impl Painter {
 mod tests {
     use super::{Chrome, readings, recessive};
     use crate::census::{Census, millions_of_years};
+    use crate::controls::Ask;
     use crate::frame::Renderer;
     use crate::gpu::testing::shared;
     use crate::scene::{Instance, Scene, kind_number};
+    use crate::settings::{DIALS, Dial, Dials};
     use coacervate_sim::cell::CellKind;
     use coacervate_sim::config::spec_defaults;
     use coacervate_sim::world::World;
+
+    /// The dials of a run started from SPEC section 3's own document.
+    fn shipped() -> Dials {
+        Dials::new(spec_defaults()).expect("SPEC section 3's defaults are a world")
+    }
 
     /// How big the frames below are drawn. Big enough that the panel is a corner of one rather
     /// than the whole of it, and small enough that six of them cost a fraction of a second.
@@ -1110,7 +1739,7 @@ mod tests {
         };
 
         let world = ticked(400);
-        let mut chrome = Chrome::new(gpu);
+        let mut chrome = Chrome::new(gpu, shipped());
 
         chrome.compose(&world, (1280, 720), 1.0);
         let panel = chrome
@@ -1170,7 +1799,7 @@ mod tests {
         };
 
         let world = ticked(400);
-        let mut chrome = Chrome::new(gpu);
+        let mut chrome = Chrome::new(gpu, shipped());
         chrome.compose(&world, FRAME, 1.0);
 
         let first = chrome
@@ -1222,7 +1851,7 @@ mod tests {
         let world = ticked(400);
         let scene = lit();
         let mut renderer = Renderer::new(gpu, FRAME.0, FRAME.1);
-        let mut chrome = Chrome::new(gpu);
+        let mut chrome = Chrome::new(gpu, shipped());
 
         // ⚠️ `forget` before each, because a motion trail carried from one frame into the next
         // would make two renders of one scene two different pictures - which is `frame.rs`'s
@@ -1296,7 +1925,7 @@ mod tests {
         let world = ticked(400);
         let scene = lit();
         let mut renderer = Renderer::new(gpu, FRAME.0, FRAME.1);
-        let mut chrome = Chrome::new(gpu);
+        let mut chrome = Chrome::new(gpu, shipped());
 
         renderer.forget();
         let no_chrome_at_all = renderer.render_through(gpu, &scene, &showing_all());
@@ -1330,6 +1959,203 @@ mod tests {
              chrome in the program at all, so the mode dims or ghosts the interface rather than \
              removing it",
             screensaver.pixels().len()
+        );
+    }
+
+    /// ⭐⭐ **`Q27`, and `B1` end to end. The whole point of this test is that it exists.**
+    ///
+    /// A slider is driven from one end of its range to the other by pushing three
+    /// `egui::Event`s - a move, a press, a move - and composing between them, which is exactly
+    /// what a window does with a hand on the mouse. **There is no window anywhere in it.**
+    ///
+    /// That is the property Group A's decision table asked Group B to preserve, stated as a test
+    /// rather than as a paragraph: *"an input path that only existed in the window would mean the
+    /// panel on a dumped frame and the panel on the screen were composed by two different routes,
+    /// and the frame would stop being evidence about the window."* If the events went into egui
+    /// anywhere but [`Chrome::compose`]'s own `RawInput`, this test could not be written - and
+    /// the day somebody moves them there, it stops compiling rather than stopping being true.
+    ///
+    /// ⭐ **And the setting that comes out the far end went through the gate.** The assertion is
+    /// on `dials().config()`, which is a `coacervate_sim::config::Config` - a type with no
+    /// constructor but `RawConfig::validate`. A slider that had assigned into the world directly
+    /// would have had to build one, and it cannot.
+    #[test]
+    fn a_slider_answers_a_pointer_with_no_window_anywhere_near_it() {
+        let Some(gpu) = shared() else {
+            return;
+        };
+
+        let world = ticked(400);
+        let mut chrome = Chrome::new(gpu, shipped());
+
+        // `[light]` is the fold that opens by itself, so `influx` is on the panel from the first
+        // frame - see `lay_out_controls` for why that one and not another.
+        let dial: &Dial = DIALS
+            .iter()
+            .find(|dial| dial.field() == "light.influx")
+            .expect("light.influx is a live setting");
+
+        // Two compositions with no input at all, to settle the fonts and to give the widgets
+        // somewhere to be. A slider cannot be found before it has been laid out once, which is
+        // as true of a hand on a mouse as it is of this.
+        chrome.compose(&world, (1280, 720), 1.0);
+        chrome.compose(&world, (1280, 720), 1.0);
+
+        let before = chrome.dials().value(dial);
+        let accepted = chrome.dials().accepted();
+        assert_eq!(accepted, 0, "nothing has been touched yet");
+
+        // ⚠️ Where the slider actually is. The rail is the right-hand `RAIL` points of the
+        // controls panel, and the row is found by counting: the pause row, the ticks-per-second
+        // row, the separator, the `light` fold's own header, and then `influx`. Rather than
+        // count, the pointer is walked down the panel until something moves - which is what a
+        // hand does, and which does not have to be edited every time a row is added.
+        let panel = chrome
+            .occupies()
+            .expect("the chrome is not hidden, so there are panels");
+        let right = f32::from(u16::try_from(panel[0] + panel[2]).expect("a panel is on a frame"));
+
+        let mut moved = None;
+        for row in 0_u8..80 {
+            let down = f32::from(u16::try_from(panel[1]).expect("a panel is on a frame"))
+                + f32::from(row) * 3.0;
+            // The far right of the rail: the top of the dial's range.
+            let at = egui::pos2(right - 20.0, down);
+
+            chrome.feels(egui::Event::PointerMoved(at));
+            chrome.feels(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            chrome.compose(&world, (1280, 720), 1.0);
+
+            chrome.feels(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            chrome.compose(&world, (1280, 720), 1.0);
+
+            if chrome.dials().accepted() > accepted {
+                moved = Some(at);
+                break;
+            }
+        }
+
+        let at = moved.unwrap_or_else(|| {
+            panic!(
+                "eighty rows down the controls panel {panel:?}, nothing answered a pointer at \
+                 all - so the events pushed onto the chrome are not reaching the RawInput that \
+                 Chrome::compose builds, and every slider on this panel is a picture of a slider"
+            )
+        });
+
+        // Something moved, and it went through the gate: `Dials::config` is a validated
+        // `Config`, and there is no other way to have one.
+        assert!(
+            chrome.dials().accepted() > 0,
+            "a change was made and not counted"
+        );
+        assert!(
+            chrome.dials().refused().is_none(),
+            "dragging a slider produced a value the configuration gate refuses, which means a \
+             dial's range and the gate's have come apart: {:?}",
+            chrome.dials().refused()
+        );
+
+        // ⚠️ And the pointer is the chrome's while it is over it, which is the other half of
+        // `Q27`. `controls.rs` is what does something with this; here it only has to be true.
+        assert!(
+            chrome.wants_pointer(),
+            "the pointer is sitting on a widget at {at:?} and the chrome says it does not want \
+             it, so the camera would be panning under the hand that is dragging this slider"
+        );
+
+        // Every live setting is one the world could be given, whatever was dragged.
+        let now = chrome.dials().value(dial);
+        assert!(
+            chrome.dials().config().light.influx >= 0.0,
+            "the settings the world would be handed are not a world"
+        );
+        println!("light.influx went from {before} to {now}");
+    }
+
+    /// ⭐ **`B4`, at the panel's end.** The panel's own buttons ask for the same things the keys
+    /// do, and ask once.
+    ///
+    /// The claim is about the *list*: `controls.rs`'s `Ask` is what a key produces and what a
+    /// button produces, so `Space` and the pause button cannot become two implementations of
+    /// pausing that disagree about whether the run is stopped.
+    ///
+    /// ⚠️ **And it asks once.** egui's unsettled first pass builds every widget - it simply has
+    /// no glyphs to lay them out with - so a composition that ran twice and kept both passes'
+    /// actions would press every button on the panel twice on the first frame of a run. `compose`
+    /// clears the list at the top of each settle pass, and this is what holds it there.
+    #[test]
+    fn the_panel_asks_for_a_pause_once_per_press() {
+        let Some(gpu) = shared() else {
+            return;
+        };
+
+        let world = ticked(400);
+        let mut chrome = Chrome::new(gpu, shipped());
+
+        chrome.compose(&world, (1280, 720), 1.0);
+        assert!(
+            chrome.asked().is_empty(),
+            "a panel nobody has touched asked for something"
+        );
+
+        let panel = chrome
+            .occupies()
+            .expect("the chrome is not hidden, so there are panels");
+        let left = f32::from(u16::try_from(panel[0]).expect("a panel is on a frame"));
+        let top = f32::from(u16::try_from(panel[1]).expect("a panel is on a frame"));
+
+        // The pause button is the first widget on the controls panel, which sits below the
+        // readings - so it is found the same way the slider above is, by walking down.
+        let mut pressed = Vec::new();
+        for row in 0_u8..80 {
+            let at = egui::pos2(left + 24.0, top + f32::from(row) * 3.0);
+
+            chrome.feels(egui::Event::PointerMoved(at));
+            chrome.feels(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            chrome.compose(&world, (1280, 720), 1.0);
+            pressed.extend(chrome.asked());
+
+            chrome.feels(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            chrome.compose(&world, (1280, 720), 1.0);
+            pressed.extend(chrome.asked());
+
+            if pressed.contains(&Ask::Pause) {
+                break;
+            }
+        }
+
+        assert!(
+            pressed.contains(&Ask::Pause),
+            "nothing on the controls panel asked for a pause, so `B4`'s button is a picture of a \
+             button: {pressed:?}"
+        );
+        assert_eq!(
+            pressed.iter().filter(|ask| **ask == Ask::Pause).count(),
+            1,
+            "one press of the pause button asked for {} pauses, which toggles the run back to \
+             where it was",
+            pressed.iter().filter(|ask| **ask == Ask::Pause).count()
         );
     }
 

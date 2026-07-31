@@ -68,7 +68,7 @@ pub const VERTICES_PER_CELL: u32 = 12;
 /// reason: a grain sitting on the seam is whole.
 pub const VERTICES_PER_GRAIN: u32 = 12;
 
-/// Where `water.wgsl`'s tone map stops being the identity.
+/// Where `water.wgsl`'s tone map stops being the identity, **by default**.
 ///
 /// ⭐ **Declared here because it is a promise the tests rest on, not only a number in a shader.**
 /// Below it the composite changes nothing at all, so the light in the PNG is the light the cells
@@ -77,13 +77,15 @@ pub const VERTICES_PER_GRAIN: u32 = 12;
 /// two. `camera.rs` holds `PEAK * 2.0 <= TONE_KNEE` in a `const` block so that raising the peak
 /// past the point where a two-celled body compresses stops the build.
 ///
-/// ⚠️ It is written out in `water.wgsl` as well, because WGSL has no way to be told a constant
-/// from the host without a uniform, and a uniform for a number that never changes is a byte of
-/// bandwidth per frame and a second place for it to be wrong. `the_tone_map_is_the_identity_below_its_knee`
-/// is what ties the two together: it measures the knee off an actual frame.
+/// ⭐ **Phase 6, `B5`, changed what this is without changing what it says.** It used to be
+/// written out a second time in `water.wgsl`, because WGSL has no way to be told a constant from
+/// the host without a uniform - and Q26's whole complaint was that a number in a shader cannot be
+/// moved at run time. It is now the default of [`crate::camera::Look::knee`], which the shader
+/// reads; this constant is what a [`crate::camera::Look`] starts at and what the `const`
+/// assertion in `camera.rs` still holds over.
 pub const TONE_KNEE: f32 = 0.75;
 
-/// What is left of a motion trail after one frame.
+/// What is left of a motion trail after one frame, **by default**.
 ///
 /// ⭐ **The number that decides whether swimming is legible or the frame is mush**, and Group C's
 /// measurements are what set it. A watched run takes about 650 ticks a second at 60 frames a
@@ -102,7 +104,12 @@ pub const TONE_KNEE: f32 = 0.75;
 /// long trail draws where a colony recently *was* rather than where anything went. Trails are
 /// worth having for a body in open water and worth keeping short in a crowd, and this number is
 /// what keeps them short.
-const TRAIL_FADE: f64 = 0.965;
+///
+/// ⭐ Phase 6 moved it into [`crate::camera::Look`] with the other nine, which is Q26's *"once,
+/// together"*, and this is the value it starts at. `Look::trail_fade` is a `f32`, which is what
+/// the card takes: a blend constant is `wgpu::Color`'s `f64` on the way in and a 32-bit float by
+/// the time it reaches the pipeline either way.
+pub const TRAIL_FADE: f32 = 0.965;
 
 /// The format everything between the cells and the picture is held in.
 ///
@@ -300,6 +307,18 @@ pub struct Renderer {
 
     view: wgpu::Buffer,
     view_read: wgpu::BindGroup,
+
+    /// ⭐ **`B5`.** Everything about what the picture looks like, on the card.
+    ///
+    /// One buffer, written once per frame beside the view. See [`crate::camera::Look`] and
+    /// `docs/PHASE5.md`'s Q26 for why these ten numbers stopped being constants together.
+    look_buffer: wgpu::Buffer,
+    look_read: wgpu::BindGroup,
+
+    /// And the same numbers on this side of the wall, because one of them - the trail's fade -
+    /// is a blend constant rather than something a shader reads.
+    look: crate::camera::Look,
+
     sampled: wgpu::BindGroupLayout,
     lens: wgpu::Sampler,
 
@@ -354,7 +373,18 @@ impl Renderer {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    // ⚠️ Said rather than left to be worked out, and Phase 6 is why. There are
+                    // two uniform layouts here now and they are otherwise identical - one
+                    // buffer, binding nought, both stages - so left unstated they are the same
+                    // layout, and wgpu is entitled to hold the *view*'s buffer to the size the
+                    // *look*'s shader asked for. It does, and the message is a good one: "the
+                    // buffer bound at binding index 0 is bound with size 48 where the shader
+                    // expects 64". Naming the size makes the two layouts different things and
+                    // gets the buffer checked against the struct it is the bytes of.
+                    min_binding_size: wgpu::BufferSize::new(
+                        u64::try_from(size_of::<crate::camera::View>())
+                            .expect("the view record is forty-eight bytes"),
+                    ),
                 },
                 count: None,
             }],
@@ -365,6 +395,44 @@ impl Renderer {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: view.as_entire_binding(),
+            }],
+        });
+
+        // ⭐ **`B5`.** The second uniform: what the picture looks like, as against where it is.
+        // `cells.wgsl` reads two of its fields and `water.wgsl` seven; `frame.rs` reads the
+        // tenth off its own copy, because a blend constant is not a thing a shader can ask for.
+        let look_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("coacervate look"),
+            size: u64::try_from(size_of::<crate::camera::Look>())
+                .expect("the look record is sixty-four bytes"),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let look_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("coacervate look"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                // Both stages: `cells.wgsl` places and tints a cell in its vertex stage, and
+                // `water.wgsl` tone-maps in its fragment stage.
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    // See the view's layout above for why this is stated.
+                    min_binding_size: wgpu::BufferSize::new(
+                        u64::try_from(size_of::<crate::camera::Look>())
+                            .expect("the look record is sixty-four bytes"),
+                    ),
+                },
+                count: None,
+            }],
+        });
+        let look_read = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("coacervate look"),
+            layout: &look_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: look_buffer.as_entire_binding(),
             }],
         });
 
@@ -407,6 +475,14 @@ impl Renderer {
 
         let cells_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("coacervate cells"),
+            bind_group_layouts: &[Some(&view_layout), Some(&look_layout)],
+            ..wgpu::PipelineLayoutDescriptor::default()
+        });
+        // The snow reads where the world is and nothing about how it is lit - see `snow.wgsl`,
+        // which is deliberately not part of the bloom or the trail - so it gets a layout of its
+        // own rather than the cells' with a group it never binds.
+        let snow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("coacervate snow"),
             bind_group_layouts: &[Some(&view_layout)],
             ..wgpu::PipelineLayoutDescriptor::default()
         });
@@ -421,7 +497,12 @@ impl Renderer {
         });
         let water_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("coacervate water"),
-            bind_group_layouts: &[Some(&view_layout), Some(&sampled), Some(&sampled)],
+            bind_group_layouts: &[
+                Some(&view_layout),
+                Some(&sampled),
+                Some(&sampled),
+                Some(&look_layout),
+            ],
             ..wgpu::PipelineLayoutDescriptor::default()
         });
 
@@ -526,7 +607,7 @@ impl Renderer {
 
         let snow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("coacervate snow"),
-            layout: Some(&cells_layout),
+            layout: Some(&snow_layout),
             vertex: wgpu::VertexState {
                 module: &snow_shader,
                 entry_point: Some("vertex"),
@@ -571,11 +652,46 @@ impl Renderer {
             snow,
             view,
             view_read,
+            look_buffer,
+            look_read,
+            look: crate::camera::Look::DEFAULT,
             working: Working::new(gpu, &sampled, &lens, width, height),
             sampled,
             lens,
             readback: readback(gpu, padded_row, height),
             looking: None,
+        }
+    }
+
+    /// What the picture is currently drawn to look like.
+    #[must_use]
+    pub const fn look(&self) -> &crate::camera::Look {
+        &self.look
+    }
+
+    /// ⭐ **`B5`.** Draw the world to look like this from here on.
+    ///
+    /// The whole of what a slider on the bloom, the trail, the water or the tone map does. It
+    /// takes effect on the next frame and costs nothing until then: the buffer is written as part
+    /// of the frame, beside the view.
+    ///
+    /// ⚠️ **The trail is thrown away**, and it has to be. The accumulation buffer holds several
+    /// frames of a picture drawn the old way, and a fade or a peak that changed under it would
+    /// leave the old look decaying on the screen for a second and a half - which is `frame.rs`'s
+    /// own rule about a camera that moved, applied to the other reason a frame's history can stop
+    /// being about the same picture.
+    ///
+    /// # Panics
+    ///
+    /// If two cells at this peak would be compressed by this tone map. See
+    /// [`crate::camera::Look::sane`], which is the runtime form of the `const` assertion Group D
+    /// of Phase 5 wrote.
+    pub fn looks(&mut self, look: crate::camera::Look) {
+        look.sane();
+
+        if look != self.look {
+            self.look = look;
+            self.forget();
         }
     }
 
@@ -782,6 +898,10 @@ impl Renderer {
                 scene.phase,
             )),
         );
+        // ⭐ **`B5`.** Beside the view, every frame, so that a slider moved between two frames
+        // takes effect on the second of them and nothing has to be rebuilt.
+        gpu.queue()
+            .write_buffer(&self.look_buffer, 0, bytemuck::bytes_of(&self.look));
 
         // A buffer of nothing is not a buffer `wgpu` will accept, so an empty world gets one
         // record that nothing is ever told to read - the instance *count* below is nought. The
@@ -823,6 +943,7 @@ impl Renderer {
 
             pass.set_pipeline(&self.cells);
             pass.set_bind_group(0, &self.view_read, &[]);
+            pass.set_bind_group(1, &self.look_read, &[]);
             pass.set_vertex_buffer(0, buffer.slice(..));
 
             // ⭐ SPEC section 12's one instanced draw call, in full. Every living cell in the
@@ -857,11 +978,16 @@ impl Renderer {
             });
 
             if carried {
+                // ⭐ **`B5`.** The tenth number of the look, and the only one no shader reads:
+                // it is a blend constant. `wgpu::Color` is `f64` and the card takes a 32-bit
+                // float, so widening `Look`'s `f32` here arrives at exactly the value a `f64`
+                // literal of the same digits would have arrived at.
+                let fade = f64::from(self.look.trail_fade);
                 pass.set_blend_constant(wgpu::Color {
-                    r: TRAIL_FADE,
-                    g: TRAIL_FADE,
-                    b: TRAIL_FADE,
-                    a: TRAIL_FADE,
+                    r: fade,
+                    g: fade,
+                    b: fade,
+                    a: fade,
                 });
                 pass.set_pipeline(&self.fade);
                 pass.draw(0..3, 0..1);
@@ -953,6 +1079,7 @@ impl Renderer {
         pass.set_bind_group(0, &self.view_read, &[]);
         pass.set_bind_group(1, &self.working.trail_read, &[]);
         pass.set_bind_group(2, &self.working.halo_read, &[]);
+        pass.set_bind_group(3, &self.look_read, &[]);
         pass.draw(0..3, 0..1);
 
         // And the marine snow over the top of the finished picture. See `snow.wgsl` for why it
@@ -1226,7 +1353,7 @@ fn pixels(count: u32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{Frame, Renderer, TONE_KNEE, VERTICES_PER_CELL, from_srgb};
-    use crate::camera::{Camera, PEAK};
+    use crate::camera::{Camera, Look, PEAK};
     use crate::gpu::testing::shared;
     use crate::scene::{Grain, Instance, Scene, kind_number, shaft_phase};
     use coacervate_sim::cell::CellKind;
@@ -1779,6 +1906,115 @@ mod tests {
             (left - right).abs() < left * 0.05,
             "the two sides of the seam are lit by {left} and {right}, which is not one cell \
              seen from both sides"
+        );
+    }
+
+    /// ⭐⭐ **`B5`.** The look is the only thing that decides what a frame looks like, and going
+    /// back to the defaults gets the same frame back **byte for byte**.
+    ///
+    /// `docs/PHASE5.md`'s **Q26** asked for the compiled-in constants to become uniforms, and the
+    /// danger in that change is not that a slider will not work - a slider that did nothing is
+    /// obvious the first time it is dragged. It is that one of the ten will be left behind: read
+    /// from the uniform in one place and from a stale copy in another, so that the picture is
+    /// *nearly* what was asked for. Nothing would report that.
+    ///
+    /// So the claim is stated as a round trip. Four of the ten are moved, one at a time, and each
+    /// has to change the frame - which is what says the number reaches the card at all. Then the
+    /// default look is put back and the frame has to be **the same bytes** as the first one. A
+    /// value that had been latched anywhere - in a pipeline, in the trail, in a shader's own
+    /// constant folding - would survive the journey back and show up here.
+    ///
+    /// ⚠️ The trail is what makes the second half non-trivial: `Renderer::looks` throws it away,
+    /// because an accumulation buffer holding several frames drawn the old way is a picture of
+    /// two looks at once. Without that, the frame after a change would carry a ghost of the frame
+    /// before it and coming back to the defaults would not come back to the same picture.
+    #[test]
+    fn the_look_is_the_only_thing_that_decides_what_a_frame_looks_like() {
+        let Some(gpu) = shared() else {
+            return;
+        };
+
+        let mut renderer = Renderer::new(gpu, 128, 128);
+        // ⚠️ Three cells stacked, and one beside them. The stack is what puts a pixel above the
+        // tone map's knee - a lone cell is at `PEAK`, which is a third of it - so that moving the
+        // knee is a change to this frame rather than to a frame nobody drew.
+        let world = scene(
+            200.0,
+            vec![
+                cell(100.5, 60.5),
+                cell(100.5, 60.5),
+                cell(100.5, 60.5),
+                cell(108.5, 60.5),
+            ],
+        );
+
+        let first = renderer.render(gpu, &world).pixels().to_vec();
+
+        // One at a time, and each has to be visible. The four are one from each corner of the
+        // record: a cell's own light, the water behind it, the halo around it, and the curve
+        // everything is brought through at the end.
+        for (what, look) in [
+            (
+                "peak",
+                Look {
+                    peak: PEAK * 0.5,
+                    ..Look::DEFAULT
+                },
+            ),
+            (
+                "abyss",
+                Look {
+                    abyss: [0.02, 0.02, 0.02],
+                    ..Look::DEFAULT
+                },
+            ),
+            (
+                "bloom",
+                Look {
+                    bloom: 0.0,
+                    ..Look::DEFAULT
+                },
+            ),
+            (
+                // ⚠️ Exactly twice the peak, which is the lowest knee `Look::sane` allows: it is
+                // the point at which two cells still add up to exactly twice one. Anything
+                // below it stops the frame instead of drawing it, which is
+                // `a_peak_past_half_the_knee_stops_the_frame_rather_than_quietly_compressing_it`.
+                "knee",
+                Look {
+                    knee: PEAK * 2.0,
+                    ..Look::DEFAULT
+                },
+            ),
+        ] {
+            renderer.looks(look);
+            let moved = renderer.render(gpu, &world);
+
+            assert_ne!(
+                moved.pixels(),
+                &first[..],
+                "moving the look's {what} changed nothing on the frame, so it is still being \
+                 read from wherever it was compiled in"
+            );
+        }
+
+        // ⭐ And back. Not nearly the same frame - the same bytes.
+        renderer.looks(Look::DEFAULT);
+        let again = renderer.render(gpu, &world);
+        let differing = again
+            .pixels()
+            .iter()
+            .zip(&first)
+            .filter(|(now, then)| now != then)
+            .count();
+
+        assert_eq!(
+            differing,
+            0,
+            "putting the look back to its defaults left {differing} bytes of {} different from \
+             the frame it started at, so something the look decides is being kept somewhere the \
+             look does not reach",
+            first.len()
         );
     }
 

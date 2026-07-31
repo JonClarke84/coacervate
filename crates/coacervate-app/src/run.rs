@@ -71,7 +71,7 @@
 //! Until then `Ctrl-C` kills the process where it stands, which is survivable precisely because
 //! there is nothing on disk yet. The moment Phase 8's replay log exists that stops being true.
 
-use coacervate_sim::config::RunConfig;
+use coacervate_sim::config::{Config, RunConfig};
 use coacervate_sim::world::World;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -331,6 +331,38 @@ impl Run {
     #[must_use]
     pub fn world(&self) -> &World {
         &self.world
+    }
+
+    /// ⭐ **Phase 6, `B1` and `B4`.** Go on under these conditions from here.
+    ///
+    /// SPEC section 3 divides its table into what locks at run start and what does not, and *"the
+    /// rest can be changed live, which is how environmental events work"*. Two different things
+    /// have to hear about a change and this is where they are kept together:
+    ///
+    /// - **The world**, for `[light]`, `[physics]`, `[metabolism]` and `[mutation]`.
+    ///   `World::retune` walks every subsystem holding a copy of a number, and panics if
+    ///   `[world]` or `[limits]` moved - the arenas were sized from those.
+    /// - **The pacing**, for `run.max_ticks_per_second`, which is not a fact about the world at
+    ///   all. It is what SPEC section 3 calls the `slow` profile's only lever, and it lives here
+    ///   because a wall clock does.
+    ///
+    /// ⚠️ **The bounds are deliberately not re-read.** `max_wall_clock_hours` and `max_ticks` are
+    /// the terms this run was *started* under - `--ticks` overrides one of them on the command
+    /// line and `--dump-frame` supplies the other - and a deadline that could be dragged forward
+    /// mid-run is a run whose closing report cannot say what it was bounded by. `panel.rs` offers
+    /// neither.
+    ///
+    /// ⚠️ **The next tick is due immediately.** A run slowed from uncapped to ten a second would
+    /// otherwise be held to whatever `due` happened to be left at, which for an uncapped run is
+    /// the moment the run began - hours ago, so the first thing a newly-capped run would do is
+    /// burst. See [`Run::wait`], which refuses to make time back for the same reason.
+    pub fn retune(&mut self, config: &Config) {
+        self.world.retune(config);
+        self.interval = config
+            .run
+            .max_ticks_per_second
+            .map(|rate| Duration::from_secs(1) / rate);
+        self.due = Instant::now();
     }
 }
 
