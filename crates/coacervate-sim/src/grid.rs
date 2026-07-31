@@ -92,19 +92,28 @@
 //! ceiling did not cost any of that: the same run without it came out at three parts in ten
 //! billion, with an identical worst moment.
 //!
+//! # Taking energy out of a tile
+//!
+//! There is exactly one way, [`Grid::harvest`], and it takes the ledger as an argument. That
+//! is the whole design: the tiles are handed out only as a shared slice, so no code outside
+//! this module can write one, and the only routine that lowers a tile cannot be called
+//! without the books being present to be told. Energy therefore cannot leave the field
+//! without an account gaining it - not by mistake, and not on purpose either.
+//!
+//! Phase 3 seeds organisms through it, because SPEC section 5 says a seeded organism's
+//! starting energy comes out of the field exactly as harvesting would; Phase 4's photocytes
+//! will use the same door.
+//!
 //! # What is not here
 //!
-//! Nothing calls any of this yet. Organisms arrive in Phase 3 and the loop that ticks the
-//! world in Phase 4. There is no way to take energy *out* of a tile from outside this
-//! module, because nothing yet exists that would want to; when photocytes arrive they will
-//! need one, and it will have to debit the ledger in the same breath.
-//!
 //! A world starts empty and fills under the light, which takes a few hundred ticks. Phase 3
-//! should think about whether the first organisms are seeded into that or after it: an
-//! organism seeded on tick zero spends its first hundreds of ticks in a famine that is an
-//! artefact of the world having just been switched on rather than anything about the
-//! organism.
+//! seeds organisms out of the field, so an organism seeded on tick zero can be given nothing
+//! at all - there is nothing there yet - and one seeded shortly afterwards spends its first
+//! hundreds of ticks in a famine that is an artefact of the world having just been switched
+//! on rather than anything about the organism. Whoever sets a run going has to decide whether
+//! to let the field fill first.
 
+use crate::cell::Vec2;
 use crate::config::Config;
 use crate::ledger::Ledger;
 
@@ -300,10 +309,46 @@ impl PatchNoise {
     }
 }
 
+/// Which of a row (or column) of tiles a world coordinate falls in.
+///
+/// `per_unit` is how many tiles there are per world unit, worked out once when the grid is
+/// built, and `last` is the index of the final tile. Multiplying by a precomputed scale
+/// rather than dividing by a tile's width is what `physics.rs` does to place a cell in its
+/// bucket, and for the same reason: the tiles then divide the world exactly, so the join
+/// where the world wraps falls precisely on a tile boundary rather than a hair either side of
+/// one.
+///
+/// The clamp is not defensive tidying. A cell resting exactly on the floor has `y` equal to
+/// the world's height, which multiplied out lands one past the last row; without the clamp
+/// that is an index off the end of the array. It also makes the conversion below total, which
+/// is what allows it to be a conversion at all.
+fn tile_along(coordinate: f32, per_unit: f64, last: f64) -> usize {
+    let exact = f64::from(coordinate) * per_unit;
+
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the value has been rounded down to a whole number and then clamped \
+                  between nought and the index of the last tile, so the conversion is \
+                  exact and in range for any coordinate whatever"
+    )]
+    let tile = exact.floor().clamp(0.0, last) as usize;
+
+    tile
+}
+
 /// A grid of energy laid over the world, and everything needed to grow it back.
 pub struct Grid {
     cols: usize,
     rows: usize,
+
+    /// Tiles per world unit, across and down, and the index of the last tile in a row and in
+    /// a column. Precomputed so that finding the tile under a cell is a multiplication rather
+    /// than a division.
+    across_per_unit: f64,
+    down_per_unit: f64,
+    last_col: f64,
+    last_row: f64,
 
     /// How much energy each tile is holding now.
     tiles: Vec<f32>,
@@ -368,12 +413,79 @@ impl Grid {
         Self {
             cols,
             rows,
+            across_per_unit: f64::from(cols_across) / f64::from(config.world.width),
+            down_per_unit: f64::from(rows_down) / f64::from(config.world.height),
+            last_col: f64::from(cols_across - 1),
+            last_row: f64::from(rows_down - 1),
             tiles: vec![0.0; tile_count],
             targets,
             regrowth,
             flux: vec![0.0; tile_count],
             diffusion: light.diffusion,
         }
+    }
+
+    /// Which tile of the field a point in the world is standing on.
+    ///
+    /// The grid is coarser than the world it covers - SPEC section 3's default is a tile
+    /// eight world units across, which is a little over one cell-width - so this is the
+    /// question "which patch of water is this cell in", and it is asked once per cell of
+    /// every organism being seeded, and from Phase 4 once per photocyte per tick.
+    #[must_use]
+    pub fn tile_at(&self, at: Vec2) -> usize {
+        let col = tile_along(at.x, self.across_per_unit, self.last_col);
+        let row = tile_along(at.y, self.down_per_unit, self.last_row);
+
+        row * self.cols + col
+    }
+
+    /// Take up to `wanted` out of one tile, tell the ledger where it went, and hand back what
+    /// the tile actually gave up.
+    ///
+    /// **The only way energy leaves the field**, and the ledger is an argument rather than
+    /// something the caller is trusted to remember afterwards. That is the same decision
+    /// [`Grid::tick`] makes about the light and it is the more important of the two: light
+    /// credited to nobody would show up immediately as a world inventing energy, while a
+    /// harvest debited to nobody looks exactly like a world quietly running out.
+    ///
+    /// A tile gives up as much as is asked of it or as much as it has, whichever is less. It
+    /// is never taken below nothing, so a caller cannot dig a hole in the water and owe it
+    /// back later - which matters because the field is the account nobody keeps a running
+    /// total of, and a negative tile would be a debt that only appears when the tiles are
+    /// next added up.
+    ///
+    /// # What the ledger is told, and why it is not what was asked for
+    ///
+    /// The realised change, measured by widening both readings of the tile and subtracting -
+    /// the same arithmetic, in the same order, as [`Grid::regrow`] and [`Grid::spill`], and
+    /// for the same reason. A tile is a 32-bit number and the amount wanted is not, so
+    /// subtracting a quantity from a tile does not lower it by exactly that quantity. Telling
+    /// the ledger the intention rather than the outcome would leave the accounts a hair away
+    /// from the grid on every harvest for ever, and SPEC section 5's tolerance would absorb
+    /// the difference and hide it.
+    ///
+    /// The caller should treat what comes back as the truth about how much it got. Phase 2's
+    /// second design decision in `docs/PHASE2.md` is this same rule stated once for the whole
+    /// project: record what actually happened, not what was intended.
+    ///
+    /// # Panics
+    ///
+    /// If there is no such tile in this grid, which means a caller has worked out a tile
+    /// index some way other than [`Grid::tile_at`].
+    pub fn harvest(&mut self, ledger: &mut Ledger, tile: usize, wanted: f64) -> f64 {
+        let before = self.tiles[tile];
+        let taken = narrowed(wanted.clamp(0.0, f64::from(before)));
+
+        // The floor is against the narrowing rather than against the caller: rounding a
+        // quantity into a tile-sized number can round it *up*, and a tile that gave up a
+        // fraction more than it held would be a tile holding a negative amount of energy.
+        let after = (before - taken).max(0.0);
+        self.tiles[tile] = after;
+
+        let realised = f64::from(before) - f64::from(after);
+        ledger.harvest(realised);
+
+        realised
     }
 
     /// How many tiles across the world is.

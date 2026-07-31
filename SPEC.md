@@ -281,9 +281,18 @@ Flow:
 - Light adds to `field` and `influx_total`. This is the only operation in the simulation
   that creates energy; everything below moves it.
 - **Seeding an organism takes its starting energy out of `field`**, exactly as harvesting
-  would. Easy to miss, because a seeded organism feels like it comes from outside the
-  world — but conjuring its body out of nothing is a leak on tick zero, and it will show up
-  as an invariant failure with no obvious cause.
+  would. Easy to miss, because a seeded organism feels like it comes from outside the world.
+
+  ⚠️ **And the invariant will not catch you.** An earlier draft of this section claimed a
+  conjured seed shows up as an invariant failure. It was tested, and it does not. An organism
+  whose energy was never *told* to the ledger leaves all five accounts exactly as they were,
+  so the books balance perfectly while a body stands in the world holding energy nobody
+  counted. It stays silent until something moves that energy out of a `biomass` account that
+  never received it — hours into a run, with no cause to find.
+
+  What guards this is not the invariant but a test asserting the **field went down**. The
+  general lesson, which Phase 2 learned twice: a conservation check cannot see energy that
+  was never declared, only energy that was declared wrongly.
 - Photocytes move `field → biomass`.
 - Devorocytes move `detritus → biomass`, or `biomass → biomass` when predating.
 - Metabolism and movement move `biomass → dissipated`.

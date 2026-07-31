@@ -12,9 +12,11 @@ duplication/divergence tested; caps hold under fuzzing*, and `.\scripts\check.ps
 
 | | |
 | --- | --- |
-| **Phase 3** | in progress |
-| **Current group** | D — organisms in the world (A, B and C are done) |
-| **Suite** | green — 94 tests, 44s |
+| **Phase 3** | **complete** — `.\scripts\check.ps1` exits 0 |
+| **Current group** | D — done |
+| **Suite** | green — **100 tests** (92 sim, 8 app), 45s |
+| **Invariant** | relative error **5.88e-9** over 120,000 ticks of a world with eight bodies in it, non-trending. Tolerance is 1e-3. |
+| **Next** | Phase 4 — reproduction, death, detritus |
 
 ---
 
@@ -161,15 +163,90 @@ argued at length in `mutation.rs`; this is the index, on the same terms as Group
 
 ### Group D — organisms in the world
 
-- [ ] **D1. `an_organism_occupies_one_fixed_slot`** — see decision 1 above.
-- [ ] **D2. `a_birth_fails_at_the_cap_rather_than_allocating`** — CLAUDE.md: "a full world
-  means nowhere to reproduce into", and it is what makes the memory guarantee hold.
-- [ ] **D3. `seeding_an_organism_takes_its_energy_out_of_the_field`** — SPEC section 5. *A
-  seeded organism feels like it comes from outside the world, so conjuring its body is an
-  easy leak to write — and it shows up as an invariant failure on tick zero with no obvious
-  cause.*
-- [ ] **D4. `energy_is_still_conserved_with_organisms_present`** — Phase 2's headline,
-  re-run over a world that now has bodies in it.
+- [x] **D1. `an_organism_occupies_one_fixed_slot`** — see decision 1 above. Most of the test
+  is about the *gap*: a three-celled organism in a slot of eight leaves five cells untouched
+  and the next organism starts at cell 8 rather than at cell 3. A packed arena passes every
+  other assertion in it.
+- [x] **D2. `a_birth_fails_at_the_cap_rather_than_allocating`** — CLAUDE.md: "a full world
+  means nowhere to reproduce into", and it is what makes the memory guarantee hold. Compares
+  the **capacity** of every arena and the addresses of the two largest, because a test that
+  only checked the refusal would pass against an implementation that grew the arena and
+  returned the error from somewhere else.
+- [x] **D3. `seeding_an_organism_takes_its_energy_out_of_the_field`** — SPEC section 5. ⚠️
+  **This is the one where the expected failure mode turned out to be wrong; see below.**
+- [x] **D4. `energy_is_still_conserved_with_organisms_present`** — Phase 2's headline,
+  re-run over a world that now has bodies in it. **5.88e-9 after 120,000 ticks**, non-trending
+  (6.12e-9 worst over the whole run against 2.94e-9 over its first tenth, where an
+  accumulating leak would give ten times). `#[ignore]`d and run by `check.ps1`'s release pass,
+  the same trade Phase 2's D1 makes: two seconds in release against half a minute in debug.
+
+**⚠️ The energy invariant does not catch a seeding that conjures its energy.** Phase 2 and
+SPEC section 5 both say it would — *"it will show up as an invariant failure with no obvious
+cause"* — and `world.rs`'s module documentation said so too. It does not, and the reason
+matters: an organism whose energy was never *told* to the ledger leaves all five accounts
+exactly as they were, so the books balance perfectly while a body stands in the world holding
+energy nobody counted. Nothing announces itself until Phase 4 kills that organism and moves
+its energy out of a `biomass` account that never received it.
+
+Measured, by making seeding conjure its energy and running the suite: **two tests fail**, D3
+and D4, and the world's own tick-by-tick check stays silent throughout. What stands between
+this project and the failure is therefore D3's assertion that *the field went down*, not the
+invariant. `world.rs`'s module documentation now says so.
+
+**What SPEC left open, and what was decided.**
+
+| Question | Answer |
+| --- | --- |
+| How much energy does a seeded organism start with? SPEC section 10 gives reproduction a formula (`offspring_share` of the parent) and gives seeding nothing. | **The caller names it**, as an amount. Deriving it would need a per-cell construction cost, which SPEC mentions twice (`reproduction_threshold × body_construction_cost`, and death "carrying that cell's construction energy") and never gives a number for. That number belongs with Phase 4's metabolism, which is the first thing that needs it. |
+| Which tiles pay for it, when a body stands on several? | The tiles under the body, each counted once however many cells stand on it, visited in the order the cells were grown, each giving up what is still wanted or what it has. Nothing is spread evenly: a body on rich water pays out of the first tile it is standing on. |
+| What if they cannot pay? | **The seeding fails and the field is untouched** — not part-paid, and not a body standing there holding less than it was meant to. The same answer the population cap gives. |
+| What type is an organism's stored energy? | **`f64`**, which is SPEC section 5's exception for the ledger accounts rather than a second one: an organism's energy *is* a share of the `biomass` account, and Phase 4's death moves what it holds out of that account. A rounded copy would invent or destroy the difference on every death. |
+| A world starts dark. When can the first organisms be seeded? | Not on tick zero, unless they are seeded holding nothing: the field is empty until the light has been falling for some hundreds of ticks (`cap / influx` ≈ 667 at SPEC's defaults). `grid.rs` raised this at the end of Phase 2 and it is now a refusal a caller can see rather than a note. |
+| The physics wants a dense array of cells and the slots leave gaps in one. | The tick **gathers** the living cells into a dense crowd, in slot order, with the springs' endpoints shifted into the crowd's numbering, and writes the moved cells home afterwards. Two copies per living cell per tick and nothing at all per empty slot. The alternative — handing the physics the whole arena — would make every empty slot an invisible obstacle that living bodies bump into, and would make a nearly-empty world cost what a full one does. |
+
+---
+
+## Carried into Phase 4
+
+**Freeing a slot on death is three lines, and one of them is easy to forget.** Set
+`organisms[slot] = None`, push the slot onto the free list, and **move the organism's energy
+out of `biomass` before dropping it** — `Ledger::die` takes an amount and the organism is the
+only thing that knows it. Nothing else has to happen: the cells and springs lying in the slot
+are never read again and are overwritten by whoever is born there next. There is no index to
+fix anywhere, which is the whole point of decision 1.
+
+**The free list is a stack, and its ordering is deterministic but visible.** It is built
+holding every slot in reverse, so an empty world fills from slot 0 upwards; a freed slot is
+pushed on the end and is therefore the *next* one handed out, ahead of any never-used slot
+with a higher number. That is deterministic — the same run gives the same slots in the same
+order — but it is only deterministic *given* that deaths are processed in a fixed order, and
+Phase 4 owns that. Kill organisms in whatever order a parallel pass happens to finish in and
+the free list comes out permuted, which permutes the slots, which permutes the crowd, which
+changes the order forces are summed in, which changes the last bit of the physics. Nothing
+would announce it: the run would simply stop matching its own recording. **Sweep the slots in
+index order when reaping.**
+
+**Slot number is not identity.** A slot is reused; a serial is not. Species clustering, the
+event log and the museum all want the serial. Two organisms that lived in the same slot at
+different times must never be treated as one, and they will look identical to anything
+keying on the slot.
+
+**The organism's energy and the ledger's `biomass` are two records of one quantity**, and
+they are only allowed to move together: every change to `organism.energy` needs the matching
+`Ledger` call with the same `f64` amount. `energy_is_still_conserved_with_organisms_present`
+checks the two against each other at the end of its run, which is what would catch a
+metabolism that charged an organism without telling the books.
+
+**Solvency is still nobody's job.** SPEC section 5 is explicit that the ledger does not check
+it: spending more than an organism holds drives `biomass` negative while the books balance
+perfectly. Upkeep is the first thing that can do it, so Phase 4 is where "energy reaches zero"
+has to become death rather than a negative number.
+
+**The crowd is rebuilt every tick and is where liveness will bite.** It costs one copy per
+living cell and a walk over every slot, which at four thousand slots is nothing. What is worth
+knowing is that it is the only place the arena's gaps are dealt with: anything Phase 4 adds
+that walks cells — harvesting, upkeep, detritus — has to walk the slots the way `gather` in
+`world.rs` does, not the arena, or it will charge upkeep to the empty half of every slot.
 
 ---
 
@@ -190,12 +267,25 @@ cheap answer if it ever matters. *Group C adds one to that list: the natural log
 the hand-rolled Gaussian in `mutation.rs` needs. Sines, cosines and logarithms are now the
 whole of it.*
 
-**Q9, raised by Group B.** `MAX_REST_LENGTH` keeps the widest body a genome can grow to
-under 900 world units, which is inside half of SPEC's default world width and therefore
-inside the distance at which the horizontal wrap starts resolving a spring the wrong way
-round (SPEC section 8). Nothing enforces that relationship: a configuration with a world
-narrower than ~1,800 units breaks it, and `config.rs` has no reason to know. Group D places
-bodies in the world and is where a check belongs, if one is wanted.
+**Q9, raised by Group B, and looked at by Group D without being closed.**
+`MAX_REST_LENGTH` keeps the widest body a genome can grow to under 900 world units, which is
+inside half of SPEC's default world width and therefore inside the distance at which the
+horizontal wrap starts resolving a spring the wrong way round (SPEC section 8). Nothing
+enforces that relationship: a configuration with a world narrower than ~1,800 units breaks it.
+
+Group D placed the bodies and did **not** add the check, and the reason is worth recording
+before somebody adds it. The 900 units is the worst case over every genome there could ever
+be — sixty-four cells in a straight line, each at the longest rest length a random gene can
+draw. Real bodies are nothing like it, and a rule written against the worst case would refuse
+world sizes that are perfectly sound: three of Group D's own tests run in worlds 256 and 512
+units across, with bodies sixteen and twenty-four units wide. A check that fired on those
+would be a check people turn off.
+
+What would actually be wanted is a check on the *body*, at the moment it is grown, rather
+than on the configuration: a body wider than half the world is the thing that breaks, and
+development is where that becomes knowable. It is cheap — the offsets are already in hand —
+and it is Phase 4's to decide, because Phase 4 is the first thing that grows bodies nobody
+wrote by hand.
 
 **~~Q10. SPEC section 7 listed six mutation operators and gave five of them a rate.~~
 RESOLVED 2026-07-31.** Reordering was written as *"Reordering — swap two adjacent genes"*
@@ -206,6 +296,31 @@ in: `reorder_rate = 0.02` is now in SPEC sections 3 and 7, `config/default.toml`
 `RawMutation`, `MutationConfig` and the validation gate, the constant is gone, and
 `reordering_can_be_switched_off` is the test that says so. The claims about a genome at its
 cap are now about the genome being *identical* rather than merely holding the same genes.
+
+**Q12, raised by Group D, and it corrects a Phase 2 claim.** `grid.rs` says of the energy
+diffusion leaves in transit: *"what is in transit is at most half a rounding step per tile,
+which for the default world is around two hundredths of a unit in total, and does not grow
+however long the run goes on."* Measuring a world for nine hundred thousand ticks says
+otherwise. The books run **short**, and the shortfall grows in a straight line and does not
+level off — 4.8e-4 units by a hundred thousand ticks, 2.3e-3 by half a million, 4.2e-3 by
+nine hundred thousand, which is about five billionths of a unit per tick. The in-transit
+ceiling for that world is 7e-4, and the measurement passes straight through it, so some of
+this is genuinely leaving rather than waiting.
+
+**Nothing is at risk and that is why it was not chased.** The light puts 0.78 units a tick
+into the same world, so the *relative* error — which is what SPEC section 5's invariant is
+stated in, and the reason that wording matters — converges: 4.9e-9 at fifty thousand ticks,
+6.6e-9 at half a million, 6.71e-9 at nine hundred thousand and flat thereafter. That is a
+hundred and fifty thousand times inside the tolerance, and it is a *converged* number rather
+than a growing one, so an overnight run of tens of millions of ticks sits in the same place.
+The loss is also six parts in a billion of the world's income, which is nothing beside
+anything Phase 4 will tune.
+
+What is open is only the sentence in `grid.rs`, which claims a bound the arithmetic does not
+respect. Somebody should find out which part of the field's arithmetic is dropping it —
+`spill` cutting a tile back to its ceiling while a residue for that tile is still sitting in
+the flux array is the first place to look. Phase 8's archive is the phase that would care,
+because a replay has to reproduce the loss exactly, and it will.
 
 **Q11, raised by Group C.** `point_sigma` is a single absolute number applied to all six of a
 gene's real-valued fields, which is the literal reading of SPEC section 7 and what Phase 1's

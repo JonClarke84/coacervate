@@ -27,8 +27,10 @@
 //! - [`mutation`] — copying a genome imperfectly, which is the only way anything new ever
 //!   enters the world. Duplicating a rule and changing the state it answers to is what lets
 //!   a lineage gain a body part rather than only a better version of the one it had.
+//! - [`organism`] — a genome, the energy it is running on and the fixed stretch of the
+//!   world's arenas its body lives in. The first thing in the project that is alive.
 //! - [`world`] — all of the above owned in one place, and the tick that moves it: the light
-//!   falling, the energy spreading, the tiles shedding what they cannot hold, and the cells
+//!   falling, the energy spreading, the tiles shedding what they cannot hold, and the bodies
 //!   being pushed about — with the books checked as it goes.
 
 #![forbid(unsafe_code)]
@@ -40,6 +42,7 @@ pub mod genome;
 pub mod grid;
 pub mod ledger;
 pub mod mutation;
+pub mod organism;
 pub mod physics;
 pub mod rng;
 pub mod world;

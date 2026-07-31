@@ -450,7 +450,12 @@ fn wrapped_offset(from: Vec2, to: Vec2, width: f32) -> Vec2 {
 /// from the remainder as a value so close to the world's width that, at 32 bits, it rounds
 /// to exactly the width - a position that is one past the right-hand edge rather than just
 /// inside it, which is the one value everything downstream assumes cannot happen.
-fn wrapped(coordinate: f32, width: f32) -> f32 {
+///
+/// Shared with `world.rs`, which places a newly-seeded body and has to put its cells inside
+/// the world by the same rule the physics will keep them there by. Two versions of "the world
+/// wraps" would be two rules about one thing, and the one that is written down twice is the
+/// one that ends up disagreeing with itself at the join.
+pub(crate) fn wrapped(coordinate: f32, width: f32) -> f32 {
     let inside = coordinate.rem_euclid(width);
 
     if inside < width { inside } else { 0.0 }
