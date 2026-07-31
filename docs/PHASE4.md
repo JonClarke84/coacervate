@@ -11,9 +11,15 @@ extinction or explosion*, and `.\scripts\check.ps1` exits 0.
 
 | | |
 | --- | --- |
-| **Phase 4** | in progress |
-| **Current group** | D — the runner |
-| **Suite** | green — 122 tests, 54s |
+| **Phase 4** | **done** |
+| **Current group** | — |
+| **Suite** | green — 134 tests, 97s |
+
+⚠️ The suite went from 54s to 97s and all of the difference is **D4**, which runs the shipped
+world for thirty thousand ticks and costs 43 of those seconds. It is the phase's
+done-criterion and CLAUDE.md's most-likely-to-fail test; it is marked `#[ignore]` and
+`scripts/check.ps1` runs it once, in the release pass, exactly as the two long conservation
+tests are run. Everything else in Group D costs about a second.
 
 ---
 
@@ -195,38 +201,83 @@ its claims are about *amounts*, and an amount can be measured without a world ar
 ⚠️ **The loop now turns, and Group C ran it.** The first ecology reading is under Q15 below,
 and it is not reassuring. Read it before Group D touches a single number.
 
-### Group D — the runner, and the question the project exists to ask
+### Group D — the runner, and the question the project exists to ask — **done**
 
-- [ ] **D1. `a_run_stops_on_whichever_bound_comes_first`** — wall clock, tick count, or
-  extinction. Graceful: finish the tick, then exit.
-- [ ] **D2. `max_ticks_per_second_actually_slows_a_run`** — the `slow` profile's only lever.
-- [ ] **D3. `energy_is_conserved_across_a_whole_living_run`** — every account in motion at
-  once. *Remember Phase 3's lesson: a conservation check cannot see energy that was never
-  declared, only energy declared wrongly. Assert the accounts moved.*
-- [ ] **D4. `a_headless_run_reaches_a_living_equilibrium`** ⭐⭐ — **the phase's
-  done-criterion, and the test CLAUDE.md says is most likely to fail.** A default-config run
-  ends with a living, non-degenerate population: neither extinct nor a single clone filling
-  the world.
+The runner is three new files in `coacervate-app`, and it is there rather than in
+`coacervate-sim` because a run's bounds are wall-clock bounds and the simulation is forbidden a
+clock. `run.rs` is the loop and the bounds; `founding.rs` is the light falling and the first
+bodies going in; `census.rs` reads a population from outside, because the world deliberately
+keeps no summary of itself.
+
+- [x] **D1. `a_run_stops_on_whichever_bound_comes_first`** — four worlds, each given the full
+  set of bounds with exactly one brought within reach, so "whichever comes first" is actually
+  being asked. Graceful is asserted as *the books balance where it stopped*, which is the
+  observable form of "the last thing it did was finish a tick".
+- [x] **D2. `max_ticks_per_second_actually_slows_a_run`** — and the load-bearing half is the
+  other one: the capped run and the uncapped run are compared **tile for tile and account for
+  account**, so the `slow` profile cannot quietly perturb a result. SPEC section 2's
+  "real-time speed is decoupled" as a test.
+- [x] **D3. `energy_is_conserved_across_a_whole_living_run`** — the first test in the project
+  where every movement `ledger.rs` knows about happens at once. Most of it is the half a
+  conservation check cannot see: the field went **down**, `dissipated` went **up**, there were
+  grains in the water, and the biomass at the end is held by bodies that were *born* rather
+  than seeded.
+- [x] **D4. `a_headless_run_reaches_a_living_equilibrium`** ⭐⭐ — **the phase's done-criterion,
+  and the test CLAUDE.md says is most likely to fail.** It passes, and it did not before
+  Group D retuned `light.influx`. Checked both ways: put the old light back and it fails on
+  the arena assertion; raise `limits.max_organisms` tenfold and the run comes out *identical
+  to the digit*.
+
+#### What Group D decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **`light.influx` is 0.001, not 0.012** | `SPEC.md` section 3 | The one number in SPEC's table that has now been measured. Twelvefold down. Carrying capacity is very nearly proportional to it — about 2.2 million times it — and at 0.012 the world hits `max_organisms` four to eight times before it hits the energy budget. The sweep and both control experiments are in SPEC beside the value. |
+| **`upkeep_scale` is the wrong lever, and Q15's arithmetic was wrong to name it** | measured; recorded in SPEC section 3 | It is *also* the lifespan slider, so raising it shortens a life while lengthening the time needed to earn a child — it closes the breeding window from both ends. **At 3 and at 4 the founder dies before a single birth.** Q15 asked for 4. |
+| **The runner lives in the app, and the clock allowance is one line at the crate root** | `main.rs` | Not a `[lints]` table in the package manifest, which would replace the workspace one and silently drop the five cast lints. `clippy.toml` said so; this is it being done. |
+| **A run's bound is on the *world's* tick count** | `run.rs` | Including the ticks the dawn spent. One clock, not two - and it is the number SPEC section 2's deep-time display reads off. |
+| **Bounds are examined between ticks and never inside one** | `run.rs`, `Run::over` | That is the whole of the graceful-shutdown promise, and it is structural rather than careful: there is no state a stop can catch halfway. |
+| **A run is handed a world that is already alive** | `founding.rs` | So extinction can be the plain question "is anything alive", with no history to keep. An empty world is already over and says so before it takes a tick. |
+| **Founders go on an even grid over the whole world** | `founding.rs` | A lineage stays where its founder was for a long time, so one founder digs one hole in one corner. It measurably does not change where the population ends up — one founder and eight reach the same level — only how long it takes. |
+| **⚠️ `Ctrl-C` cannot be caught, and Enter is what stops a run** | `run.rs` | `SetConsoleCtrlHandler` is `unsafe` and `ctrlc` is a new dependency; both are forbidden. What exists is the *seam* — an `Interrupt` flag the loop reads between ticks — with `main` setting it from a thread waiting on standard input. Phase 5 brings an event loop and can wire a signal to the same flag. |
+| **Tests that only need *a lit world* now set their own light** | `world.rs`, `behaviour.rs`, `metabolism.rs`, `grid.rs` | `light.cap / light.influx` is how long a field takes to fill, so retuning the ecology broke fifteen tests that had nothing to do with it. They pin their own influx now. The two long conservation tests deliberately do **not**: they are the ones that read the shipped world. |
+| **`run.reseed_on_extinction` is still read by nothing** | `run.rs` | Deliberately. Putting a second founding population into a world whose first one died is a statement about what a run *is*, and it wants deciding on purpose rather than as a side-effect of the loop that stops. Carried forward below. |
 
 ---
 
-⚠️ **Three things Group D has to pick up.**
+### ⭐⭐ What the balance work actually found
 
-**⭐⭐ The balance question is no longer a calculation.** Q15 below now carries a measured run
-of the whole loop, from one seeded body to a world pinned at its population cap. Read it before
-touching `upkeep_scale`.
+**The measured sweep is in SPEC section 3 and it is the shipped justification.** Three things
+came out of it that were not in the calculation Q15 wrote.
 
-**A run is not bounded by anything yet.** `world.rs` says plainly that the world cannot time
-itself — `clippy.toml` refuses `Instant` and `SystemTime` in `coacervate-sim` outright — so
-whatever ends a run does it from outside, by counting ticks. That is D1, and `clippy.toml`
-already carries the note about how `coacervate-app` is to be allowed a clock without losing the
-five cast lints.
+**1. Carrying capacity is proportional to `influx`, cleanly, over more than an order of
+magnitude** — about 2.2 million times it. Section 4's claim holds exactly.
 
-**Nothing in the simulation limits how *fast* the population grows, only how large it gets.**
-Group C's measured doubling time is about 2,700 ticks, so a world reaches its cap from a single
-body in twenty thousand — before D2's `max_ticks_per_second` has had a chance to make a run
-watchable. If the `slow` profile is meant to give a person something to notice rather than a
-result to read, the interesting number is the doubling time and not the tick rate.
+**2. The field is drawn down to about half, at *every* influx where energy is what binds.**
+That is not a coincidence: where a tile settles is decided by the income a body needs to
+replace itself before it dies, which comes from `[metabolism]` and not from `[light]`. So
+`influx` decides how *many* bodies there are and the metabolism decides how *hard* each works.
+The pair make a diagnostic — **a field that is barely below full is a world where something
+other than energy is limiting the population**, which at 0.012 was `max_organisms`.
+
+**3. Low light does not cause extinction.** At a tenth of the shipped influx the world settles
+at about 210 bodies and turns over indefinitely. The `famine` profile's stated purpose in SPEC
+section 3 was wrong and has been corrected: what ends a run is `upkeep_scale`, not darkness.
+
+### ⭐⭐ And the half-million-tick run, which is the interesting part
+
+SPEC section 15 asks for 500,000 ticks. Run once, at the shipped configuration, from eight
+founders. The equilibrium D4 asserts holds from tick 50,000 to tick 200,000 — a hundred and
+fifty thousand ticks of a flat population at about 2,100. **Then it moves, and what moves it is
+the bodies**: mean cell count goes 2.00 → 6.73 and mean genome length 2.10 → 10.80, while the
+population falls to 794 and living biomass stays at about 33,000 throughout.
+
+The same energy, held by a quarter as many bodies, each three times the size. Nothing in the
+model rewards being larger. The full table is in SPEC section 15.
+
+State it as what changed rather than as an improvement, per CLAUDE.md: the population is now
+4,537 photocytes, 788 gonocytes, 11 sclerocytes, 5 sensocytes, 1 myocyte and 1 devorocyte. No
+feeding-strategy split appeared. Nothing swims.
 
 ## The decision this phase has to take: a metabolic cost per gene
 
@@ -255,7 +306,30 @@ the `reorder_rate` mistake.
 
 ## Open questions carried forward
 
-**Q15** — ⭐⭐ **the population cap binds about four times before the energy budget does, so
+**Q16** (new, Group D) — **`run.reseed_on_extinction` is a configuration key that does
+nothing.** See the decision table above. It wants a decision about what a run *is*, not a line
+in the loop.
+
+**Q17** (new, Group D) — **`Ctrl-C` does not shut a run down gracefully and cannot be made to
+without `unsafe` or a new dependency.** Enter does. Harmless today because nothing is written to
+disk; the moment Phase 8's replay log exists it stops being harmless. Phase 5 brings `winit`
+and an event loop, which is the natural place to fix it.
+
+**Q13 is answered, negatively, and by accident.** The light gradient is still nearly invisible
+at body scale — but the half-million-tick run produced five sensocytes in a population of 794,
+one myocyte, and no swimming at all. Nothing has yet found a use for either, so raising
+`MAX_SENSOR_GAIN` would be tuning a mechanism nothing is using. Left alone.
+
+**Q15 — closed.** ⭐⭐ **The diagnosis was right and the lever it named was wrong**, and both
+halves are recorded above and in SPEC section 3. `light.influx` is now 0.001 and the energy
+budget binds first; `upkeep_scale` at the 4 this asked for kills every world it is applied to
+before a single birth. It is kept below, unedited, because the reasoning is worth being able to
+re-read against what actually happened — a static energy-budget calculation is a perfectly good
+way to find out that something is wrong and a bad way to decide what to do about it.
+
+#### The original Q15, kept as written
+
+**The population cap binds about four times before the energy budget does, so
 SPEC section 4's carrying capacity never actually applies at the shipped defaults.** Group A
 predicted a bloom on the strength of a photocyte earning ~7× upkeep while shaded, and asked
 for that to be re-measured once the costs existed. It has been, in
@@ -325,6 +399,10 @@ The reading above is what it now has to be tried against — and the thing to wa
 whether the population survives but whether the **cap stops being what limits it**: D4's
 "living, non-degenerate population" is only a meaningful test in a world where the energy
 budget binds first.
+
+*(End of the original Q15. What Group D actually did is at the top of this file and in SPEC
+section 3. The last sentence above turned out to be exactly the right instruction and the
+paragraph before it turned out to name the wrong slider.)*
 
 **Q13** — **the light gradient is nearly invisible at body scale.** SPEC's `gradient` of 0.75
 spread over 1,152 world units is a change of about half a per cent per tile, so a sensocyte

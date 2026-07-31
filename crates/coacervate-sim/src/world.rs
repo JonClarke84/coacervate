@@ -667,6 +667,24 @@ impl World {
         &self.organisms
     }
 
+    /// How many organisms have ever existed in this world, counting the ones that are gone.
+    ///
+    /// A serial number is minted for every organism and is never handed out twice - that is
+    /// what `rng.rs` needs it for - so the next one to be minted is also a count of every
+    /// organism there has ever been. Subtracting the living population from it gives the
+    /// number that have died, and differencing it across a stretch of ticks gives the births
+    /// and the deaths over that stretch.
+    ///
+    /// That is what makes turnover measurable from outside. A world sitting at a steady
+    /// population is either **still**, with nothing being born and nothing dying, or it is
+    /// **turning over**, with a birth for every death - and those two are the same number of
+    /// organisms and completely different worlds. Nothing else the world exposes can tell
+    /// them apart.
+    #[must_use]
+    pub fn born(&self) -> u64 {
+        self.next_serial
+    }
+
     /// The cells of the organism in this slot, and none of the slot's spare room.
     ///
     /// Empty for a slot nobody is in, which is the honest answer rather than a refusal: an
@@ -755,6 +773,27 @@ mod tests {
         change(&mut raw);
         raw.validate()
             .expect("this test's configuration must be one the program will accept")
+    }
+
+    /// The same, with a light of the tests' own rather than the shipped one.
+    ///
+    /// ⭐ Most of the tests in this file need only *a world that has filled up*: something in
+    /// the water for a body to be seeded out of, and something for a photocyte to eat. How long
+    /// a field takes to fill is `light.cap / light.influx`, and Group D moved `light.influx` by
+    /// a factor of twelve when it tuned the ecology - so every one of those tests would
+    /// otherwise have quietly become a test about a world a twelfth full, and several of them
+    /// simply stopped being able to seed a body at all.
+    ///
+    /// The light is therefore pinned here, at the value the tests were written against, and
+    /// **the tests that are genuinely about the shipped configuration do not use this**:
+    /// `energy_is_conserved_over_100k_ticks` and
+    /// `energy_is_still_conserved_with_organisms_present` both take `config` directly, because
+    /// what they are measuring is the world this project actually ships.
+    fn a_lit_world(change: impl FnOnce(&mut RawConfig)) -> Config {
+        config(|raw| {
+            raw.light.influx = 0.012;
+            change(raw);
+        })
     }
 
     /// How far the two sides of SPEC section 5's invariant have drifted apart, as a fraction
@@ -1153,7 +1192,7 @@ mod tests {
     /// name a cell outside its own body cannot express one.
     #[test]
     fn an_organism_occupies_one_fixed_slot() {
-        let mut world = World::new(&config(|raw| {
+        let mut world = World::new(&a_lit_world(|raw| {
             raw.world.grid_cols = 32;
             raw.world.grid_rows = 18;
             raw.limits.max_organisms = 4;
@@ -1282,7 +1321,7 @@ mod tests {
     /// held to somewhere new and handed the old space back.
     #[test]
     fn a_birth_fails_at_the_cap_rather_than_allocating() {
-        let mut world = World::new(&config(|raw| {
+        let mut world = World::new(&a_lit_world(|raw| {
             raw.world.width = 256.0;
             raw.world.height = 144.0;
             raw.world.grid_cols = 32;
@@ -1400,7 +1439,7 @@ mod tests {
     /// bends is not a cap.
     #[test]
     fn seeding_an_organism_takes_its_energy_out_of_the_field() {
-        let mut world = World::new(&config(|raw| {
+        let mut world = World::new(&a_lit_world(|raw| {
             raw.world.width = 256.0;
             raw.world.height = 144.0;
             raw.world.grid_cols = 32;
@@ -1596,7 +1635,7 @@ mod tests {
     /// actually been worked.
     #[test]
     fn a_tick_feeds_the_bodies_in_the_world() {
-        let mut world = World::new(&config(|raw| {
+        let mut world = World::new(&a_lit_world(|raw| {
             raw.world.width = 512.0;
             raw.world.height = 288.0;
             raw.world.grid_cols = 64;
@@ -2818,11 +2857,19 @@ mod tests {
     /// assert about itself. What is added here is the *size* of the discrepancy, measured
     /// independently from SPEC section 5's formula, at every thousandth tick and at the end.
     ///
-    /// The number that comes out is the phase's headline: **a relative error of 1.74e-10
-    /// after a hundred thousand ticks**, against a tolerance of 1e-3. That is nearly seven
+    /// The number that comes out is the phase's headline: **a relative error of 1.43e-9
+    /// after a hundred thousand ticks**, against a tolerance of 1e-3. That is nearly six
     /// orders of magnitude of headroom, and it is a statement about the whole world rather
-    /// than the grid alone - Group B measured 1.74e-10 for the field by itself, so owning
-    /// the field inside a `World` and ticking the physics beside it has cost nothing at all.
+    /// than the grid alone.
+    ///
+    /// It was 1.74e-10 until Group D lowered `light.influx` from 0.012 to 0.001, and the
+    /// eightfold difference is a fact about the *filling* rather than about the resting
+    /// world. A dimmer world takes twelve thousand ticks to reach its ceilings instead of
+    /// seven hundred, and it is while the field is filling that diffusion is moving the most
+    /// energy and rounding the most of it - so the worst moment of the run is longer and
+    /// worse. Both readings below say so: `worst` and `worst_early` are now the same number,
+    /// which means the worst moment of a hundred thousand ticks is inside the first ten
+    /// thousand.
     ///
     /// # And why it insists the world was doing something
     ///
@@ -2835,26 +2882,33 @@ mod tests {
     ///
     /// # How much light a full world actually takes, which is not what it is offered
     ///
-    /// The default world is offered `0.012 x 36,864`, about 442 units a tick. It absorbs
-    /// **793,408 over a hundred thousand ticks**, which is under eight a tick - not two per
-    /// cent of what is on offer. That is not a fault, and it is worth writing down because
-    /// the arithmetic looks alarming until it is explained.
+    /// The default world is offered `0.001 x 36,864`, about 37 units a tick. It absorbs
+    /// **748,044 over a hundred thousand ticks**, which is seven and a half a tick - a fifth
+    /// of what is on offer. That is not a fault, and it is worth writing down because the
+    /// arithmetic looks alarming until it is explained.
     ///
-    /// A tile takes light only up to its ceiling, and this world reaches its ceilings within
-    /// about seven hundred ticks and stays there. What keeps a full tile taking anything at
+    /// A tile takes light only up to its ceiling, and this world reaches its ceilings after
+    /// about twelve thousand ticks and stays there. What keeps a full tile taking anything at
     /// all is diffusion draining it downhill, and at SPEC's defaults that drain is small: the
     /// ceilings of two vertically neighbouring tiles differ by about 0.042, of which
-    /// diffusion moves 4% - roughly 0.0017 a tick, against the 0.009 of light the tile is
-    /// offered. So nearly every tile sits pinned at its ceiling, taking in and shedding the
-    /// trickle that passes through it.
+    /// diffusion moves 4% - roughly 0.0017 a tick. So nearly every tile sits pinned at its
+    /// ceiling, taking in and shedding the trickle that passes through it.
     ///
-    /// The consequence for Phase 4 is the interesting part: **the standing field is nearly
-    /// the whole of the world's energy budget, and the flow through it is not.** A world
-    /// holding 184,030 units is turning over eight a tick, so an ecology that lives off the
-    /// flow rather than off the standing stock has a great deal less to eat than the total
-    /// suggests. Organisms harvesting a tile will pull it below its ceiling, at which point
-    /// that tile starts taking its full share of light again - so the throughput is not fixed
-    /// at eight a tick either. It rises towards the 442 on offer as the population grows.
+    /// ⭐ **That trickle is set by diffusion and not by the light, which is why Group D
+    /// lowering `light.influx` twelvefold barely moved this figure at all** - 748,044 against
+    /// the 793,408 the old light gave. A resting world is not consuming its income; it is
+    /// passing along a gradient it has already filled, and it could do that on a great deal
+    /// less light than it is offered.
+    ///
+    /// The consequence for the ecology is the interesting part: **the standing field is
+    /// nearly the whole of the world's energy budget, and the flow through it is not.** A
+    /// world holding 183,837 units is turning over seven and a half a tick, so an ecology that
+    /// lives off the flow rather than off the standing stock has a great deal less to eat than
+    /// the total suggests. Organisms harvesting a tile pull it below its ceiling, at which
+    /// point that tile starts taking its full share of light again - so the throughput is not
+    /// fixed at seven and a half a tick either. It rises towards the 37 on offer as the
+    /// population grows, and at the shipped defaults an equilibrium population of about 2,200
+    /// draws roughly 20 a tick out of that 37.
     ///
     /// # The drift does not grow
     ///
@@ -2932,7 +2986,7 @@ mod tests {
         assert!(
             ledger.influx_total() > 700_000.0,
             "only {} units of light fell over a hundred thousand ticks, and the default \
-             world is 36,864 tiles offered 0.012 each",
+             world is 36,864 tiles offered 0.001 each",
             ledger.influx_total()
         );
         assert!(
@@ -2970,24 +3024,30 @@ mod tests {
         // world has changed, in which case every archived run is now something else, or this
         // machine computes differently from the one they were recorded on - which is a larger
         // finding than a stale test. Pasting in the new numbers destroys the evidence.
+        //
+        // They have been re-measured exactly once, by Group D, and only because the thing they
+        // describe was changed on purpose: `light.influx` went from 0.012 to 0.001 and this
+        // test is deliberately one of the two that read the shipped configuration. The
+        // superseded figures are kept here so the change is visible rather than silent -
+        // 1.739e-10, 184,030.35, 793,407.70 and 609,377.35.
         assert!(
-            (1.0e-10..3.0e-10).contains(&final_error),
-            "the run finished {final_error} out in relative terms, against the 1.739e-10 \
+            (1.0e-9..2.0e-9).contains(&final_error),
+            "the run finished {final_error} out in relative terms, against the 1.433e-9 \
              recorded here"
         );
         assert!(
-            (held - 184_030.35).abs() < 0.01,
-            "the field came to rest holding {held} rather than the 184,030.35 recorded here"
+            (held - 183_837.38).abs() < 0.01,
+            "the field came to rest holding {held} rather than the 183,837.38 recorded here"
         );
         assert!(
-            (ledger.influx_total() - 793_407.70).abs() < 0.01,
-            "the world took in {} units of light rather than the 793,407.70 recorded here",
+            (ledger.influx_total() - 748_044.02).abs() < 0.01,
+            "the world took in {} units of light rather than the 748,044.02 recorded here",
             ledger.influx_total()
         );
         assert!(
-            (ledger.dissipated() - 609_377.35).abs() < 0.01,
+            (ledger.dissipated() - 564_206.64).abs() < 0.01,
             "the world shed {} units through tiles that could not hold them, rather than \
-             the 609,377.35 recorded here",
+             the 564,206.64 recorded here",
             ledger.dissipated()
         );
     }
@@ -3032,43 +3092,43 @@ mod tests {
     /// water - and asks whether the books survive it.
     ///
     /// Measured 31 July 2026, Windows 11 x86-64, eight four-celled photocyte bodies seeded
-    /// holding two units apiece:
+    /// holding two units apiece, at the light Group D settled on:
     ///
     /// | | |
     /// | --- | --- |
     /// | All eight died at tick | **1,963** - old age, together, as their bodies are identical |
-    /// | Held between them at the end | **1,478** - and every unit of it became detritus |
-    /// | Drift empty at tick | **3,619**, so a corpse takes about 1,650 ticks to rot away |
-    /// | Relative error after 120,000 ticks | **5.77e-9**, against a tolerance of 1e-3 |
+    /// | Held between them at their richest | **1,112** - and every unit of it became detritus |
+    /// | Drift empty at tick | **3,545**, so a corpse takes about 1,580 ticks to rot away |
+    /// | Relative error after 120,000 ticks | **7.75e-9**, against a tolerance of 1e-3 |
     ///
-    /// # ⭐⭐ The bloom prediction, re-measured now that upkeep is real
+    /// # ⭐⭐ The bloom prediction, and what Group D did about it
     ///
     /// Group A measured a photocyte earning about seven times its own upkeep *while shaded*
-    /// and predicted that Group D's risk is a world that fills and stagnates rather than one
-    /// that starves. That was measured with nothing on the cost side of the ledger at all, so
-    /// it is exactly the kind of number that ought to be checked once the costs exist.
+    /// and predicted that the risk ahead was a world that fills and stagnates rather than one
+    /// that starves. Group B re-measured it with the costs switched on and it stood: **6.75
+    /// times upkeep** at the light SPEC first shipped.
     ///
-    /// **It stands.** A photocyte here earns **0.0277 a tick against the 0.00408 it costs to
-    /// keep - a margin of 6.75 times upkeep**, and these bodies are deliberately seeded on top
-    /// of one another so each is shading the others. An unshaded one does better. Upkeep would
-    /// have to be nearly seven times what SPEC section 6's table says before a photosynthetic
-    /// body could not pay for itself.
+    /// It was right, and `docs/PHASE4.md`'s Q15 records what it turned out to mean. At
+    /// `light.influx = 0.012` a single seeded body reaches `limits.max_organisms` in under
+    /// twenty thousand ticks and sits there, with the field **1.6%** below what the light alone
+    /// leaves it holding. The world fills, births start failing for want of a slot, and nothing
+    /// is scarce - which is a population under no selection at all.
     ///
-    /// The consequence for Group D is worth setting out in full, because the interesting part
-    /// is not the margin but what it implies about *which* cap binds first. A four-celled body
-    /// costs 0.0163 a tick to run. The default world is offered 36,864 tiles × 0.012 × a mean
-    /// light profile of 0.625, which is **276 units a tick**, so the light alone would support
-    /// somewhere near **17,000 such bodies**. `limits.max_organisms` is **4,000**. The
-    /// population therefore hits the arena four times before it hits the energy budget - which
-    /// means SPEC section 4's carrying capacity, the pressure the whole ecology is supposed to
-    /// grow out of, **never actually applies at the shipped defaults**. The world fills, births
-    /// start failing, and nothing is scarce.
+    /// **Group D's answer was `light.influx`, and it is now 0.001.** SPEC section 3 carries the
+    /// measurement and the sweep; the short version is that carrying capacity is very nearly
+    /// proportional to influx, so twelve times less light is a world of about 2,200 bodies
+    /// instead of one pressed against an arena built for 4,000. `upkeep_scale` was tried first,
+    /// because a static energy-budget calculation asks for it, and it is the wrong lever: it is
+    /// also the lifespan slider, so raising it shortens a life while lengthening the time
+    /// needed to earn a child, and at 3 it kills every world it is applied to before a single
+    /// birth.
     ///
-    /// That is CLAUDE.md's "too much light and everything blooms and stagnates", arriving by a
-    /// slightly different route than expected. `upkeep_scale` is the lever with the right
-    /// shape: it is live, and it scales the cost side without touching the light. Four is the
-    /// figure the arithmetic above suggests, and Group D is where it gets tried against a
-    /// running ecology rather than against a calculation.
+    /// The margin below is the same measurement at the new light: **0.0224 a tick earned
+    /// against 0.00408 to keep, a margin of 5.49**. It is lower than the 6.75 because the tiles
+    /// these eight bodies are standing on refill twelve times more slowly, and it is still far
+    /// from the break-even a photosynthetic body would need to be in trouble. **A body is not
+    /// short of light in this world. The world is short of bodies' worth of light**, which is a
+    /// different claim and the one carrying capacity is about.
     ///
     /// # The drift settles, and what settles is not what a reader would expect
     ///
@@ -3076,35 +3136,31 @@ mod tests {
     /// ticks and *growing* is a run that stops in the small hours with no bug to find. So the
     /// worst discrepancy over the whole run is compared against the worst over its first
     /// tenth, and an error accumulating in one direction would be ten times larger by the end.
-    /// **Measured with Group A live: 1.482e-9 over the whole run, and the same 1.482e-9 over
-    /// its first tenth** - the worst moment of the run is inside its first twelve thousand
-    /// ticks, which is as flat as this claim can come out.
+    /// **Measured: 7.85e-9 over the whole run against 3.14e-9 over its first tenth** - so the
+    /// error roughly doubles over the remaining nine tenths and then stops, which is a wobble
+    /// settling rather than a leak accumulating. Run against ten times the ticks it would be
+    /// the same number.
     ///
     /// That claim is about the *relative* error, and the distinction is worth spelling out
     /// because the absolute figure behaves differently and would alarm anybody who looked at
-    /// it. The books run **short**, by about five billionths of a unit per tick, and that
-    /// shortfall does **not** level off: 4.8e-4 units by a hundred thousand ticks, 2.3e-3 by
-    /// half a million, 4.2e-3 by nine hundred thousand, in a straight line. It is a real slow
-    /// loss in the field's arithmetic rather than energy in transit - see this phase's Q12,
-    /// which is where it is written up, because it belongs to `grid.rs` rather than to
-    /// anything Group D added.
+    /// it. The books run **short**, by a few billionths of a unit per tick, and that shortfall
+    /// does **not** level off - it grows in a straight line for as long as a run goes on. It is
+    /// a real slow loss in the field's arithmetic rather than energy in transit; see this
+    /// phase's Q12, which is where it is written up, because it belongs to `grid.rs` rather
+    /// than to anything Groups B, C or D added.
     ///
     /// The reason it is nevertheless harmless is that the other side of the invariant grows in
-    /// a straight line too: the light puts about 0.78 units a tick into this world against
-    /// that five billionths. **The ratio therefore converges**, and it converges to a number
-    /// far below the tolerance: 4.9e-9 at fifty thousand ticks, 6.6e-9 at half a million,
-    /// 6.71e-9 at nine hundred thousand and still 6.71e-9 after that. SPEC section 5 states
-    /// the invariant as a *relative* one, and this is the case that makes that wording load-
-    /// bearing rather than cosmetic - an overnight run of tens of millions of ticks sits at
-    /// seven parts in a billion, a hundred and fifty thousand times inside the 1e-3 allowed.
+    /// a straight line too. **The ratio therefore converges**, and it converges far below the
+    /// tolerance. SPEC section 5 states the invariant as a *relative* one, and this is the case
+    /// that makes that wording load-bearing rather than cosmetic - an overnight run of tens of
+    /// millions of ticks sits at a few parts in a billion, a hundred thousand times inside the
+    /// 1e-3 allowed.
     ///
-    /// Recorded 31 July 2026, Windows 11 x86-64: relative error **5.77e-9** after 120,000
-    /// ticks, against SPEC section 5's tolerance of 1e-3. (Group A's version of this run
-    /// finished at 1.238e-9, and before Group A gave the organisms anything to do at all it
-    /// was 5.88e-9. The three figures are the same story: energy an organism is holding sits
-    /// in a 64-bit account and energy in the field sits in 32-bit tiles, so a run with more
-    /// of its energy alive drifts less. Group B hands all of it back to the field at the end,
-    /// which is why this one lands where the lifeless run did.)
+    /// Recorded 31 July 2026, Windows 11 x86-64: relative error **7.75e-9** after 120,000
+    /// ticks, against SPEC section 5's tolerance of 1e-3. (At the light SPEC first shipped this
+    /// run finished at 5.77e-9. The difference is where it always is: a dimmer world spends
+    /// twelve times longer filling, and a field that is filling is a field diffusion is moving
+    /// - and rounding - the most energy in.)
     ///
     /// # Why this one is marked `ignore` and still runs on every check
     ///
@@ -3136,7 +3192,12 @@ mod tests {
 
         // The field fills under the light first. A world seeded on tick zero is a world where
         // nothing can be afforded - see `seeding_an_organism_takes_its_energy_out_of_the_field`.
-        for _ in 0..1_000 {
+        //
+        // Twelve thousand ticks rather than the thousand this took before Group D, and the
+        // reason is the whole of the tuning: `light.cap / light.influx` is how long a field
+        // takes to fill, and Group D lowered `light.influx` twelvefold. This test reads the
+        // shipped configuration on purpose, so it waits the shipped dawn.
+        for _ in 0..12_000 {
             world.tick();
         }
 
@@ -3306,16 +3367,15 @@ mod tests {
         let margin = (net + upkeep) / upkeep;
 
         assert!(
-            (5.0..9.0).contains(&margin),
+            (4.0..8.0).contains(&margin),
             "a photocyte in a shaded body earned {} a tick against the {upkeep} it costs to \
-             keep - a margin of {margin} times upkeep, against the 6.7 recorded here. Group \
-             D's whole balance question is this number",
+             keep - a margin of {margin} times upkeep, against the 5.49 recorded here",
             net + upkeep
         );
         assert!(
             richest > 1_000.0,
             "the eight bodies never held more than {richest} between them, and eight bodies \
-             earning seven times their upkeep for two thousand ticks should reach well past a \
+             earning five times their upkeep for two thousand ticks should reach well past a \
              thousand"
         );
     }
@@ -3376,7 +3436,7 @@ mod tests {
     #[test]
     fn a_run_is_still_reproducible() {
         let run = |seed: u64| -> World {
-            let mut world = World::new(&config(|raw| {
+            let mut world = World::new(&a_lit_world(|raw| {
                 raw.world.seed = seed;
                 raw.world.grid_cols = 48;
                 raw.world.grid_rows = 32;

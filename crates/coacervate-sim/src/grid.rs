@@ -1016,7 +1016,7 @@ mod tests {
             let row = usize::try_from(row).expect("a row index fits in a machine word");
 
             let offered = f64::from(lit.regrowth[row]);
-            let expected = 0.012 * profile;
+            let expected = 0.001 * profile;
             assert!(
                 (offered - expected).abs() < expected * 1e-6,
                 "row {row} is offered {offered} of light per tick, and SPEC section 4's \
@@ -1036,11 +1036,11 @@ mod tests {
         // because the default gradient is 0.75. Written out as the numbers a person can
         // check by eye against SPEC section 3.
         assert!(
-            f64::from(lit.regrowth[0]) > 0.012 * 0.997,
+            f64::from(lit.regrowth[0]) > 0.001 * 0.997,
             "the surface row is not being lit at nearly full strength"
         );
         assert!(
-            f64::from(lit.regrowth[143]) < 0.012 * 0.253,
+            f64::from(lit.regrowth[143]) < 0.001 * 0.253,
             "the floor row is being lit more brightly than a gradient of 0.75 allows"
         );
 
@@ -1057,7 +1057,7 @@ mod tests {
             "the floor of a fully top-weighted world is being lit backwards"
         );
         assert!(
-            f64::from(steep.regrowth[143]) < 0.012 * 0.004,
+            f64::from(steep.regrowth[143]) < 0.001 * 0.004,
             "a fully top-weighted world's floor is not dark"
         );
 
@@ -1068,7 +1068,7 @@ mod tests {
         }));
         for row in 0..flat.rows() {
             assert_eq!(
-                flat.regrowth[row], 0.012,
+                flat.regrowth[row], 0.001,
                 "a world with no gradient is lit unevenly at row {row}"
             );
             assert_eq!(
@@ -1274,7 +1274,15 @@ mod tests {
                   for the rest of the run"
     )]
     fn a_tile_regrows_towards_its_target_and_stops_there() {
-        let mut world = Grid::new(&config(|raw| raw.light.patchiness = 0.0));
+        // A light of this test's own, and blotchiness turned off. The rule under test is
+        // "fill towards the ceiling and stop", and how many ticks that takes is
+        // `cap / influx` - a ratio Group D moved by a factor of twelve when it tuned the
+        // shipped ecology, and which decides nothing about whether the rule is right. Fixed
+        // here so the arithmetic below stays legible: eight over 0.012 is 666 and two thirds.
+        let mut world = Grid::new(&config(|raw| {
+            raw.light.influx = 0.012;
+            raw.light.patchiness = 0.0;
+        }));
         let surface = at(&world, 0, 0);
         let floor = at(&world, 0, 143);
 
@@ -1298,7 +1306,7 @@ mod tests {
              to it"
         );
 
-        // SPEC section 3's cap divided by its influx is 666 and two thirds, so the world
+        // This test's cap divided by this test's influx is 666 and two thirds, so the world
         // is still filling on the 666th tick and full on the 667th - all of it at once.
         for _ in 1..666 {
             world.regrow();
@@ -1364,7 +1372,12 @@ mod tests {
     /// apparent cause.
     #[test]
     fn regrowth_credits_influx_with_the_realised_change() {
-        let mut world = Grid::new(&config(|_| {}));
+        // A light of this test's own. The claim is that the ledger is credited with what the
+        // tiles *took* rather than what they were *offered*, and the two only diverge once the
+        // world is full - so what this test needs from the light is that a thousand ticks of
+        // it is comfortably more than enough to fill the field. At the shipped `influx` that
+        // takes twelve thousand ticks and this test would be measuring a world still filling.
+        let mut world = Grid::new(&config(|raw| raw.light.influx = 0.012));
         let mut ledger = Ledger::new(world.total_energy());
 
         // What SPEC section 4's formula asks for each tick, before any tile refuses it:
@@ -1907,10 +1920,13 @@ mod tests {
     /// sixteen times deeper than this one, takes considerably longer to come to rest.
     #[test]
     fn the_field_reaches_a_ceiling() {
-        // Small enough to run to a complete standstill inside a test suite. The behaviour
-        // does not depend on the size; the number of ticks it takes to arrive very much
-        // does.
+        // Small enough, and lit brightly enough, to run to a complete standstill inside a
+        // test suite. Neither decides the behaviour: a smaller or dimmer world comes to the
+        // same rest, later. The light is this test's own rather than the shipped one for that
+        // reason - Group D moved `light.influx` by a factor of twelve when it tuned the
+        // ecology, which multiplies the ticks below by twelve and changes nothing they say.
         let mut world = Grid::new(&config(|raw| {
+            raw.light.influx = 0.012;
             raw.world.grid_cols = 32;
             raw.world.grid_rows = 9;
         }));

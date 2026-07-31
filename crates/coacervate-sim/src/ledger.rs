@@ -753,27 +753,36 @@ mod tests {
     ///
     /// # The numbers, at the default config
     ///
-    /// The light adds `0.012` to each of `256 × 144` tiles per tick, so `influx_total`
-    /// grows by about 442 a tick. Kept in `f32` it freezes at 8,589,934,592, where the
-    /// gap between neighbouring representable values has grown to 1,024 — more than twice
-    /// 442, so nothing gets through. That happens on tick 17,780,259.
+    /// The light offers `0.001` to each of `256 × 144` tiles per tick, so `influx_total`
+    /// grows by at most about 37 a tick. Kept in `f32` it freezes at 1,073,741,824, where
+    /// the gap between neighbouring representable values has grown to 128 — more than twice
+    /// 37, so nothing gets through. That happens on tick 24,501,362.
     ///
     /// SPEC section 5 puts this at "about 38,000 ticks", and that figure is wrong,
     /// although the conclusion built on it is not. 38,000 ticks is where the total passes
     /// 16.7 million; but 16.7 million is a *ratio* — the number of distinct steps the
     /// format has — so the freeze comes when the total reaches 16.7 million times the
-    /// per-tick amount, which is 442 times further along. It is a long overnight run
-    /// rather than the first minute.
+    /// per-tick amount, which is many millions of ticks further along. It is a long
+    /// overnight run rather than the first minute.
     ///
     /// # The number that actually matters is much earlier
     ///
     /// Long before the account freezes it stops being *accurate*, and the ledger does not
     /// need it to freeze in order to fail — it only needs the two sides of the invariant
-    /// to disagree by more than [`RELATIVE_TOLERANCE`]. That happens on tick 121,128,
+    /// to disagree by more than [`RELATIVE_TOLERANCE`]. That happens on tick 90,996,
     /// which is a couple of minutes into a run. From there the error wanders back and
     /// forth across the tolerance for a while, as the rounding bias changes direction
-    /// each time the total doubles, and by seven and a half million ticks it is outside
-    /// it for good.
+    /// each time the total doubles, and eventually it is outside it for good.
+    ///
+    /// ⚠️ **Both figures moved when Group D lowered `light.influx` from 0.012 to 0.001, and
+    /// they moved in opposite directions**, which is worth knowing before either is read as
+    /// a fact about the format. The freeze came *later* — 24.5 million ticks against 17.8
+    /// million — because a smaller amount per tick takes longer to reach a total coarse
+    /// enough to swallow it. The failure that matters came *sooner* — 90,996 ticks against
+    /// 121,128 — because how far a running total drifts from the truth depends on how many
+    /// additions have been made and barely at all on their size. The decision stands either
+    /// way, and it stands more firmly than it did: the ledger stops describing the world
+    /// inside the first two minutes of a twelve-hour run.
     ///
     /// And when the account finally freezes it does not freeze at the right number: it
     /// sits about nine per cent above the true total, having been rounded upwards more
@@ -786,8 +795,8 @@ mod tests {
                   which is the thing being characterised and can only be seen with =="
     )]
     fn an_f32_account_would_have_stopped_counting() {
-        // SPEC section 3's default config: 0.012 per tile per tick, over 256 × 144 tiles.
-        let per_tick_narrow: f32 = 0.012 * 36_864.0;
+        // SPEC section 3's default config: 0.001 per tile per tick, over 256 × 144 tiles.
+        let per_tick_narrow: f32 = 0.001 * 36_864.0;
         // Deliberately derived from the `f32` value rather than written out again, so the
         // only difference between the two runs below is the width of the accumulator.
         let per_tick = f64::from(per_tick_narrow);
@@ -816,16 +825,16 @@ mod tests {
 
         assert_eq!(
             first_intolerable_drift,
-            Some(121_128),
+            Some(90_996),
             "the tick an f32 influx account first drifts further from the truth than the \
              ledger's tolerance allows has moved"
         );
         assert_eq!(
-            stalled_at, 17_780_259,
+            stalled_at, 24_501_362,
             "the tick an f32 influx account stops counting on has moved"
         );
         assert_eq!(
-            narrow, 8_589_934_592.0,
+            narrow, 1_073_741_824.0,
             "the value it stops at has moved; it is the point where the gap between \
              representable numbers first exceeds twice the per-tick influx"
         );
@@ -850,7 +859,7 @@ mod tests {
              the arithmetic it was written about"
         );
         assert!(
-            wide - wide_at_the_stall > 442_000.0,
+            wide - wide_at_the_stall > 36_000.0,
             "the f64 account did not keep counting where the f32 one stopped, which is \
              the only reason the accounts are f64"
         );

@@ -14,7 +14,11 @@ grid_rows = 144
 years_per_tick = 1000.0
 
 [light]
-influx = 0.012           # energy per grid tile per tick
+influx = 0.001           # energy per grid tile per tick. Measured in Phase 4, not guessed:
+                         # at the 0.012 SPEC was first written with, the population fills
+                         # `limits.max_organisms` in 20,000 ticks and sits there with the
+                         # field 1.6% down, so the arena binds and nothing is ever scarce.
+                         # At 0.001 it settles near 2,200 with the field half eaten. SPEC 3.
 cap = 8.0                # max energy a tile can hold
 gradient = 0.75          # 0 = uniform, 1 = fully top-weighted
 patchiness = 0.15        # spatial noise amplitude

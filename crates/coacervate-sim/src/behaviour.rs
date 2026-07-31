@@ -1426,8 +1426,23 @@ mod tests {
 
     /// SPEC's default configuration with some of it changed, checked and ready to build a
     /// world from.
+    ///
+    /// # The light is this file's own, and deliberately not the shipped one
+    ///
+    /// Every test here is about a *rate* or a *shape* - what a photocyte takes out of the tile
+    /// it is on, how much of a cell's light the cell above it blocks, what a mouth drains from
+    /// what it is touching - and every one of them wants full water to measure against, which
+    /// [`Scene::fill_with_light`] provides by ticking the grid a thousand times.
+    ///
+    /// How many ticks that takes is `light.cap / light.influx`, which is a number Group D
+    /// changed by a factor of twelve when it tuned the ecology. Left reading the shipped
+    /// value, every scene in this file would have been a fifth full instead of full, and the
+    /// arithmetic these tests exist to pin would have moved with a setting that has nothing to
+    /// do with any of them. So the light is set here, at the value the whole file was measured
+    /// against, and a future tuning of the shipped ecology cannot reach it.
     fn config(change: impl FnOnce(&mut RawConfig)) -> Config {
         let mut raw = spec_defaults();
+        raw.light.influx = 0.012;
         change(&mut raw);
         raw.validate()
             .expect("this test's configuration must be one the program will accept")

@@ -537,8 +537,16 @@ mod tests {
 
     /// SPEC's default configuration with some of it changed, checked and ready to build a
     /// world from.
+    ///
+    /// The light is set here rather than taken from the shipped configuration, for the reason
+    /// `behaviour.rs`'s copy of this gives at length: these tests are about *amounts* - what a
+    /// tick costs, what a corpse carries, how fast a grain rots - and every one of them wants a
+    /// full field to take those amounts out of. How long a field takes to fill is
+    /// `light.cap / light.influx`, which is a setting Group D moved by a factor of twelve when
+    /// it tuned the ecology, and which has nothing whatever to do with what upkeep costs.
     fn config(change: impl FnOnce(&mut RawConfig)) -> Config {
         let mut raw = spec_defaults();
+        raw.light.influx = 0.012;
         change(&mut raw);
         raw.validate()
             .expect("this test's configuration must be one the program will accept")

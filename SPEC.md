@@ -53,7 +53,7 @@ watch an interesting event again, and it is what makes the GPU port testable.
   reproducibility to a fixed instruction set; document it rather than chasing bit-exactness
   across architectures. **One exception, and it is not optional:** the energy ledger's
   accounts are `f64`, because they are running totals over the whole run rather than state.
-  See section 5 for the measured arithmetic — at `f32` the invariant breaks at tick 121,128.
+  See section 5 for the measured arithmetic — at `f32` the invariant breaks at tick 90,996.
 
 **Test:** run 100,000 ticks twice from the same seed, hash the world state, assert equal.
 
@@ -74,7 +74,7 @@ grid_rows = 144
 years_per_tick = 1000.0
 
 [light]
-influx = 0.012           # energy per grid tile per tick
+influx = 0.001           # energy per grid tile per tick — measured, see below
 cap = 8.0                # max energy a tile can hold
 gradient = 0.75          # 0 = uniform, 1 = fully top-weighted
 patchiness = 0.15        # spatial noise amplitude
@@ -117,14 +117,70 @@ reseed_on_extinction = false
 Every one of these is exposed as a slider in the UI. `[world]`, `[limits]` and `seed` lock
 at run start; the rest can be changed live, which is how environmental events work.
 
+### ⭐⭐ `light.influx` is the one number in this table that was measured rather than chosen
+
+Every value above began as a guess written before anything ran. This one has since been run,
+and it moved by a factor of twelve — from `0.012` to `0.001`. The reasoning is the whole of
+section 4's carrying-capacity argument, so it is worth setting out here beside the value.
+
+At `0.012`, a single seeded body grows to `limits.max_organisms` — four thousand — in under
+twenty thousand ticks and stays there for as long as anybody watches, **with the field only
+1.6% below what the light alone leaves it holding.** Every slot in the world is taken and the
+water is still essentially full. That is a world where the *arena* is the binding constraint
+and nothing whatever is scarce, so every birth that fails does so for a reason unconnected to
+how well its parent was doing, and drift is the only force acting on the population. Section 4
+calls carrying capacity "the pressure that drives everything else in the simulation"; at
+`0.012` it never switches on.
+
+Measured, at the shipped world and `upkeep_scale = 1.0`, over runs of 150,000 ticks:
+
+| `influx` | Population | Field, against what the light alone leaves | Verdict |
+| --- | --- | --- | --- |
+| 0.012 | **4,000 — the arena cap**, reached by tick 20,000 | 98% | nothing is scarce |
+| 0.003 | 4,000 by tick 30,000, then slowly down to 3,374 | 46% | pinned at the cap for tens of thousands of ticks |
+| 0.002 | 4,000 by tick 45,000, then down to 3,017 | 43% | as above |
+| 0.0015 | 4,000 by tick 4,500 when founded with a thousand bodies | 44% | still reaches the arena |
+| **0.001** | **~2,200, and it stays there** | **47%** | the energy budget binds first |
+| 0.0008 | ~1,600 | 49% | as above, with less headroom |
+| 0.0002 | ~440 | 51% | as above; a small world, not a dying one |
+| 0.0001 | ~210 | 53% | as above |
+
+`0.001` settles at the same level from **both directions** — grown up to it from a single
+founder over ninety thousand ticks, and cut back down to it from a thousand founders in
+thirteen thousand — which is what makes it an equilibrium rather than a coincidence.
+
+Two things in that table are worth reading off it, because neither was expected and both are
+now the clearest diagnostic this project has.
+
+**Population is very nearly proportional to `influx`** — about 2.2 million times it, across
+more than an order of magnitude — which is section 4's carrying-capacity claim holding exactly.
+
+**And the field is drawn down to about half whatever the light is, at every influx where the
+energy budget is what binds.** That is not a coincidence either: what a tile settles at is
+decided by the income a body needs in order to replace itself before it dies, and that figure
+comes from `[metabolism]` and not from `[light]`. So `influx` decides *how many* bodies there
+are and the metabolism decides *how hard* each one has to work. The pair make a test: a world
+whose field is barely below full is a world where something other than energy is limiting the
+population, which at `0.012` is `limits.max_organisms`.
+
+**`upkeep_scale` was tried first and is the wrong lever, which is worth recording because the
+arithmetic says otherwise.** Scaling the cost side by four is what a static energy-budget
+calculation asks for, and it kills every world it is applied to *immediately*. Section 10's
+lifespan is derived from what a body costs to run, so raising `upkeep_scale` shortens a life in
+proportion while *lengthening* the time it takes to earn section 10's reproduction threshold —
+it closes the window between "old enough to breed" and "dead" from both ends at once. Measured:
+`upkeep_scale = 2` still breeds but grows very slowly; **`3` and `4` both go extinct with the
+founder's death, before a single birth.** The temperature slider is a real environmental
+pressure and it is not a carrying-capacity control.
+
 **Profiles.** Ship named presets rather than expecting anyone to tune 25 sliders from cold:
 
 | Profile | Intent |
 | --- | --- |
-| `default` | Balanced. The starting point for experiments on the PC. |
+| `default` | Balanced. The starting point for experiments on the PC. Settles near 2,200 organisms with the field about half eaten. |
 | `slow` | `max_ticks_per_second` reduced so meaningful change happens over hours rather than minutes. For leaving it up on a second screen and noticing it rather than watching it. |
-| `bloom` | High light influx. Demonstrates stagnation under abundance. |
-| `famine` | Low influx. Demonstrates selection pressure and extinction. |
+| `bloom` | High light influx — the old `0.012` is exactly this. **The population fills `max_organisms` and stops, with the water still full**, which is stagnation by way of the arena rather than by way of abundance. Worth shipping precisely because it is what a too-bright world actually looks like from the outside: a healthy-looking constant population with no selection acting on it. |
+| `famine` | Low influx — a world of a few hundred bodies rather than a few thousand. ⚠️ **It does not produce extinction, and that is a measured finding rather than an oversight.** At a tenth of the shipped light the population settles at about 210 and goes on turning over indefinitely, because how hard a body has to work to replace itself does not depend on how much light there is — only how many bodies the world can carry does. What *does* end a run is `upkeep_scale`: at 3 or above, a founder dies of old age before it has earned the reproduction threshold, and nothing is ever born. If a preset is wanted that demonstrates extinction, that is the slider it has to move. |
 
 ---
 
@@ -255,19 +311,26 @@ The numbers below were measured, not estimated — see
 `an_f32_account_would_have_stopped_counting` in `ledger.rs`, which pins them.
 
 `f32` carries 24 bits of mantissa, so a running total loses its ability to absorb small
-additions long before it overflows. At the default config, light adds `0.012 × 36,864 ≈
-442.4` per tick to `influx_total`. Two things then happen, in this order:
+additions long before it overflows. At the default config, light offers `0.001 × 36,864 ≈
+36.9` per tick to `influx_total`. Two things then happen, in this order:
 
-- **At tick 121,128** — a couple of minutes of wall clock — accumulated rounding has pushed
+- **At tick 90,996** — a couple of minutes of wall clock — accumulated rounding has pushed
   the two sides of the invariant more than `1e-3` apart, and the run panics. Nothing is
   wrong with the simulation; the accumulator simply cannot represent what it has been told.
   This is the number that forces the decision.
-- **At tick 17,780,259** the total reaches 8,589,934,592 and freezes completely. The gap
-  between neighbouring `f32` values there is 1,024, more than twice the 442.4 being added,
+- **At tick 24,501,362** the total reaches 1,073,741,824 and freezes completely. The gap
+  between neighbouring `f32` values there is 128, more than twice the 36.9 being added,
   so every subsequent addition rounds straight back to where it started.
 
-The frozen total sits about **9% above** the true figure, so there is no version of this
-that announces itself as an obvious error.
+The frozen total sits above the true figure, so there is no version of this that announces
+itself as an obvious error.
+
+Both numbers moved when Phase 4 lowered `light.influx`, and they moved in opposite
+directions: the freeze came later, because a smaller amount per tick takes longer to reach a
+total coarse enough to swallow it, and the failure that actually matters came *sooner*,
+because how far a running total drifts from the truth depends on how many additions have been
+made and barely at all on their size. At the original `0.012` the two figures were 121,128
+and 17,780,259.
 
 The same loss applies to summing 36,864 `f32` tiles to compute `field`, on every single
 tick.
@@ -762,3 +825,34 @@ they carry the guarantees.
 **Ecology smoke test:** a default-config headless run of 500,000 ticks ends with a living,
 non-degenerate population — neither extinct nor a single clone filling the world. This is
 the test that tells you the *balance* is right, and it is the one most likely to fail.
+
+⭐⭐ **Run, in Phase 4, and it passes — but only after `light.influx` was retuned, and the
+half-million-tick version says something the shorter one cannot.** The test that ships is
+`a_headless_run_reaches_a_living_equilibrium` in `coacervate-app`, and it runs thirty
+thousand ticks rather than five hundred thousand, because that is what a check suite can
+afford. What it asserts is the equilibrium: the population settles at about 2,100, well below
+`limits.max_organisms`, with the field drawn down 45% and about 1.2 births and 1.2 deaths a
+tick.
+
+The full five hundred thousand was measured separately, once, at the shipped configuration
+from eight founders. The equilibrium above holds from tick 50,000 to tick 200,000 — a hundred
+and fifty thousand ticks of a flat population. Then it **moves**, and what moves it is the
+bodies:
+
+| Tick | Population | Mean cells | Mean genes | Field |
+| --- | --- | --- | --- | --- |
+| 50,000 | 2,138 | 1.99 ± 0.12 | 2.10 | 55% |
+| 150,000 | 2,144 | 2.00 ± 0.28 | 2.93 | 49% |
+| 250,000 | 1,729 | 2.81 ± 1.88 | 4.27 | 44% |
+| 350,000 | 943 | 5.46 ± 2.98 | 7.93 | 39% |
+| 500,000 | 794 | 6.73 ± 3.01 | 10.80 ± 5.66 | 37% |
+
+Living biomass barely moves across the whole of that — about 33,000 units throughout — which
+is the carrying-capacity claim holding while everything else changes. **What changed is that
+the same energy is being held by a quarter as many bodies, each three times the size.** The
+population at the end is 4,537 photocytes, 788 gonocytes, 11 sclerocytes, 5 sensocytes, 1
+myocyte and 1 devorocyte.
+
+That is the outcome CLAUDE.md's decision log calls a realistic overnight one, arriving
+unprompted: multicellularity, from a founder of two cells, with no term anywhere in the model
+that rewards being larger.

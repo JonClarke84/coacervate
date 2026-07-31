@@ -172,7 +172,7 @@ pub fn spec_defaults() -> RawConfig {
             years_per_tick: 1000.0,
         },
         light: RawLight {
-            influx: 0.012,
+            influx: 0.001,
             cap: 8.0,
             gradient: 0.75,
             patchiness: 0.15,
@@ -995,7 +995,7 @@ mod tests {
         assert_eq!(config.world.grid_rows.get(), 144);
         assert_eq!(config.world.years_per_tick, 1000.0);
 
-        assert_eq!(config.light.influx, 0.012);
+        assert_eq!(config.light.influx, 0.001);
         assert_eq!(config.light.cap, 8.0);
         assert_eq!(config.light.gradient, 0.75);
         assert_eq!(config.light.patchiness, 0.15);

@@ -1,8 +1,9 @@
 //! Coacervate — the binary.
 //!
-//! This is the only crate that touches the filesystem. It reads the configuration
-//! document, hands the parsed values to `coacervate-sim` to be checked, and reports the
-//! problem in plain English if the check fails.
+//! This is the only crate that touches the filesystem, and the only one that may read a
+//! clock. It reads the configuration document, hands the parsed values to `coacervate-sim`
+//! to be checked, lights a world, puts the first bodies in it, and then ticks it until one
+//! of SPEC section 3's bounds arrives.
 //!
 //! The division of labour is deliberate and it is visible in this crate's `Cargo.toml`,
 //! which does not depend on `serde` at all. The shapes a configuration document can take,
@@ -10,10 +11,34 @@
 //! and turning them into those shapes belongs here. That absence in the manifest is what
 //! actually enforces CLAUDE.md's rule that the simulation crate does no I/O, rather than
 //! it being a convention somebody has to keep to.
+//!
+//! # The one allowance, and where it must not be written instead
+//!
+//! `clippy.toml` bans `Instant` and `SystemTime` outright, because SPEC section 2 keeps
+//! wall-clock time out of simulation logic and CLAUDE.md wants the compiler doing the
+//! reviewing. A runner needs a clock, so the ban is lifted for this crate — by the single
+//! `allow` below and **not** by giving this package its own `[lints]` table, because a
+//! package-level table *replaces* the workspace one and would silently take the five cast
+//! lints with it. `clippy.toml` carries the same warning beside the ban.
+//!
+//! What the allowance is worth is argued in `run.rs`: nothing the clock decides can change
+//! what a tick computes, only when it happens.
 
 #![forbid(unsafe_code)]
+#![allow(
+    clippy::disallowed_types,
+    reason = "SPEC section 3's run bounds are wall-clock bounds, so the runner needs a clock. \
+              See clippy.toml, and see run.rs for why this cannot change what a run produces."
+)]
 
+mod census;
+mod founding;
+mod run;
+
+use census::Census;
 use coacervate_sim::config::{Config, ConfigError, RawConfig};
+use coacervate_sim::world::World;
+use run::{Interrupt, Run, Stop};
 use std::process::ExitCode;
 
 /// The configuration the program ships with, built into the executable.
@@ -59,25 +84,172 @@ fn load(document: &str) -> Result<Config, LoadError> {
     raw.validate().map_err(LoadError::Refused)
 }
 
+/// How many bodies the world is founded with.
+///
+/// Eight, spread across the width of the world — see `founding.rs` for why they are spread
+/// rather than clustered. It is a small number on purpose: watching a population find its own
+/// level from almost nothing is most of what there is to see in a headless run, and eight
+/// founders reach it in about fifty thousand ticks at the shipped light. A run that started
+/// near its equilibrium would have nothing to show for its first hour.
+const FOUNDERS: u32 = 8;
+
+/// How many ticks pass between two lines of the progress report.
+///
+/// Five thousand, which at SPEC section 3's thousand years to the tick is **five million
+/// years** a line. A run long enough to be worth leaving alone therefore reads as a page of
+/// geology rather than a number going up, which is CLAUDE.md's deep-time constraint applied to
+/// the plainest output this program has.
+const REPORT_EVERY: u64 = 5_000;
+
 fn main() -> ExitCode {
-    match load(DEFAULT_CONFIG) {
-        Ok(config) => {
-            println!(
-                "Configuration accepted: seed {}, a {} by {} world on a {} by {} grid.",
-                config.world.seed,
-                config.world.width,
-                config.world.height,
-                config.world.grid_cols,
-                config.world.grid_rows,
-            );
-            ExitCode::SUCCESS
-        }
+    let config = match load(DEFAULT_CONFIG) {
+        Ok(config) => config,
         // To the error stream and with a failing exit code, so that a run started by a
         // script at two in the morning stops there rather than appearing to have worked.
         Err(problem) => {
             eprintln!("This configuration cannot be used: {problem}");
-            ExitCode::FAILURE
+            return ExitCode::FAILURE;
         }
+    };
+
+    // Plain ASCII from here down, and deliberately. A Windows console is not on a Unicode
+    // code page by default, so an em dash or a plus-or-minus sign arrives as mojibake in the
+    // one place this program is actually read.
+    println!(
+        "Coacervate - seed {}, a {} by {} world on a {} by {} grid.",
+        config.world.seed,
+        config.world.width,
+        config.world.height,
+        config.world.grid_cols,
+        config.world.grid_rows,
+    );
+
+    let mut world = World::new(&config);
+    let dawn = founding::genesis(&mut world, FOUNDERS);
+    println!(
+        "The light fell for {dawn} ticks; {FOUNDERS} founders are in the water. Press Enter to \
+         stop.\n"
+    );
+    heading();
+
+    let interrupt = Interrupt::new();
+    listen(&interrupt);
+
+    let years = f64::from(world.config().world.years_per_tick);
+    let mut run = Run::new(world, &config.run, &interrupt);
+    let why = run.go(|world| {
+        if world.ticks().is_multiple_of(REPORT_EVERY) {
+            report(world, years);
+        }
+    });
+
+    report(run.world(), years);
+    println!("\n{}", ending(why));
+
+    ExitCode::SUCCESS
+}
+
+/// Ask for a graceful stop as soon as anybody presses Enter.
+///
+/// ⚠️ **This is Enter and not `Ctrl-C`, and `run.rs` explains at length why it has to be.**
+/// The short version: catching a console interrupt means either `unsafe` or a new dependency,
+/// and this project forbids both. The flag set here is the seam — whatever eventually catches
+/// a signal sets the same one.
+///
+/// The thread ends by itself if there is nothing on standard input to wait for, which is what a
+/// run started by a scheduled task looks like. A read that returns nothing is an input stream
+/// that has closed rather than somebody pressing a key, and it must not stop the run.
+fn listen(interrupt: &Interrupt) {
+    let asked = interrupt.clone();
+
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        if std::io::stdin()
+            .read_line(&mut line)
+            .is_ok_and(|read| read > 0)
+        {
+            asked.ask();
+        }
+    });
+}
+
+/// The column headings of the progress report, written once.
+fn heading() {
+    println!(
+        "{:>12} {:>9} {:>6} {:>9} {:>8} {:>8} {:>11} {:>11} {:>9} {:>9} {:>11} {:>11}",
+        "time",
+        "tick",
+        "alive",
+        "field",
+        "biomass",
+        "detritus",
+        "dissipated",
+        "light",
+        "born",
+        "died",
+        "body",
+        "genome",
+    );
+}
+
+/// One line of the progress report: where the run has got to, and what state it is in.
+///
+/// SPEC section 5's five accounts are all here, and in the order that section lists them, so
+/// that a person watching a run can see where the world's energy actually is — which is the
+/// only way to tell a world that is short of light from one that is short of room.
+///
+/// **`born` and `died` are here for a reason that is easy to miss.** A population sitting at a
+/// steady number is either turning over, with a birth for every death, or it is standing still
+/// with nothing happening at all — and those are the same figure in the `alive` column and
+/// completely different worlds. Only the two running totals beside it can tell them apart.
+///
+/// The time column is SPEC section 2's deep time: the tick count multiplied by
+/// `world.years_per_tick` and read in millions of years, so a long run reads as Earth's history
+/// rather than as a counter. It is presentation and it never enters the physics.
+fn report(world: &World, years_per_tick: f64) {
+    let census = Census::of(world);
+    let ledger = world.ledger();
+
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a tick count is turned into a span of geological time for a person to read; \
+                  the digits lost are far below the resolution of a figure printed to one \
+                  decimal place"
+    )]
+    let millions = world.ticks() as f64 * years_per_tick / 1e6;
+
+    println!(
+        "{:>9.1} Ma {:>9} {:>6} {:>9.0} {:>8.0} {:>8.0} {:>11.0} {:>11.0} {:>9} {:>9} \
+         {:>6.2}+-{:<4.2} {:>6.2}+-{:<4.2}",
+        millions,
+        world.ticks(),
+        census.population,
+        world.grid().total_energy(),
+        ledger.biomass(),
+        ledger.detritus(),
+        ledger.dissipated(),
+        ledger.influx_total(),
+        census.born,
+        census.deaths(),
+        census.mean_cells,
+        census.cell_spread,
+        census.mean_genes,
+        census.gene_spread,
+    );
+}
+
+/// What to say about a run that has stopped.
+///
+/// A sentence rather than the name of a variant, because these are four quite different pieces
+/// of news and only one of them means the experiment finished. CLAUDE.md's rule about generated
+/// text applies here as much as to the chronicle: extinction is stated and never called a
+/// failure.
+fn ending(why: Stop) -> &'static str {
+    match why {
+        Stop::OutOfTime => "Stopped: the run reached its wall-clock bound.",
+        Stop::TicksDone => "Stopped: the run reached its tick bound.",
+        Stop::Extinction => "Stopped: nothing is alive.",
+        Stop::Asked => "Stopped: asked to.",
     }
 }
 
@@ -123,7 +295,7 @@ mod tests {
     fn the_default_profile_matches_spec_section_3() {
         let raw: RawConfig = toml::from_str(DEFAULT_CONFIG).expect("the shipped config parses");
 
-        assert_eq!(raw.light.influx, 0.012);
+        assert_eq!(raw.light.influx, 0.001);
         assert_eq!(raw.light.cap, 8.0);
         assert_eq!(raw.light.gradient, 0.75);
         assert_eq!(raw.light.patchiness, 0.15);
