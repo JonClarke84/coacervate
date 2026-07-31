@@ -12,10 +12,12 @@ property test*, and `.\scripts\check.ps1` exits 0.
 
 | | |
 | --- | --- |
-| **Phase 2** | in progress |
-| **Current group** | D — the done-criterion |
-| **Suite** | green — **68 tests** (60 sim, 8 app) |
-| **Invariant** | relative error **1.74e-10** over 100,000 ticks, default config, non-trending. Tolerance is 1e-3, so about six orders of magnitude of headroom. |
+| **Phase 2** | **complete** — `.\scripts\check.ps1` exits 0 |
+| **Current group** | D — done |
+| **Suite** | green — **72 tests** (64 sim, 8 app) |
+| **Invariant** | relative error **1.739e-10** over 100,000 ticks of a whole `World`, default config, non-trending. Tolerance is 1e-3, so nearly seven orders of magnitude of headroom. Identical to the figure Group B measured for the grid alone, so owning the field inside a world and ticking the physics beside it has cost nothing. |
+| **Cost** | suite runs in **41s**. The 100,000-tick test is `#[ignore]`d and `check.ps1` passes `--include-ignored` to the **release** pass only — it costs 289s in debug against 27s in release for identical figures, and a five-minute suite is one that stops being run. The done-criterion is still proved on every check, once instead of twice. |
+| **Next** | Phase 3 — genome, development, mutation |
 
 ## What this phase changed in the spec
 
@@ -69,6 +71,15 @@ take its starting energy out of `field`. A seeded organism feels like it comes f
 the world, so conjuring its body is an easy leak to write — and it shows up as an invariant
 failure on tick zero with no obvious cause. Solvency (an organism spending more than it
 holds) is deliberately *not* the ledger's problem; it belongs with the organism.
+
+**Also carried into Phase 3, from Group D.** `World` has no way to *put* a cell in the arena —
+the tests reach past the accessors, because they are in the same file. Phase 3 needs a real
+one, and it is the natural home for CLAUDE.md's "births fail rather than allocating". `World`
+does not keep the `Config` it was built from either, which metabolism and mutation will both
+want; it is one field, but it has to be added rather than assumed. And a body is a *range* of
+the cell arena — nothing yet records which cells belong to which organism, and removing a
+dead body from the middle of a flat array without invalidating every spring index above it is
+the awkward part of Phase 4, worth deciding before Phase 3 fills the arena.
 
 ---
 
@@ -219,12 +230,50 @@ and each move rounds. That drift is the phase's headline risk and the headline t
 
 ### Group D — the done-criterion
 
-- [ ] **D1. `energy_is_conserved_over_100k_ticks`** ⭐ — the phase's headline. A default
-  config, 100,000 ticks, invariant checked throughout.
-- [ ] **D2. `energy_is_conserved_for_any_config`** *(property test)* — SPEC section 15 asks
-  for "any config", not just the default one.
-- [ ] **D3. `a_run_is_still_reproducible`** — Phase 1's determinism test, extended over a
-  world that now actually does something.
+`World` owns the grid, the ledger, the physics, the cell and spring arenas, the run's
+randomness and a tick counter, and `World::tick` is light → diffusion → the ceiling spill →
+physics, with the books checked on `Ledger::should_check`'s cadence and once more at
+construction. The arenas are `max_organisms × max_cells_per_organism` = **256,000** cells and
+the same number of springs: **13.3 MB**, with the physics' own arrays 15.1 MB and the grid
+0.44 MB on top, so a default world is **29 MB** against CLAUDE.md's 2 GB target. Building it
+is not measurable.
+
+- [x] **D0. `the_arenas_are_allocated_once_at_the_size_the_config_asks_for`** — not on the
+  original list. CLAUDE.md's "a simulation that cannot allocate cannot leak" is a claim, and
+  a claim in this project has a test: the arenas are at the same address and the same size
+  after a thousand ticks.
+- [x] **D1. `energy_is_conserved_over_100k_ticks`** ⭐ — **1.739e-10**, non-trending: the
+  worst discrepancy over the whole run is only 1.8× the worst over its first tenth, where an
+  accumulating leak would be 10×. ⚠️ **This test is 289s in debug and 27s in release**, and
+  there is no fat in it to cut — 100,000 ticks of a 36,864-tile field is simply that much
+  arithmetic unoptimised. Left in the suite rather than `#[ignore]`d, because the phase's
+  done-criterion not running is worse than a slow suite; **say so if you would rather have it
+  the other way round.**
+- [x] **D2. `energy_is_conserved_for_any_config`** *(property test)* — 64 worlds the machine
+  invents, 500 ticks each, error measured every 50. Found nothing; nothing shrank. It
+  measures the error itself rather than leaning on the world's own check, because a release
+  build would not look at a 500-tick world even once.
+- [x] **D3. `a_run_is_still_reproducible`** — every tile and every number on every cell,
+  compared as bit patterns rather than as numbers. A different seed moves **every one of the
+  1,536 tiles**; the only 28 numbers that match are the cells', because nothing in Phase 2's
+  physics reads the seed. Phase 3 should extend this to bodies.
+
+**⚠️ The ledger cannot see the ceiling spill, and D1 is what does.** Deleting the spill from
+the tick leaves energy conserved *perfectly* — it is a transfer, so removing both of its ends
+keeps the books balanced — and three tests fail: B4's and B8's, and D1, which catches it only
+through the figures it pins rather than through the invariant. Without the spill the world
+absorbs 238,587 units over 100,000 ticks instead of 793,408, which is the old level-field
+behaviour this phase's second spec correction exists to prevent. **A conservation test alone
+would have waved this through**, exactly as it would a diffusion rate above a quarter.
+
+**What a full world actually eats, for Phase 4.** The default world reaches its ceilings in
+about seven hundred ticks and then absorbs **under 8 units a tick against the 442 it is
+offered** — a tile at its ceiling takes nothing, and at the shipped settings diffusion drains
+a tile downhill about five times slower than the light refills it. So the standing field
+(184,030) is nearly the world's whole energy budget and the *flow* through it is not. That
+throughput is not fixed, though: a harvested tile drops below its ceiling and starts taking
+its full share again, so the world's income rises towards 442 a tick as the population grows.
+Carrying capacity is set by that ceiling, not by the 8.
 
 ---
 

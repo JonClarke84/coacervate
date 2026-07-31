@@ -133,7 +133,11 @@ const REACH: f32 = 2.0 * CellKind::LARGEST_RADIUS;
 /// Every organism holds at most `max_cells_per_organism` cells and there are at most
 /// `max_organisms` of them, so this is the most cells that can exist at once. CLAUDE.md: a
 /// simulation that cannot allocate cannot leak.
-fn cell_capacity(config: &Config) -> usize {
+///
+/// `world.rs` builds its cell and spring arenas from this same function rather than working
+/// the number out again, so the arena a caller fills and the arrays this module sizes to
+/// match it cannot drift apart.
+pub(crate) fn cell_capacity(config: &Config) -> usize {
     let organisms = usize::try_from(config.limits.max_organisms.get())
         .expect("a population cap fits in a machine word");
     let cells = usize::try_from(config.limits.max_cells_per_organism.get())

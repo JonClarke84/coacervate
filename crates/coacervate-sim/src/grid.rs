@@ -388,6 +388,18 @@ impl Grid {
         self.rows
     }
 
+    /// Every tile, in row order, the surface first.
+    ///
+    /// Handed out whole rather than a tile at a time because everything that will ever want
+    /// this wants all of it: SPEC section 2's determinism test compares two runs of the same
+    /// seed tile by tile, and Phase 5's renderer hands the lot to the graphics card in one
+    /// go. A shared slice, so nothing outside this module can write a tile - the only ways
+    /// energy enters or leaves the field are the ones that tell the ledger what happened.
+    #[must_use]
+    pub fn tiles(&self) -> &[f32] {
+        &self.tiles
+    }
+
     /// Everything the grid is holding, added up.
     ///
     /// This is SPEC section 5's `field` account, and it is deliberately measured rather

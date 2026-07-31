@@ -36,6 +36,11 @@ Invoke-Check @('test', '--manifest-path', $manifest, '--workspace')
 # profile, and cargo silently ignores `[profile.*]` if it is ever moved out of the
 # workspace-root manifest. No test-name filter, because a filter that matches nothing
 # exits 0 -- which would turn this guard into a silent no-op after a rename.
-Invoke-Check @('test', '--manifest-path', $manifest, '--workspace', '--release')
+#
+# `--include-ignored` is what runs the long conservation tests. They are marked ignore
+# because they cost ten times as much in a debug build for identical results, and a suite
+# that takes five minutes is a suite somebody stops running. Running them here means the
+# phase's headline claim is still proved on every check, just once rather than twice.
+Invoke-Check @('test', '--manifest-path', $manifest, '--workspace', '--release', '--', '--include-ignored')
 
 Write-Host 'All checks passed.' -ForegroundColor Green

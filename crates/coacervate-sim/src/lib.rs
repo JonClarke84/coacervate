@@ -19,6 +19,9 @@
 //! - [`physics`] — what moves them: springs between the cells of a body, repulsion between
 //!   bodies, and the neighbour search that stops looking for either from costing
 //!   everything.
+//! - [`world`] — all of the above owned in one place, and the tick that moves it: the light
+//!   falling, the energy spreading, the tiles shedding what they cannot hold, and the cells
+//!   being pushed about — with the books checked as it goes.
 
 #![forbid(unsafe_code)]
 
@@ -28,6 +31,7 @@ pub mod grid;
 pub mod ledger;
 pub mod physics;
 pub mod rng;
+pub mod world;
 
 #[cfg(test)]
 mod tests {
