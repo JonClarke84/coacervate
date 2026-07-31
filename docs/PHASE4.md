@@ -12,8 +12,8 @@ extinction or explosion*, and `.\scripts\check.ps1` exits 0.
 | | |
 | --- | --- |
 | **Phase 4** | in progress |
-| **Current group** | B — expense and exit |
-| **Suite** | green — 106 tests, 65s |
+| **Current group** | C — renewal |
+| **Suite** | green — 116 tests, 55s |
 
 ---
 
@@ -87,26 +87,48 @@ detritus-sensing gradient are both **linear scans over the whole drift** — fre
 empty, quadratic the moment it is not. And an organism can end a tick holding *less than
 nothing*: `Organism::lose` deliberately does not refuse it, because SPEC section 5 says
 insolvency is not a bookkeeping question. B2 has to clamp before moving anything into
-`detritus`.
+`detritus`. *(Both done — see below.)*
 
-### Group B — expense and exit
+### Group B — expense and exit — **done**
 
-- [ ] **B1. `every_cell_pays_upkeep_every_tick`** — `upkeep × upkeep_scale`, biomass →
+Almost all of it lives in a new module, `metabolism.rs`, which the tick runs after the
+physics: the costs, the two ways of dying, and what a corpse becomes. `world.rs` owns the
+drift the way it owns the cells, because `behaviour.rs` needs it in the same tick.
+
+- [x] **B1. `every_cell_pays_upkeep_every_tick`** — `upkeep × upkeep_scale`, biomass →
   dissipated.
-- [ ] **B2. `an_organism_that_runs_out_of_energy_dies`** — SPEC section 5 is explicit that
-  the ledger will *not* catch insolvency; this is where it becomes death.
-- [ ] **B3. `an_organism_dies_of_old_age`**
-- [ ] **B4. `a_dead_body_becomes_detritus_carrying_its_construction_energy`**
-- [ ] **B5. `detritus_sinks_and_decays_into_the_tile_beneath_it`** — the marine snow, which
+- [x] **B2. `an_organism_that_runs_out_of_energy_dies`** — SPEC section 5 is explicit that
+  the ledger will *not* catch insolvency; this is where it becomes death. Group A's warning
+  turned out to have a second half, which has its own test: clamping at nothing leaves the
+  overspend sitting in `biomass` for the rest of the run. See
+  `a_death_does_not_leave_its_debts_in_the_books`.
+- [x] **B3. `an_organism_dies_of_old_age`**
+- [x] **B4. `a_dead_body_becomes_detritus_carrying_its_construction_energy`**
+- [x] **B5. `detritus_sinks_and_decays_into_the_tile_beneath_it`** — the marine snow, which
   is both atmospheric and functional.
-- [ ] **B6. `a_freed_slot_is_reusable_and_reaping_is_deterministic`** — ⚠️ Phase 3 flagged
-  this as the one nasty one. The free list is deterministic *given a fixed death order*.
-  Reap in whatever order a parallel pass finishes in and the free list permutes, which
-  permutes the slots, which permutes the crowd, which changes the order forces are summed
-  in, which changes the last bit of the physics — and nothing announces it. **Sweep slots in
-  index order.**
-- [ ] **B7. `a_per_gene_metabolic_cost_keeps_duplication_alive`** — ⚠️ **see the decision
-  below.**
+- [x] **B6. `a_freed_slot_is_reusable_and_reaping_is_deterministic`** — ⚠️ Phase 3 flagged
+  this as the one nasty one, and it was right. **Checked by breaking it:** the sweep was
+  reversed and the whole suite run, and *one* test failed — this one. Every conservation
+  claim, every determinism claim and 120,000 ticks of a world with bodies living and dying in
+  it all went green against a reaping order that would silently stop a run replaying.
+- [x] **B7. `a_per_gene_metabolic_cost_keeps_duplication_alive`** — `metabolism.gene_cost`,
+  a new key in `[metabolism]`, defaulting to **0.0001**.
+
+Also done, because Group A handed it over: the two linear scans over the drift are now
+searched through a bucket index — `a_crowded_drift_is_searched_rather_than_scanned`.
+
+#### What Group B decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **Construction energy** | `cell.rs`, `CellKind::construction` | A cell is worth **1,000 ticks of its own upkeep**. Derived from upkeep because SPEC gives no third column to derive it from, and because "expensive tissue is expensive to build" is defensible. Not scaled by `upkeep_scale`: a body's cost is a property of the body, not of the weather. |
+| **What a corpse carries** | `metabolism.rs`, `Metabolism::scatter` | SPEC's "carrying that cell's construction energy" cannot be read literally without printing energy, so construction energy decides **how a corpse is shared out** and what there is to share is what the organism was holding. A body that starved leaves nothing. |
+| **Maximum age** | `metabolism.rs`, `LIFETIME_UPKEEP` | A cell is allowed **8 units of its own upkeep** before its organism dies: `max_age = 8 × cells ÷ cost per tick`. A photocyte body gets 2,000 ticks, a myocyte body 571, a sclerocyte body 4,000. Genome-derived through the *body*, which SPEC section 7 makes a pure function of the genome. Rejected: a lifespan proportional to genome length, which would pull directly against B7. |
+| **A dead organism's debts** | `ledger.rs`, `Ledger::write_off` | The one movement that runs backwards out of `dissipated`. An organism that died owing had that energy recorded as heat that was never produced; left alone it accumulates, one death at a time, into a `biomass` account that is large and negative while every organism in the world holds something positive. |
+| **Sink speed and decay rate** | `metabolism.rs` | 12 units a second, and 0.4% of what a grain holds per tick with a floor of 0.001 under it. The decay rate is anchored against `DEVOUR_RATE`: rot has to be **slower than a mouth** or scavenging never pays and half of SPEC section 6's devorocyte is a function nothing would ever use. |
+| **The last crumb of a grain** | `metabolism.rs`, `Metabolism::rot` | A residue too small for an `f32` tile to express leaves the world, written as the two movements it actually is. Without it grains are immortal: measured, eight corpses left eight grains still in the water 118,000 ticks later. |
+| **The drift's size** | `world.rs`, `drift` | One grain per cell the world can hold — 256,000 grains, **4 MB**. That is the whole world dead at once. A corpse that will not fit is dissipated rather than allocated for. |
+| **`gene_cost`'s magnitude** | `config.rs`, `MetabolismConfig::gene_cost` | 0.0001. Twenty genes cost what one sclerocyte costs; a genome at the 128 cap costs 0.0128 a tick, which is 3.2 photocytes; a ten-gene genome is 6% of a four-celled body's upkeep. |
 
 ### Group C — renewal
 
@@ -134,6 +156,18 @@ insolvency is not a bookkeeping question. B2 has to clamp before moving anything
 
 ---
 
+⚠️ **Two things Group C and Group D have to pick up.**
+
+**Group C reuses `construction_energy`.** It is in `metabolism.rs`, takes the body's own cells
+(`World::cells_of`), and is the same sum C1's `reproduction_threshold × body construction
+cost` needs. Do not write a second one. At the shipped multiplier a four-celled photocyte body
+is worth 16 units, so C1's threshold is 35.2 and such a body reaches it in about 370 ticks
+from empty — against a lifespan of 1,963. Group C may reasonably want to move
+`CONSTRUCTION_TICKS`; nothing in Group B depends on its size, only on the ratios.
+
+**⭐⭐ Group D's balance question has moved, and not in the direction Group A expected.** See
+Q15 below.
+
 ## The decision this phase has to take: a metabolic cost per gene
 
 Phase 3 found the problem and CLAUDE.md already anticipated the answer.
@@ -160,6 +194,28 @@ the `reorder_rate` mistake.
 ---
 
 ## Open questions carried forward
+
+**Q15** — ⭐⭐ **the population cap binds about four times before the energy budget does, so
+SPEC section 4's carrying capacity never actually applies at the shipped defaults.** Group A
+predicted a bloom on the strength of a photocyte earning ~7× upkeep while shaded, and asked
+for that to be re-measured once the costs existed. It has been, in
+`energy_is_still_conserved_with_organisms_present`, and it stands: **0.0277 a tick earned
+against 0.00408 to keep, a margin of 6.75×**, with the bodies deliberately shading one
+another.
+
+The number that matters more is what that implies. A four-celled body costs 0.0163 a tick.
+The default world is offered 36,864 tiles × 0.012 × a mean light profile of 0.625, which is
+**276 units a tick**, so light alone would support about **17,000 such bodies**.
+`limits.max_organisms` is **4,000**. The population therefore hits the arena long before it
+hits the energy budget — so the pressure the whole ecology is supposed to grow out of never
+switches on, and D4 would be judging a world where nothing is scarce. That is CLAUDE.md's
+"too much light and everything blooms and stagnates" arriving by a slightly different route
+than expected.
+
+`upkeep_scale` is the lever with the right shape: it is live, it scales the cost side without
+touching the light, and it is now also the lifespan slider (a hotter world is one where
+everything dies younger). The arithmetic above suggests about **4**. It is a calculation, not
+an experiment, and Group D is where it gets tried against a running ecology.
 
 **Q13** — **the light gradient is nearly invisible at body scale.** SPEC's `gradient` of 0.75
 spread over 1,152 world units is a change of about half a per cent per tile, so a sensocyte

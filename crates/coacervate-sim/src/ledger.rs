@@ -205,9 +205,10 @@ impl Ledger {
 
     /// `amount` has gone on upkeep and on the work of moving.
     ///
-    /// Nothing ever comes back out of `dissipated`. It is still an account rather than a
-    /// deletion, because the invariant needs somewhere to look for the energy that a
-    /// living world is constantly turning into heat.
+    /// A one-way street with one exception, and the exception is named: [`Ledger::write_off`]
+    /// undoes spending a dying organism turned out never to have been able to afford.
+    /// `dissipated` is still an account rather than a deletion, because the invariant needs
+    /// somewhere to look for the energy that a living world is constantly turning into heat.
     pub fn spend(&mut self, amount: f64) {
         self.transfer(Account::Biomass, Account::Dissipated, amount);
     }
@@ -236,6 +237,34 @@ impl Ledger {
     /// An organism holding `amount` has died.
     pub fn die(&mut self, amount: f64) {
         self.transfer(Account::Biomass, Account::Detritus, amount);
+    }
+
+    /// An organism has died owing `amount`, and the debt is cancelled.
+    ///
+    /// The one movement in this file that runs the other way out of `dissipated`, and the
+    /// only one there will ever be. It exists because of a hole SPEC section 5 leaves open on
+    /// purpose: the invariant claims energy is conserved and *not* that any account is
+    /// solvent, so [`Ledger::spend`] will happily take an organism below nothing. A body that
+    /// spent a hundredth it did not have leaves `dissipated` credited with a hundredth of heat
+    /// that was never produced, and `biomass` a hundredth in the red.
+    ///
+    /// While the organism is alive that is exactly what SPEC asks for - insolvency is a fact
+    /// about the organism, not a bookkeeping error, and it is what `metabolism.rs` turns into
+    /// death. The moment the organism is gone, though, the red figure has nobody to belong to.
+    /// Left alone it stays in `biomass` for the rest of the run, and an overnight run's worth
+    /// of deaths adds up to a living-biomass account that is large and negative while every
+    /// organism in the world is holding something positive.
+    ///
+    /// So the last thing a dying organism does is fail to pay. The spending that was never
+    /// affordable is undone, `biomass` comes back to nothing, and the account once again says
+    /// what the living are holding.
+    ///
+    /// It is a transfer like every other operation here, so it cannot destroy or invent
+    /// anything: whatever `biomass` gains, `dissipated` gives up. And a negative amount is
+    /// refused, which is what stops it being a general-purpose way of turning heat back into
+    /// life.
+    pub fn write_off(&mut self, amount: f64) {
+        self.transfer(Account::Dissipated, Account::Biomass, amount);
     }
 
     /// `amount` of detritus has rotted back into the tile beneath it.
@@ -819,10 +848,10 @@ mod tests {
     // about the ledger alone, which is the half that can be settled now.
     // ---------------------------------------------------------------------------------
 
-    /// The eight things that can happen to a unit of energy.
+    /// The nine things that can happen to a unit of energy.
     ///
     /// Written out as a list so that the machine can pick from it, and so that adding a
-    /// ninth operation to [`Ledger`] without adding it here is a change somebody has to
+    /// tenth operation to [`Ledger`] without adding it here is a change somebody has to
     /// make on purpose.
     #[derive(Debug, Clone, Copy)]
     enum Move {
@@ -832,17 +861,19 @@ mod tests {
         Spend,
         Overflow,
         Die,
+        WriteOff,
         Decay,
         Light,
     }
 
-    const EVERY_MOVE: [Move; 8] = [
+    const EVERY_MOVE: [Move; 9] = [
         Move::Harvest,
         Move::Scavenge,
         Move::Predate,
         Move::Spend,
         Move::Overflow,
         Move::Die,
+        Move::WriteOff,
         Move::Decay,
         Move::Light,
     ];
@@ -897,6 +928,7 @@ mod tests {
                         ledger.overflow(amount);
                     }
                     Move::Die => ledger.die(amount),
+                    Move::WriteOff => ledger.write_off(amount),
                     Move::Decay => {
                         field += amount;
                         ledger.decay(amount);

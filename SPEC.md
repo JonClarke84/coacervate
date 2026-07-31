@@ -87,6 +87,7 @@ spring_damping = 0.35
 
 [metabolism]
 upkeep_scale = 1.0       # global multiplier on all cell upkeep ("temperature")
+gene_cost = 0.0001       # per gene, per tick — see section 7
 movement_cost = 0.15     # energy per unit of work done by contraction
 reproduction_threshold = 2.2   # × body construction cost
 offspring_share = 0.45   # fraction of parent energy passed to offspring
@@ -300,6 +301,16 @@ Flow:
 - Death moves `biomass → detritus`.
 - Detritus decays at a fixed rate into the field tile beneath it, moving `detritus → field`,
   while sinking slowly (this is the marine snow, which is both atmospheric and functional).
+- **An organism that dies owing moves `dissipated → biomass`, for exactly what it overspent.**
+  Added in Phase 4. This is the one movement that runs backwards out of `dissipated` and the
+  only one there will be. It follows from the paragraph above about solvency: while an
+  organism is alive, spending more than it holds is a fact about the organism and not a
+  bookkeeping error, so `spend` allows it and `biomass` goes red. Once the organism is gone
+  that red figure belongs to nobody, and left alone it accumulates over a night's worth of
+  deaths into a living-biomass account that is large and negative while every organism in the
+  world holds something positive. So the last thing a dying organism does is fail to pay: the
+  spending that was never affordable is undone, and the account goes back to saying what the
+  living are holding.
 
 ---
 
@@ -430,9 +441,17 @@ Applied at reproduction, in this order:
 5. **Reordering** — with `reorder_rate`: swap two adjacent genes.
 6. **Whole-genome duplication** — with `genome_duplication_rate`: append a full copy.
 
-**Hard cap at `max_genes`.** Duplication is exponential without it. If genome bloat still
-appears under selection, add a small metabolic cost per gene rather than raising the cap —
-that is how real genomes are disciplined.
+**Hard cap at `max_genes`.** Duplication is exponential without it.
+
+**And a metabolic cost per gene exists, added in Phase 4 — but not for the reason this
+paragraph originally gave.** The draft said to add one "if genome bloat still appears under
+selection", as a brake. The measured problem is the other way round. With the rates above,
+duplication and insertion together (0.03) exceed deletion (0.02), so genomes drift *upward*
+and a lineage left alone ends up pressed against the cap — where, by the paragraph below, a
+lengthening mutation fails. The project's central operator therefore switches itself off
+exactly when a lineage is at its most elaborate. `metabolism.gene_cost` is there to keep
+genomes *away* from the ceiling so that duplication stays available: a lineage should be
+pushed back by selection long before it arrives, and never discover that the wall exists.
 
 **At the cap, a mutation that would lengthen the genome simply fails.** It does not truncate.
 This matters more than it sounds: truncating from the end is a silent, *biased* operator, and
@@ -528,9 +547,11 @@ phase 1.
 
 ## 10. Life cycle
 
-**Metabolism.** Each tick, every cell pays `upkeep × upkeep_scale`. `upkeep_scale` is the
-"temperature" slider — raising it is a live environmental pressure. Organisms whose energy
-reaches zero die.
+**Metabolism.** Each tick, every cell pays `upkeep × upkeep_scale`, and every organism pays a
+further `gene_cost × upkeep_scale` for each gene in its genome — a fixed overhead for carrying
+the program rather than a charge per cell, and the reason for it is in section 7.
+`upkeep_scale` is the "temperature" slider — raising it is a live environmental pressure.
+Organisms whose energy reaches zero die.
 
 **Reproduction.** When an organism's stored energy exceeds
 `reproduction_threshold × body_construction_cost` *and* it has at least one gonocyte, it

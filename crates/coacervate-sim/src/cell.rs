@@ -242,6 +242,52 @@ impl CellKind {
         }
     }
 
+    /// How much of a cell's own upkeep it is reckoned to have cost to build.
+    ///
+    /// See [`CellKind::construction`]. A thousand ticks is a little under seventeen simulated
+    /// seconds, and about half of what SPEC section 6's plainest cell is allowed to live for.
+    pub const CONSTRUCTION_TICKS: f32 = 1_000.0;
+
+    /// What a cell of this kind is *worth* - what it took to build, as against what it costs
+    /// to keep.
+    ///
+    /// ⭐ **SPEC uses the phrase "construction energy" once, in section 10, and never defines
+    /// it.** It is needed in two places: a dead body becomes "detritus particles at each
+    /// cell's position, carrying that cell's construction energy", and an organism reproduces
+    /// once it holds `reproduction_threshold × body construction cost`. So it has to be one
+    /// number that means the same thing to both.
+    ///
+    /// # It is derived from upkeep rather than invented
+    ///
+    /// A cell is worth [`CellKind::CONSTRUCTION_TICKS`] ticks of its own upkeep. The
+    /// alternative was to write six more numbers into SPEC section 6's table, and there is
+    /// nothing to derive them from: SPEC gives a radius and an upkeep per kind and no third
+    /// column. Keying construction to upkeep says something defensible instead - **expensive
+    /// tissue is expensive to build**, in the same proportion it is expensive to keep - and it
+    /// means a kind stays one trade-off rather than becoming two that can be tuned apart.
+    ///
+    /// # What the multiplier is not
+    ///
+    /// It is not `upkeep_scale`'d, and that is deliberate. A body's construction cost is a
+    /// property of the *body*, and SPEC section 3 calls `upkeep_scale` a temperature - a
+    /// property of the world. Scaling both by it would mean turning the temperature up also
+    /// raised the bar for reproduction, so the one lever a person can pull mid-run would move
+    /// two things at once and neither of them cleanly.
+    ///
+    /// # Where the size of it actually bites
+    ///
+    /// Nowhere in Group B, which is worth being plain about. A corpse can only ever carry what
+    /// the organism was holding - energy is conserved - so what construction energy decides
+    /// there is the *ratio* in which a body is shared out between its cells, and a ratio does
+    /// not care about the multiplier. It is Group C's reproduction threshold that the
+    /// thousand actually sets, and Group C may well want to move it: at the shipped rates a
+    /// photosynthetic body climbs to `2.2 × 1,000 ticks of upkeep` in a couple of hundred
+    /// ticks, which is the generation time of the whole simulation.
+    #[must_use]
+    pub const fn construction(self) -> f32 {
+        self.upkeep() * Self::CONSTRUCTION_TICKS
+    }
+
     /// What this kind of cell costs its organism per tick simply for existing, from SPEC
     /// section 6's table.
     ///

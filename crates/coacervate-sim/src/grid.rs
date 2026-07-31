@@ -488,6 +488,54 @@ impl Grid {
         realised
     }
 
+    /// Put `amount` into one tile, tell the ledger where it came from, and hand back what
+    /// the tile actually took.
+    ///
+    /// [`Grid::harvest`] backwards, and it exists for the one thing that puts energy back
+    /// into the water rather than taking it out: a grain of detritus rotting into the tile it
+    /// is lying in. SPEC section 5 lists that movement as `detritus → field` and this is the
+    /// only door it goes through, so a grain cannot lose energy without the books being told
+    /// where it went.
+    ///
+    /// # Why what comes back can be less than what was offered
+    ///
+    /// Because a tile is a 32-bit number. Adding a thousandth to a tile already holding eight
+    /// moves it by whatever the nearest number it can hold happens to be, and if the tile were
+    /// large enough - a configuration is free to set a ceiling of a million - the addition
+    /// would round away to nothing at all. The caller is handed the *realised* change and is
+    /// expected to treat it as the truth: a grain keeps whatever the water would not take, and
+    /// tries again next tick. The alternative is a grain that believes it has unloaded energy
+    /// no tile ever received, which is a leak of exactly the kind SPEC section 5 says the
+    /// invariant cannot see.
+    ///
+    /// # Nothing here defends the tile's ceiling, deliberately
+    ///
+    /// A grain will happily rot into a tile that is already full, and the tile is left holding
+    /// more than it can. SPEC section 4 anticipates exactly this - *"from Phase 4 detritus
+    /// will decay into already-full tiles"* - and gives the answer: the ceiling is enforced
+    /// once, by [`Grid::spill`], after everything that moves energy has finished moving it.
+    /// The excess leaves the world on the next tick, through an account, which is the
+    /// biological pump doing what it does.
+    ///
+    /// # Panics
+    ///
+    /// If there is no such tile in this grid, which means a caller has worked out a tile
+    /// index some way other than [`Grid::tile_at`].
+    pub fn deposit(&mut self, ledger: &mut Ledger, tile: usize, amount: f64) -> f64 {
+        let before = self.tiles[tile];
+        let after = before + narrowed(amount);
+        self.tiles[tile] = after;
+
+        // Both readings widened and *then* subtracted, as in `regrow`, `spill` and `harvest`,
+        // and for the same reason: the difference between two 32-bit numbers is not always a
+        // 32-bit number, and this is the quantity that has to make the ledger agree with the
+        // grid rather than nearly agree.
+        let realised = f64::from(after) - f64::from(before);
+        ledger.decay(realised);
+
+        realised
+    }
+
     /// How many tiles across the world is.
     #[must_use]
     pub fn cols(&self) -> usize {

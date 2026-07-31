@@ -134,6 +134,7 @@ mod tests {
         assert_eq!(raw.physics.spring_damping, 0.35);
 
         assert_eq!(raw.metabolism.upkeep_scale, 1.0);
+        assert_eq!(raw.metabolism.gene_cost, 0.0001);
         assert_eq!(raw.metabolism.movement_cost, 0.15);
         assert_eq!(raw.metabolism.reproduction_threshold, 2.2);
         assert_eq!(raw.metabolism.offspring_share, 0.45);

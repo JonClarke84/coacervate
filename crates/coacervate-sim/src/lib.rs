@@ -32,9 +32,13 @@
 //! - [`behaviour`] — what those cells do: harvest the light, shade one another out of it, eat
 //!   what they are touching, work their muscles and sense which way things lie. The income
 //!   side of the ledger, and every unit of it moved through an account.
+//! - [`metabolism`] — the other side: what every cell costs its organism per tick simply for
+//!   existing, what a genome costs to carry, and what becomes of a body that cannot pay or
+//!   has been alive too long. Death, and the slow fall of what it leaves behind.
 //! - [`world`] — all of the above owned in one place, and the tick that moves it: the light
-//!   falling, the energy spreading, the tiles shedding what they cannot hold, and the bodies
-//!   being pushed about — with the books checked as it goes.
+//!   falling, the energy spreading, the tiles shedding what they cannot hold, the bodies
+//!   being fed and pushed about, and the dead being taken away — with the books checked as it
+//!   goes.
 
 #![forbid(unsafe_code)]
 
@@ -45,6 +49,7 @@ pub mod development;
 pub mod genome;
 pub mod grid;
 pub mod ledger;
+pub mod metabolism;
 pub mod mutation;
 pub mod organism;
 pub mod physics;

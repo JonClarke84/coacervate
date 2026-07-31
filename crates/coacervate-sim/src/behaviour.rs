@@ -60,9 +60,10 @@
 //!
 //! # What is deliberately not here
 //!
-//! Upkeep, death, detritus decay and reproduction are Group B and Group C. This file has one
-//! outgoing payment in it - the work a myocyte does - and it is here because SPEC section 6
-//! puts it in the same row of the same table as the thing that pays for it.
+//! Upkeep, death and detritus decay live in `metabolism.rs`, and reproduction is Group C.
+//! This file has one outgoing payment in it - the work a myocyte does - and it is here
+//! because SPEC section 6 puts it in the same row of the same table as the thing that pays
+//! for it.
 
 use crate::cell::{Cell, CellKind, Vec2};
 use crate::config::Config;
@@ -168,8 +169,8 @@ const SENSE_RANGE: f32 = MAX_REST_LENGTH;
 ///
 /// SPEC gives detritus a position and an energy and no size at all. A grain has to have some
 /// width or "on contact" cannot be answered, and one world unit - a third of a cell - is the
-/// smallest thing that is still a thing. Group B, which decides what detritus actually is, may
-/// reasonably want to move it.
+/// smallest thing that is still a thing. Group B kept it: a grain is one cell's worth of a
+/// corpse, so being smaller than the cell it came from is the right shape for it.
 const DETRITUS_RADIUS: f32 = 1.0;
 
 /// Everything one pass of behaviour is allowed to touch that is alive.
@@ -194,22 +195,22 @@ pub(crate) struct Living<'a> {
     /// Who is in each slot, and nothing at all in the slots that are free.
     pub organisms: &'a mut [Option<Organism>],
 
-    /// The dead biomass on its way down. Empty until Group B builds it - see [`Detritus`].
+    /// The dead biomass on its way down - see [`Detritus`]. `metabolism.rs` fills it and
+    /// empties it; this pass only eats from it and smells it.
     pub detritus: &'a mut [Detritus],
 }
 
 /// A grain of dead biomass, sinking.
 ///
-/// ⚠️ **This is a placeholder, and it is deliberately the smallest one that works.** SPEC
-/// section 10 says a death "becomes detritus particles at each cell's position, carrying that
-/// cell's construction energy", and that detritus then sinks and decays into the tile beneath
-/// it. Group B builds all of that. What Group A needs is only something for a devorocyte to
-/// bite and for a sensocyte to smell, which is a position and a quantity of energy.
+/// A position and a quantity of energy, and nothing else - which turned out to be the whole of
+/// it. Group A defined it this way as a placeholder, so that a devorocyte had something to
+/// bite and a sensocyte something to smell; Group B, which makes them, sinks them and rots
+/// them away, needed nothing added.
 ///
-/// It is defined here rather than deferred because the alternative is a devorocyte with half
-/// its function written and no way to try the other half. The mechanism is complete and
-/// tested; what is missing is anything that ever *makes* one, so the world hands this pass an
-/// empty slice and will go on doing so until Group B fills it.
+/// It lives here rather than in `metabolism.rs` because this is the file that *reads* one.
+/// `metabolism.rs` makes grains and takes them away again, and `world.rs` owns the arena they
+/// live in, but the questions asked of a grain - is a mouth touching it, which way do the dead
+/// lie from here - are all asked in this file, and the type belongs with the questions.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Detritus {
     /// Where it is.
@@ -274,14 +275,25 @@ fn buckets_within(distance: f32, per_unit: f64, most: usize) -> usize {
     buckets.min(most)
 }
 
-/// A uniform grid of buckets over the world, holding which cells are in each.
+/// A uniform grid of buckets over the world, holding which of a set of things are in each.
 ///
 /// The same structure and the same counting sort as the one in `physics.rs`, and it is a
 /// second copy rather than a shared one for a reason worth stating: the physics asks one
 /// question - "who is close enough to touch me" - and asks it of a hash it rebuilds inside its
-/// own tick, whereas this file asks three questions of three different shapes and has to ask
+/// own tick, whereas this file asks four questions of four different shapes and has to ask
 /// them *before* the physics has run. A single structure answering both would be a structure
 /// with a lifetime split across two modules and a query shape general enough to be nobody's.
+///
+/// # It indexes positions rather than cells, and that is Group B's doing
+///
+/// Group A built it over the crowd. Group B has a second population to search - the drift of
+/// dead biomass - and two of this file's questions are asked of that instead: which grains a
+/// devorocyte is touching, and which way the dead lie from a sensocyte. Written against
+/// `&[Cell]` this structure could not be pointed at either, and the alternative was a third
+/// copy of the same counting sort, which is how a project ends up with three versions of one
+/// rule and no idea which of them is right. So [`Neighbourhood::rebuild`] takes a count and a
+/// way of asking where the nth thing is, and neither the sort nor the search knows what it is
+/// sorting.
 ///
 /// What is *not* duplicated is the rule about the world wrapping sideways:
 /// [`crate::physics::wrapped_offset`] is shared, because two versions of that would eventually
@@ -304,28 +316,39 @@ struct Neighbourhood {
     last_col: f64,
     last_row: f64,
 
-    /// Which bucket each cell landed in, from the most recent rebuild.
+    /// Which bucket each thing landed in, from the most recent rebuild.
     bucket_of: Vec<usize>,
 
-    /// Where each bucket's run of cells begins in `order`, one entry longer than there are
-    /// buckets so the last run needs no special case.
+    /// Where each bucket's run begins in `order`, one entry longer than there are buckets so
+    /// the last run needs no special case.
     starts: Vec<usize>,
 
     /// Working room for the counting sort: each bucket's next free slot as it fills.
     cursor: Vec<usize>,
 
-    /// Every cell, in bucket order. This is the sorted result a search reads.
+    /// Everything indexed, in bucket order. This is the sorted result a search reads.
     order: Vec<usize>,
+
+    /// How many things went into the most recent rebuild.
+    ///
+    /// Kept only so that an index over *nothing* can be recognised in one comparison, and it
+    /// earns its place: a rebuild clears and prefix-sums one entry per bucket, which for the
+    /// default world is fifty thousand of them, on every tick, whether or not there is
+    /// anything to sort into them. The drift is empty for the whole of a world that has not
+    /// killed anything yet - which is every tick of the field-only conservation tests, and the
+    /// opening stretch of every real run - and paying a fifty-thousand-entry sweep for it
+    /// **doubled the cost of a hundred thousand ticks**, from 27 seconds to 52. Measured.
+    count: usize,
 }
 
 impl Neighbourhood {
-    /// Lay buckets over the world a configuration describes, once.
-    fn new(config: &Config) -> Self {
+    /// Lay buckets over the world a configuration describes, once, with room for `capacity`
+    /// things in them.
+    fn new(config: &Config, capacity: usize) -> Self {
         let cols_across = buckets_across(config.world.width, REACH);
         let rows_down = buckets_across(config.world.height, REACH);
         let cols = usize::try_from(cols_across).expect("a bucket count fits in a machine word");
         let rows = usize::try_from(rows_down).expect("a bucket count fits in a machine word");
-        let capacity = crate::physics::cell_capacity(config);
 
         Self {
             cols,
@@ -338,17 +361,27 @@ impl Neighbourhood {
             starts: vec![0; cols * rows + 1],
             cursor: vec![0; cols * rows],
             order: vec![0; capacity],
+            count: 0,
         }
     }
 
-    /// Sort every cell into its bucket, throwing away whatever was here before.
-    fn rebuild(&mut self, cells: &[Cell]) {
+    /// Sort `count` things into their buckets, throwing away whatever was here before.
+    ///
+    /// `at` says where the nth of them is, and is the whole of what this needs to know about
+    /// them: the crowd hands it a cell's position and the drift hands it a grain's.
+    fn rebuild(&mut self, count: usize, at: impl Fn(usize) -> Vec2) {
         assert!(
-            cells.len() <= self.bucket_of.len(),
-            "the behaviour pass was built with room for {} cells and was handed {}",
-            self.bucket_of.len(),
-            cells.len()
+            count <= self.bucket_of.len(),
+            "the behaviour pass was built with room for {} of these and was handed {count}",
+            self.bucket_of.len()
         );
+
+        // An index over nothing is left untouched rather than swept clear, and [`Neighbourhood::near`]
+        // knows not to read it. See the note on `count`.
+        self.count = count;
+        if count == 0 {
+            return;
+        }
 
         let buckets = self.cols * self.rows;
         let (cols, across, down) = (self.cols, self.across_per_unit, self.down_per_unit);
@@ -356,9 +389,10 @@ impl Neighbourhood {
 
         self.starts[..=buckets].fill(0);
 
-        for (index, cell) in cells.iter().enumerate() {
-            let bucket = bucket_along(cell.pos.y, down, last_row) * cols
-                + bucket_along(cell.pos.x, across, last_col);
+        for index in 0..count {
+            let pos = at(index);
+            let bucket =
+                bucket_along(pos.y, down, last_row) * cols + bucket_along(pos.x, across, last_col);
 
             self.bucket_of[index] = bucket;
             self.starts[bucket + 1] += 1;
@@ -375,26 +409,26 @@ impl Neighbourhood {
             order,
             ..
         } = self;
-        for (index, &bucket) in bucket_of[..cells.len()].iter().enumerate() {
+        for (index, &bucket) in bucket_of[..count].iter().enumerate() {
             order[cursor[bucket]] = index;
             cursor[bucket] += 1;
         }
     }
 
-    /// Hand back every cell in the box `half_width` either side of `at`, `above` up and
-    /// `below` down of it.
+    /// Hand back everything indexed inside the box `half_width` either side of `at`, `above`
+    /// up and `below` down of it.
     ///
-    /// Generous: what comes back is every cell in every bucket the box touches, most of which
+    /// Generous: what comes back is everything in every bucket the box touches, most of which
     /// is further away than was asked for. That is the bargain the whole structure makes, and
     /// the caller does the precise test - one subtraction and a comparison, paid to avoid
-    /// asking the question of every cell in the world.
+    /// asking the question of everything in the world.
     ///
-    /// The cell at `at`, if it is one of the cells in the index, comes back too. Callers skip
-    /// it themselves rather than being handed a special case for it.
+    /// Whatever is at `at`, if it is in the index, comes back too. Callers skip it themselves
+    /// rather than being handed a special case for it.
     ///
     /// The order is fixed and repeatable: down the rows from the top, across the columns from
-    /// the left, and in ascending cell index within each bucket. That is what lets a sum built
-    /// out of what this returns be the same sum in two runs of the same seed.
+    /// the left, and in ascending index within each bucket. That is what lets a sum built out
+    /// of what this returns be the same sum in two runs of the same seed.
     fn near(
         &self,
         at: Vec2,
@@ -403,6 +437,12 @@ impl Neighbourhood {
         below: f32,
         mut visit: impl FnMut(usize),
     ) {
+        // Nothing was sorted, so the buckets say nothing and must not be read: what is in them
+        // is whatever the last rebuild that had something to sort left behind.
+        if self.count == 0 {
+            return;
+        }
+
         let col = bucket_along(at.x, self.across_per_unit, self.last_col);
         let row = bucket_along(at.y, self.down_per_unit, self.last_row);
 
@@ -438,7 +478,7 @@ impl Neighbourhood {
 /// size the configuration implies - one entry per cell the world could ever hold, or one per
 /// organism - and none of them can grow. At SPEC section 3's defaults that is 256,000 cells at
 /// twenty bytes apiece and four thousand organisms at thirty-two, so about **5 MB**, and the
-/// neighbourhood costs 5 MB more. Eleven megabytes all told, against the 57 MB `world.rs`
+/// two neighbourhoods cost 5 MB each. Sixteen megabytes all told, against the 61 MB `world.rs`
 /// accounts for and CLAUDE.md's resident target of 2 GB.
 pub struct Behaviour {
     /// SPEC section 3's `metabolism.movement_cost`: what a unit of work costs to do.
@@ -449,6 +489,14 @@ pub struct Behaviour {
 
     /// Which cells are near which.
     hash: Neighbourhood,
+
+    /// Which *grains* are near which, which is the same structure over the other population.
+    ///
+    /// A second index rather than one shared with the cells, because the two are searched
+    /// with different questions and a bucket holding both would hand every contact test a pile
+    /// of candidates of the wrong kind. It is built at the drift's full capacity - one grain
+    /// per cell the world can hold - so it can never be handed more than it has room for.
+    drift: Neighbourhood,
 
     /// How much each photocyte is about to ask its tile for.
     ///
@@ -506,7 +554,8 @@ impl Behaviour {
         Self {
             movement_cost: f64::from(config.metabolism.movement_cost),
             width: config.world.width,
-            hash: Neighbourhood::new(config),
+            hash: Neighbourhood::new(config, cells),
+            drift: Neighbourhood::new(config, cells),
             want: vec![0.0; cells],
             gained: vec![0.0; slots],
             lost: vec![0.0; slots],
@@ -542,7 +591,9 @@ impl Behaviour {
         self.gained[..organisms.len()].fill(0.0);
         self.lost[..organisms.len()].fill(0.0);
         self.flow[..population].fill(0.0);
-        self.hash.rebuild(cells);
+        self.hash.rebuild(population, |index| cells[index].pos);
+        self.drift
+            .rebuild(detritus.len(), |index| detritus[index].pos);
 
         self.look(cells, grid, detritus, owner, organisms);
         self.contract(cells, springs, owner, organisms, ledger, ticks);
@@ -566,12 +617,14 @@ impl Behaviour {
         let Self {
             width,
             hash,
+            drift,
             want,
             signal,
             ..
         } = self;
         let around = Surroundings {
             hash,
+            drift,
             cells,
             detritus,
             grid,
@@ -831,6 +884,7 @@ impl Behaviour {
         let Self {
             width,
             hash,
+            drift,
             gained,
             lost,
             demand,
@@ -880,27 +934,34 @@ impl Behaviour {
         // Scavenging, which is the same rate against something that cannot be hurt by it. A
         // grain is taken in visiting order and clamped at what it holds - see this method's
         // documentation for why this half is not shared out the way the half above is.
+        //
+        // Through the drift's own bucket index, not along the whole drift. Group A wrote the
+        // walk because there was nothing in the world to walk over; a world with a hundred
+        // thousand grains in it and a thousand mouths would have made a tick a hundred million
+        // measurements long, and would have done it silently.
+        let reach = CellKind::LARGEST_RADIUS + DETRITUS_RADIUS;
         for (mouth, cell) in cells.iter().enumerate() {
             if cell.kind != CellKind::Devorocyte {
                 continue;
             }
 
-            for morsel in detritus.iter_mut() {
+            drift.near(cell.pos, reach, reach, reach, |grain| {
+                let morsel = &mut detritus[grain];
                 let apart = wrapped_offset(cell.pos, morsel.pos, width).length();
                 if apart >= cell.radius + DETRITUS_RADIUS {
-                    continue;
+                    return;
                 }
 
                 let taken = DEVOUR_RATE.min(morsel.energy);
                 if taken <= 0.0 {
-                    continue;
+                    return;
                 }
 
                 ledger.scavenge(taken);
                 morsel.energy -= taken;
                 gained[owner[mouth]] += taken;
                 flow[mouth] += narrowed(taken);
-            }
+            });
         }
     }
 
@@ -1112,6 +1173,7 @@ fn shade(around: &Surroundings<'_>, index: usize) -> f32 {
 /// in it is read-only, which is the property the whole pass rests on.
 struct Surroundings<'a> {
     hash: &'a Neighbourhood,
+    drift: &'a Neighbourhood,
     cells: &'a [Cell],
     detritus: &'a [Detritus],
     grid: &'a Grid,
@@ -1218,17 +1280,21 @@ fn crowd_gradient(around: &Surroundings<'_>, index: usize) -> f32 {
 
 /// How lopsided the dead biomass around a point is.
 ///
-/// ⚠️ **Linear in the whole drift, because there is no index over detritus.** It costs nothing
-/// today because nothing makes any; the moment Group B does, this and the devorocyte's reach
-/// for a grain both need the drift bucketed the way [`Neighbourhood`] buckets cells.
+/// Asked of the drift's own bucket index rather than of the whole drift, which is Group B's
+/// correction to Group A: a walk over every grain in the world cost nothing while nothing
+/// made any, and became the population times the drift the moment something did. Everything
+/// past [`SENSE_RANGE`] contributes nothing - `towards` says so - so the bucketed answer is
+/// the same answer, found by looking at a few dozen grains instead of a hundred thousand.
 fn drift_gradient(around: &Surroundings<'_>, at: Vec2) -> f32 {
     let mut lopsided = Vec2::ZERO;
 
-    for morsel in around.detritus {
-        if let Some(pull) = towards(at, morsel.pos, around.width) {
-            lopsided += pull;
-        }
-    }
+    around
+        .drift
+        .near(at, SENSE_RANGE, SENSE_RANGE, SENSE_RANGE, |grain| {
+            if let Some(pull) = towards(at, around.detritus[grain].pos, around.width) {
+                lopsided += pull;
+            }
+        });
 
     lopsided.length()
 }
@@ -1484,6 +1550,38 @@ mod tests {
             self.detritus.push(Detritus { pos, energy: taken });
 
             taken
+        }
+
+        /// Fill the water with a real drift: `count` grains on an even lattice across the
+        /// whole world, each holding `each`.
+        ///
+        /// Paid for out of the tiles in turn rather than all out of one, because twenty
+        /// thousand grains is more than any single tile holds and a scene that dug one tile
+        /// into the ground would be a scene with a light gradient in it.
+        fn drop_a_drift(&mut self, across: u32, down: u32, each: f64) {
+            let tiles = self.grid.cols() * self.grid.rows();
+            let (width, height) = (self.config.world.width, self.config.world.height);
+
+            for step in 0..across * down {
+                let taken = self.grid.harvest(
+                    &mut self.ledger,
+                    usize::try_from(step).expect("a grain count fits in a word") % tiles,
+                    each,
+                );
+                self.ledger.die(taken);
+                self.detritus.push(Detritus {
+                    pos: Vec2::new(
+                        width * narrowed(f64::from(step % across) / f64::from(across)),
+                        height * narrowed(f64::from(step / across) / f64::from(down)),
+                    ),
+                    energy: taken,
+                });
+            }
+        }
+
+        /// Everything the drift is holding between it.
+        fn drift_energy(&self) -> f64 {
+            self.detritus.iter().map(|grain| grain.energy).sum()
         }
 
         /// Take energy out of one tile and let it leave the world, so there is a hole in the
@@ -2559,6 +2657,119 @@ mod tests {
             "a myocyte at a standstill is holding its spring at {} rather than at the one \
              length its phase puts it at",
             scene.springs[0].rest_length
+        );
+    }
+
+    /// ⭐ The drift is **searched** rather than scanned, and this test is the reason the whole
+    /// of Group B could not leave it alone.
+    ///
+    /// Group A defined a grain of detritus and let a devorocyte eat one, and did it the only
+    /// way it could: by walking the whole drift for every mouth, and again for every sensocyte
+    /// tuned to detritus. That cost nothing whatever while nothing in the world made a grain.
+    /// Group B is what makes grains, and the moment it does, both of those walks become the
+    /// population **times** the drift.
+    ///
+    /// # What the failure would have looked like, which is why it is worth a test
+    ///
+    /// Not a wrong answer. Both readings give identical results - a scan and a bucketed search
+    /// find the same grains, because everything past the reach contributes nothing either way.
+    /// What changes is only how long a tick takes, and it changes in a way nobody notices
+    /// until an overnight run stops being an overnight run: a thousand bodies in a world with
+    /// a hundred thousand grains in it is a hundred million distance measurements per tick,
+    /// for a result that a spatial index gets in a few hundred.
+    ///
+    /// So this test is a *scale* test rather than a correctness one, and it passes either way.
+    /// Twenty thousand grains and a hundred and fifty cells, ticked five times, is 15 million
+    /// measurements the slow way and a few thousand the fast one. **Measured, 31 July 2026,
+    /// debug build: 0.28 s scanning the drift and 0.05 s searching it.**
+    ///
+    /// The ratio is the thing rather than the two figures. At this size the scan is only five
+    /// times slower; the point is that its cost is the drift's *length*, so twenty times the
+    /// grains is twenty times the work, while the search looks at whatever is in nine buckets
+    /// however full the world is. A default world can hold 256,000 grains.
+    ///
+    /// The assertions are what makes it worth running at all: at this scale the mouths still
+    /// take exactly what they are touching, the drift gives up exactly what they take, and the
+    /// books agree with both.
+    #[test]
+    fn a_crowded_drift_is_searched_rather_than_scanned() {
+        let settings = config(|raw| {
+            raw.world.width = 256.0;
+            raw.world.height = 144.0;
+            raw.world.grid_cols = 32;
+            raw.world.grid_rows = 18;
+            raw.light.gradient = 0.0;
+            raw.light.patchiness = 0.0;
+            // The drift is built to hold one grain per cell the world can contain, so a world
+            // that can hold twenty thousand grains is a world with room for that many cells.
+            raw.limits.max_organisms = 400;
+            raw.limits.max_cells_per_organism = 64;
+        });
+        let mut scene = Scene::new(&settings);
+        scene.fill_with_light();
+        scene.drop_a_drift(200, 100, 0.0004);
+
+        // A hundred mouths and fifty noses, on a coarse lattice of their own so that every one
+        // of them has grains around it.
+        let mouths: Vec<(CellKind, Vec2, u8)> = (0..100u32)
+            .map(|index| {
+                (
+                    CellKind::Devorocyte,
+                    Vec2::new(
+                        f32::from(u8::try_from(index % 10).expect("under ten")) * 25.0 + 5.0,
+                        f32::from(u8::try_from(index / 10).expect("under ten")) * 14.0 + 5.0,
+                    ),
+                    0,
+                )
+            })
+            .collect();
+        let noses: Vec<(CellKind, Vec2, u8)> = (0..50u32)
+            .map(|index| {
+                (
+                    CellKind::Sensocyte,
+                    Vec2::new(
+                        f32::from(u8::try_from(index % 10).expect("under ten")) * 25.0 + 15.0,
+                        f32::from(u8::try_from(index / 10).expect("under five")) * 28.0 + 12.0,
+                    ),
+                    1,
+                )
+            })
+            .collect();
+
+        let genome = Genome::new(
+            vec![a_behaviour_gene(1, 0.0, 0.0, 1.0, SensorTarget::Detritus)],
+            &settings.limits,
+        );
+        let eaters = scene.add(scene.no_genome(), 0.0, &mouths);
+        scene.add(genome, 0.0, &noses);
+
+        let grains = scene.detritus.len();
+        let drift_before = scene.drift_energy();
+        let detritus_before = scene.ledger.detritus();
+
+        for _ in 0..5 {
+            scene.run();
+        }
+
+        let eaten = scene.energy(eaters);
+        assert!(
+            eaten > 0.0,
+            "a hundred devorocytes standing in {grains} grains of detritus ate nothing at all"
+        );
+        assert!(
+            (drift_before - scene.drift_energy() - eaten).abs() < 1e-9,
+            "the mouths took {eaten} and the drift gave up {}",
+            drift_before - scene.drift_energy()
+        );
+        assert!(
+            (detritus_before - scene.ledger.detritus() - eaten).abs() < 1e-9,
+            "the mouths took {eaten} and the detritus account moved by {}",
+            detritus_before - scene.ledger.detritus()
+        );
+        assert!(
+            scene.drift_energy() > 0.0,
+            "a hundred mouths cleared a drift of {grains} grains in five ticks, so this test \
+             is not measuring a crowded drift"
         );
     }
 

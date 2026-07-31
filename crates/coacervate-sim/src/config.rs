@@ -92,6 +92,7 @@ pub struct RawPhysics {
 #[serde(deny_unknown_fields)]
 pub struct RawMetabolism {
     pub upkeep_scale: f64,
+    pub gene_cost: f64,
     pub movement_cost: f64,
     pub reproduction_threshold: f64,
     pub offspring_share: f64,
@@ -184,6 +185,7 @@ pub fn spec_defaults() -> RawConfig {
         },
         metabolism: RawMetabolism {
             upkeep_scale: 1.0,
+            gene_cost: 0.0001,
             movement_cost: 0.15,
             reproduction_threshold: 2.2,
             offspring_share: 0.45,
@@ -589,6 +591,30 @@ pub struct PhysicsConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MetabolismConfig {
     pub upkeep_scale: f32,
+
+    /// What one gene costs its organism per tick, on top of what its cells cost.
+    ///
+    /// ⭐ **This is not here to stop genome bloat, and reading it that way gets the sign of
+    /// the argument backwards.** CLAUDE.md's table of caps says *"never remove or raise
+    /// [`limits.max_genes`] without also adding a metabolic cost per gene"*, which sounds like
+    /// a brake. It is the opposite.
+    ///
+    /// SPEC section 7's mutation rates have duplication and insertion together at 0.03 against
+    /// deletion's 0.02, so genomes drift **upward** and a lineage left alone ends up pressed
+    /// against the cap. And SPEC section 7 is explicit that at the cap a lengthening mutation
+    /// *fails* rather than truncating - deliberately, because truncating would eat the neutral
+    /// tail at the end of the genome, which is exactly the raw material duplication feeds on.
+    ///
+    /// Put those two together and the consequence is bad in a way that is easy to miss: **gene
+    /// duplication, the operator the whole genome design exists for, switches itself off
+    /// precisely when a lineage is at its most elaborate.** A saturated lineage can only
+    /// duplicate in a generation where a deletion has happened to make room first.
+    ///
+    /// So the cost is here to hold genomes *away* from the ceiling, so that duplication stays
+    /// available. A lineage should be pushed back by selection long before it arrives there,
+    /// and never find out that the wall exists.
+    pub gene_cost: f32,
+
     pub movement_cost: f32,
     pub reproduction_threshold: f32,
     pub offspring_share: f32,
@@ -730,6 +756,12 @@ impl RawConfig {
                 // The document calls it a "temperature": scale it to zero and nothing
                 // costs anything to be alive.
                 upkeep_scale: positive("metabolism.upkeep_scale", self.metabolism.upkeep_scale)?,
+                // May be nothing, which is the world every run before Phase 4 Group B was
+                // in - genomes cost their organism nothing to carry - and is a legitimate
+                // experiment to set up deliberately, since it is the control case for
+                // whether the cost is doing anything. Not less than nothing, which would be
+                // a lineage paid to grow a genome.
+                gene_cost: non_negative("metabolism.gene_cost", self.metabolism.gene_cost)?,
                 // May be nothing - free movement is a coherent world to run - but not
                 // less, which would be organisms earning energy by swimming.
                 movement_cost: non_negative(
@@ -832,6 +864,7 @@ mod tests {
             ),
             ("physics.spring_damping", raw.physics.spring_damping),
             ("metabolism.upkeep_scale", raw.metabolism.upkeep_scale),
+            ("metabolism.gene_cost", raw.metabolism.gene_cost),
             ("metabolism.movement_cost", raw.metabolism.movement_cost),
             (
                 "metabolism.reproduction_threshold",
@@ -873,8 +906,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            23,
-            "SPEC section 3 has twenty-three decimal settings; this list has {}, so one has \
+            24,
+            "SPEC section 3 has twenty-four decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );
@@ -935,9 +968,9 @@ mod tests {
 
     /// SPEC's own defaults go through the gate and come out the other side unchanged.
     ///
-    /// Every one of the thirty-three settings is checked, not a sample, and the reason is
+    /// Every one of the thirty-four settings is checked, not a sample, and the reason is
     /// the shape of the code being tested rather than thoroughness for its own sake.
-    /// Turning a document into a checked configuration is thirty-three hand-written
+    /// Turning a document into a checked configuration is thirty-four hand-written
     /// assignments in a row, all of the same shape, several of them neighbours with
     /// identical types - `gradient` and `patchiness` sit side by side and are both
     /// fractions between zero and one. Copy the wrong one and every test that looks at a
@@ -973,6 +1006,7 @@ mod tests {
         assert_eq!(config.physics.spring_damping, 0.35);
 
         assert_eq!(config.metabolism.upkeep_scale, 1.0);
+        assert_eq!(config.metabolism.gene_cost, 0.0001);
         assert_eq!(config.metabolism.movement_cost, 0.15);
         assert_eq!(config.metabolism.reproduction_threshold, 2.2);
         assert_eq!(config.metabolism.offspring_share, 0.45);
@@ -1041,7 +1075,7 @@ mod tests {
         // because 0.5 *is* a fraction: what excludes it is the stability of the arithmetic
         // rather than the meaning of the setting, and it is the value somebody would
         // actually write.
-        let corruptions: [(&str, Corruption); 23] = [
+        let corruptions: [(&str, Corruption); 24] = [
             ("world.width", |raw| raw.world.width = 0.0),
             ("world.height", |raw| raw.world.height = 0.0),
             ("world.years_per_tick", |raw| raw.world.years_per_tick = 0.0),
@@ -1059,6 +1093,9 @@ mod tests {
             }),
             ("metabolism.upkeep_scale", |raw| {
                 raw.metabolism.upkeep_scale = 0.0;
+            }),
+            ("metabolism.gene_cost", |raw| {
+                raw.metabolism.gene_cost = -0.1;
             }),
             ("metabolism.movement_cost", |raw| {
                 raw.metabolism.movement_cost = -0.1;

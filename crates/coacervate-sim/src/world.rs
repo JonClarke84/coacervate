@@ -9,7 +9,8 @@
 //! # What one tick does, and why in that order
 //!
 //! The light falls; the energy spreads sideways; tiles that cannot hold what has arrived
-//! shed it; then the bodies move, and everything alive gets a tick older.
+//! shed it; then the bodies feed and move; then everything alive gets a tick older, pays for
+//! the tick it has had, and is taken away if it did not survive it.
 //!
 //! The first three are one call, because `grid.rs` keeps them together and should: a tile
 //! pushed past its ceiling by diffusion has to be cut back in the same breath, rather than
@@ -24,7 +25,11 @@
 //! rest length of a spring, and a spring changed after the forces have been worked out is a
 //! spring that does nothing until next tick.
 //!
-//! The physics goes last.
+//! The expense pass goes after the physics rather than before it, and for one reason: a body
+//! that dies leaves a grain of detritus at each of its cells, and the cells it should leave
+//! them at are where the physics has just put them rather than where they were a tick ago.
+//! Ageing goes just before it, so that an organism is judged on the age it has this moment
+//! reached rather than the one it started the tick with.
 //!
 //! # The books are checked here rather than by the things that move the energy
 //!
@@ -60,10 +65,10 @@
 //! about 7 MB, and 252,000 springs at about 6 MB**. The dense copies the tick hands to the
 //! physics are the same two arenas again, plus two indices per cell - one to put the crowd
 //! back where it came from and one saying whose cell it is - so another 17 MB; the physics
-//! builds its own working arrays at 15 MB more and the behaviour pass at 11 MB more than that;
-//! the four thousand organisms are a third of a megabyte and the resource field is under half
-//! of one. A default world is therefore around **57 MB**, against CLAUDE.md's resident target
-//! of 2 GB.
+//! builds its own working arrays at 15 MB more and the behaviour pass at 16 MB more than that;
+//! the drift of dead biomass is a grain per cell at 4 MB; the four thousand organisms are a
+//! third of a megabyte and the resource field is under half of one. A default world is
+//! therefore around **66 MB**, against CLAUDE.md's resident target of 2 GB.
 //!
 //! The cell and spring arenas are built at their full *length* rather than merely reserved,
 //! because an organism is written into a slot and a slot has to be there to be written into.
@@ -108,23 +113,17 @@
 //!
 //! # What is deliberately not here
 //!
-//! **Dying, and being born.** Organisms now eat and pay for moving - `behaviour.rs` is the
-//! whole of that - but nothing charges upkeep, nothing dies, nothing rots and nothing
-//! reproduces. Those are Phase 4's Groups B and C, and the order is deliberate: building the
-//! costs before the income would mean every intermediate state of the project is a world where
-//! everything starves, and no test in between could tell a balance problem from a missing
-//! feature.
-//!
-//! **Detritus.** `behaviour.rs` defines what a grain of it is and a devorocyte can eat one,
-//! but nothing here ever makes one, so the tick hands the behaviour pass an empty drift. Group
-//! B is where a death produces detritus and where the arena that holds it gets sized.
+//! **Being born.** Organisms eat, pay for themselves, grow old, die and rot - Groups A and B
+//! are the whole of that - but nothing reproduces. Nothing in this module mints a genome from
+//! another, so the only organisms in a world are the ones [`World::seed`] was asked for, and a
+//! population can only fall. Group C is what turns a freed slot back into a body.
 //!
 //! **A runner.** Nothing here decides when a run ends. SPEC section 3's `max_wall_clock_hours`
 //! is a wall-clock bound, and a wall clock is exactly what a deterministic simulation must
 //! not read - `clippy.toml` refuses `Instant` and `SystemTime` in this crate outright, so
 //! **the world cannot time itself**, by design. Whatever ends a run does it from outside, by
 //! counting the ticks this module has taken.
-
+//!
 use crate::behaviour::{Behaviour, Detritus, Living};
 use crate::cell::{Cell, CellKind, Vec2};
 use crate::config::Config;
@@ -132,6 +131,7 @@ use crate::development::develop;
 use crate::genome::Genome;
 use crate::grid::Grid;
 use crate::ledger::Ledger;
+use crate::metabolism::{Metabolism, Mortal};
 use crate::organism::{Organism, cell_slot, cells_per_slot, spring_slot, springs_per_slot};
 use crate::physics::{Physics, Spring, cell_capacity, wrapped};
 use crate::rng::WorldRng;
@@ -194,6 +194,9 @@ pub struct World {
     /// What the cells do for themselves: eat, sense, and work their muscles.
     behaviour: Behaviour,
 
+    /// What being alive costs them, and what becomes of them when they stop paying it.
+    metabolism: Metabolism,
+
     /// Every cell the world could ever hold, arranged in slots of `max_cells_per_organism`.
     ///
     /// Full length from the moment the world is built rather than filled as organisms
@@ -209,6 +212,24 @@ pub struct World {
 
     /// Who is in each slot, and nothing at all in the slots that are free.
     organisms: Vec<Option<Organism>>,
+
+    /// The dead biomass on its way down: SPEC section 10's marine snow.
+    ///
+    /// Unlike the cells and the springs this one is a list rather than a set of slots, because
+    /// a grain has no identity worth preserving - nothing points at one, so nothing breaks
+    /// when they are shuffled up. What it shares with them is the thing that matters: it is
+    /// built once, at the largest size the configuration could ever need, and **nothing in
+    /// here can grow it**. `metabolism.rs` refuses to lay a grain down rather than push onto
+    /// a full vector, exactly as a birth is refused at the population cap.
+    ///
+    /// The size is one grain for every cell the world can hold at once - at SPEC section 3's
+    /// defaults, 256,000 grains at sixteen bytes, so **4 MB**. That is the whole world dead
+    /// simultaneously, every cell of it leaving a grain, which is the largest corpse the
+    /// simulation can produce from a single tick. It can be exceeded, because grains outlive
+    /// the tick that made them by around a thousand, so a world dying and being reborn faster
+    /// than the drift rots would eventually meet the cap - and meet it by losing a corpse
+    /// rather than by allocating.
+    drift: Vec<Detritus>,
 
     /// The slots nobody is in, most recently freed at the end.
     ///
@@ -298,6 +319,7 @@ impl World {
             ledger,
             physics: Physics::new(config),
             behaviour: Behaviour::new(config),
+            metabolism: Metabolism::new(config),
             cells: vec![Cell::new(CellKind::Photocyte, Vec2::ZERO); capacity],
             // A spring joining a cell to itself, which is what an unused slot holds and what
             // nothing ever looks at. It is never handed to the physics: only the springs an
@@ -312,6 +334,7 @@ impl World {
                 adhesions
             ],
             organisms: vec![None; slots],
+            drift: Vec::with_capacity(capacity),
             // Reversed, so that popping the last hands out slot 0 first.
             free: (0..slots).rev().collect(),
             next_serial: 0,
@@ -352,17 +375,13 @@ impl World {
 
         self.gather();
 
-        // Nothing in this phase makes detritus, so the behaviour pass is handed an empty
-        // drift. Group B is what fills it, and the arena that holds it is sized there rather
-        // than guessed at here.
-        let mut drift: [Detritus; 0] = [];
         self.behaviour.run(
             Living {
                 cells: &mut self.crowd,
                 springs: &mut self.bonds,
                 owner: &self.owner,
                 organisms: &mut self.organisms,
-                detritus: &mut drift,
+                detritus: &mut self.drift,
             },
             &mut self.grid,
             &mut self.ledger,
@@ -372,9 +391,25 @@ impl World {
         self.physics.step(&mut self.crowd, &self.bonds);
         self.scatter();
 
+        // Ageing comes before the expense pass rather than after it, so that an organism is
+        // judged on the age it has just reached rather than on the one it had at the start of
+        // the tick. It has to be after `scatter`, too: a corpse leaves a grain at each of its
+        // cells, and the cells it leaves them at should be where the physics has just put
+        // them rather than where they were a tick ago.
         for organism in self.organisms.iter_mut().flatten() {
             organism.grow_older();
         }
+
+        self.metabolism.run(
+            Mortal {
+                cells: &self.cells,
+                organisms: &mut self.organisms,
+                free: &mut self.free,
+                drift: &mut self.drift,
+            },
+            &mut self.grid,
+            &mut self.ledger,
+        );
 
         self.ticks += 1;
 
@@ -749,21 +784,34 @@ mod tests {
     /// knows about are being computed while the energy is being counted: the springs down
     /// each chain, and the collisions between the two bodies.
     ///
-    /// They are seeded asking for **no energy**, and that is not a shortcut around the
-    /// ledger. A world starts dark and fills over some hundreds of ticks, so an organism
-    /// seeded on tick zero could not be given anything anyway - and these tests are about the
-    /// field and the physics rather than about what an organism holds. `D3` and `D4` are
-    /// where the energy is the point, and both of them let the light fall first.
-    fn place_two_bodies(world: &mut World) {
+    /// # They have to be given something to live on, which is new in Group B
+    ///
+    /// Before upkeep existed these two were seeded asking for **no energy**, because a world
+    /// starts dark and there was nothing for a body to do with any. There is now: every cell
+    /// pays for itself every tick, so a body seeded holding nothing is a body that dies at the
+    /// end of its first tick and a test that ticks a thousand times is a test ticking an empty
+    /// world. Each caller therefore lets the light fall first and says what the two are to
+    /// hold.
+    fn place_two_bodies(world: &mut World, energy: f64) {
         let limits = world.config().limits.clone();
         let (width, height) = (world.config().world.width, world.config().world.height);
         let at = Vec2::new(width * 0.25, height * 0.5);
 
         for offset in [Vec2::ZERO, Vec2::new(3.0, 1.5)] {
             world
-                .seed(a_chain(3, &limits), at + offset, 0.0)
+                .seed(a_chain(3, &limits), at + offset, energy)
                 .expect("these tests configure a world with room for two organisms");
         }
+    }
+
+    /// What a quarter of the tile at `at` is holding, which is an amount a body standing there
+    /// can certainly be seeded with.
+    ///
+    /// A body spans one tile or two, and `World::seed` draws on all of the tiles beneath it, so
+    /// a quarter of the first one is affordable twice over - which is what the two bodies
+    /// [`place_two_bodies`] puts down need between them.
+    fn a_quarter_of_the_tile(world: &World, at: Vec2) -> f64 {
+        f64::from(world.grid().tiles()[world.grid().tile_at(at)]) * 0.25
     }
 
     /// A genome that grows a straight chain of `segments` cells, each sprung to the one
@@ -802,6 +850,243 @@ mod tests {
             .collect();
 
         Genome::new(genes, limits)
+    }
+
+    /// A genome that grows a single cell of one kind, and nothing else.
+    ///
+    /// Development always begins with one photocyte - SPEC section 7's seed cell - so the only
+    /// way to a body made of anything else is a gene that differentiates it in place. One
+    /// gene, firing on step zero only, which leaves a body of exactly one cell of the kind
+    /// asked for.
+    ///
+    /// It is what lets a test choose how long a body lives: `metabolism.rs` derives a maximum
+    /// age from what a body costs to run, so a myocyte lives 571 ticks and a sclerocyte four
+    /// thousand.
+    fn a_single_cell(kind: CellKind, limits: &LimitsConfig) -> Genome {
+        Genome::new(
+            vec![Gene {
+                trigger_state: State::ZERO,
+                min_step: 0,
+                max_step: 0,
+                action: Action::Differentiate,
+                angle: 0.0,
+                adhere: false,
+                child_state: State::ZERO,
+                child_kind: CellKind::Photocyte,
+                rest_length: 0.0,
+                stiffness: 0.0,
+                new_kind: kind,
+                new_state: State::ZERO,
+                osc_freq: 0.0,
+                osc_phase: 0.0,
+                sensor_gain: 0.0,
+                sensor_target: SensorTarget::Light,
+            }],
+            limits,
+        )
+    }
+
+    /// ⭐⭐ **B6.** A slot a death frees is used again, and the order slots come back in is
+    /// fixed - because it decides the last bit of the physics and nothing announces it if it
+    /// changes.
+    ///
+    /// `docs/PHASE3.md` flagged this as the nasty one of Group B, and the reason is worth
+    /// setting out in full because it is not obvious and it is not detectable.
+    ///
+    /// The free list is a stack. A death pushes a slot onto it and a birth pops one off, so
+    /// **the order deaths are reaped in decides which slot the next organism is born into**.
+    /// A slot decides which stretch of the cell arena a body occupies; the arena's order
+    /// decides the order `World::gather` packs the crowd in; the crowd's order decides the
+    /// order `physics.rs` visits pairs of touching cells and therefore the order it *adds up*
+    /// the forces on each of them. Floating-point addition is not associative, so a different
+    /// order is a different answer in the last bit. It is a very small difference and it
+    /// compounds: two runs of one seed drift apart, a recording stops replaying, and there is
+    /// nothing in any log to say why.
+    ///
+    /// Reaping in slot order costs nothing and closes the whole of that off. Reaping in
+    /// whatever order a parallel pass finished in - which is the natural thing to write the
+    /// day the population is spread across the machine's cores - opens it.
+    ///
+    /// # This test is built so that a permuted reap fails it, rather than so that it passes
+    ///
+    /// A test that killed one organism and watched its slot come back would pass against any
+    /// order whatever, because one thing has only one order. So **three** organisms die on the
+    /// same tick, out of four, and what is asserted is where the next three births land.
+    ///
+    /// Slots 0, 1 and 3 die together. Swept in index order they are pushed onto the free list
+    /// as `[0, 1, 3]`, and a stack hands back what went on last - so the next three bodies
+    /// take slots **3, then 1, then 0**. Swept backwards they would go on as `[3, 1, 0]` and
+    /// the same three bodies would take 0, then 1, then 3. Any of the six orders the three
+    /// deaths could be reaped in gives a different answer, and the three bodies are
+    /// deliberately different sizes so that the arena says plainly which is which.
+    ///
+    /// The last assertions are what make it a claim about the *physics* rather than about
+    /// bookkeeping: the arena indices each body actually occupies, which is the thing
+    /// `World::gather` reads and the thing whose order the argument above is about.
+    ///
+    /// # It was checked by breaking it
+    ///
+    /// The sweep in `metabolism.rs` was reversed and the whole suite run. **One test failed:
+    /// this one.** That is the finding rather than a footnote - a hundred and fifteen other
+    /// tests, including every conservation claim, every determinism claim and a hundred and
+    /// twenty thousand ticks of a world with bodies living and dying in it, all went green
+    /// against a reaping order that would silently stop a run matching its own recording.
+    #[test]
+    fn a_freed_slot_is_reusable_and_reaping_is_deterministic() {
+        let mut world = World::new(&config(|raw| {
+            raw.world.width = 256.0;
+            raw.world.height = 144.0;
+            raw.world.grid_cols = 32;
+            raw.world.grid_rows = 18;
+            // A deep enough larder that a single tile can pay for a body outright, and light
+            // fast enough to fill it in a few hundred ticks rather than a few thousand.
+            raw.light.cap = 40.0;
+            raw.light.influx = 0.2;
+            raw.limits.max_organisms = 4;
+            raw.limits.max_cells_per_organism = 4;
+        }));
+        let limits = world.config().limits.clone();
+
+        for _ in 0..300 {
+            world.tick();
+        }
+
+        // Three bodies of muscle, which `metabolism.rs` allows 571 ticks, and one of armour,
+        // which it allows four thousand. All four are seeded on the same tick and holding far
+        // more than they can spend, so what takes the three is age and they go together.
+        for (along, kind) in [
+            (30.0f32, CellKind::Myocyte),
+            (90.0, CellKind::Myocyte),
+            (150.0, CellKind::Sclerocyte),
+            (210.0, CellKind::Myocyte),
+        ] {
+            world
+                .seed(a_single_cell(kind, &limits), Vec2::new(along, 40.0), 12.0)
+                .expect("a lit world holds twelve units under a single cell");
+        }
+
+        assert!(
+            world.free.is_empty(),
+            "the world is not full, so the slots the deaths free cannot be told apart from \
+             slots that were never taken"
+        );
+        assert_eq!(
+            world.seed(
+                a_single_cell(CellKind::Myocyte, &limits),
+                Vec2::new(30.0, 90.0),
+                1.0
+            ),
+            Err(Refused::WorldIsFull),
+            "a full world accepted a fifth organism"
+        );
+
+        // What the world costs to hold, before anything dies in it. Nothing here may grow.
+        let capacities = [
+            world.cells.capacity(),
+            world.springs.capacity(),
+            world.organisms.capacity(),
+            world.free.capacity(),
+            world.drift.capacity(),
+        ];
+        let biomass_before = world.ledger().biomass();
+        let dissipated_before = world.ledger().dissipated();
+
+        // Long enough for the muscle to reach its limit and not for the armour to reach its.
+        for _ in 0..600 {
+            world.tick();
+        }
+
+        assert_eq!(
+            world.organisms().iter().flatten().count(),
+            1,
+            "the three bodies of muscle were allowed 571 ticks apiece and the world still \
+             holds {} organisms",
+            world.organisms().iter().flatten().count()
+        );
+        assert!(
+            world.organisms()[2].is_some(),
+            "the body of armour, which is allowed four thousand ticks, died with the muscle"
+        );
+
+        // The books moved, which is the half a conservation check cannot see. Upkeep left the
+        // living for good, and what the dead were still holding is lying in the water.
+        assert!(
+            world.ledger().dissipated() > dissipated_before,
+            "nine hundred ticks of four bodies paying upkeep dissipated nothing at all, so \
+             the tick is not charging anybody"
+        );
+        assert!(
+            world.ledger().biomass() < biomass_before,
+            "the living population is holding more than it was after three of it died"
+        );
+        assert!(
+            world.ledger().detritus() > 0.0 && !world.drift.is_empty(),
+            "three well-fed bodies died and left {} grains holding {} between them",
+            world.drift.len(),
+            world.ledger().detritus()
+        );
+
+        // ⭐ The claim. Three slots came back in index order, so a stack hands them out
+        // backwards, so the next three bodies take 3, then 1, then 0.
+        let mut took = Vec::new();
+        for segments in [2u8, 3, 4] {
+            took.push(
+                world
+                    .seed(a_chain(segments, &limits), Vec2::new(120.0, 100.0), 1.0)
+                    .expect("three deaths left three slots free"),
+            );
+        }
+
+        assert_eq!(
+            took,
+            vec![3, 1, 0],
+            "slots 0, 1 and 3 fell vacant on the same tick and the next three births took \
+             {took:?}. Swept backwards they would have taken [0, 1, 3]; any other order the \
+             three deaths could have been reaped in gives another answer again - and the \
+             answer decides where in the cell arena each body sits, which decides the order \
+             the physics adds up its forces"
+        );
+        assert_eq!(
+            world.seed(a_chain(2, &limits), Vec2::new(120.0, 100.0), 1.0),
+            Err(Refused::WorldIsFull),
+            "the world is full again and accepted a fifth organism"
+        );
+
+        // Where those three bodies actually landed in the arena, which is what `gather` reads.
+        assert_eq!(
+            world.cells_of(3).len(),
+            2,
+            "the two-celled body is not in slot 3"
+        );
+        assert_eq!(
+            world.cells_of(1).len(),
+            3,
+            "the three-celled body is not in slot 1"
+        );
+        assert_eq!(
+            world.cells_of(0).len(),
+            4,
+            "the four-celled body is not in slot 0"
+        );
+        assert_eq!(
+            world.cells_of(2).len(),
+            1,
+            "the body that survived has been written over"
+        );
+
+        // And none of it allocated. A death that grew an arena would be a run whose memory is
+        // decided by how many things happen to die in it.
+        assert_eq!(
+            capacities,
+            [
+                world.cells.capacity(),
+                world.springs.capacity(),
+                world.organisms.capacity(),
+                world.free.capacity(),
+                world.drift.capacity(),
+            ],
+            "three deaths and three births grew one of the world's arenas"
+        );
     }
 
     /// ⭐ An organism's cells live in one fixed stretch of the arena, decided by its slot and
@@ -843,11 +1128,18 @@ mod tests {
         }));
         let limits = world.config().limits.clone();
 
+        // The light falls first, and the bodies are given something to live on. From Group B
+        // a body holding nothing dies at the end of its first tick, and the hundred ticks
+        // below are meant to be a hundred ticks of two organisms sitting in their slots.
+        for _ in 0..700 {
+            world.tick();
+        }
+
         let first = world
-            .seed(a_chain(3, &limits), Vec2::new(100.0, 200.0), 0.0)
+            .seed(a_chain(3, &limits), Vec2::new(100.0, 200.0), 3.0)
             .expect("an empty world has room for an organism");
         let second = world
-            .seed(a_chain(5, &limits), Vec2::new(400.0, 200.0), 0.0)
+            .seed(a_chain(5, &limits), Vec2::new(400.0, 200.0), 3.0)
             .expect("a world with one organism in it has room for another");
 
         assert_eq!(first, 0, "the first organism did not take the first slot");
@@ -967,8 +1259,15 @@ mod tests {
         }));
         let limits = world.config().limits.clone();
 
+        // The light falls first, so that the three bodies can be given something to live on:
+        // from Group B a body holding nothing dies at the end of the tick at the bottom of
+        // this test, and there would be nothing left in the world to have refused a birth.
+        for _ in 0..700 {
+            world.tick();
+        }
+
         for (slot, along) in [40.0f32, 100.0, 160.0].into_iter().enumerate() {
-            let born = world.seed(a_chain(2, &limits), Vec2::new(along, 72.0), 0.0);
+            let born = world.seed(a_chain(2, &limits), Vec2::new(along, 72.0), 2.0);
             assert_eq!(born, Ok(slot), "the world had room for organism {slot}");
         }
 
@@ -980,6 +1279,7 @@ mod tests {
             world.crowd.capacity(),
             world.bonds.capacity(),
             world.live.capacity(),
+            world.drift.capacity(),
         ];
         let addresses = [
             world.cells.as_ptr().cast::<u8>(),
@@ -1004,6 +1304,7 @@ mod tests {
                 world.crowd.capacity(),
                 world.bonds.capacity(),
                 world.live.capacity(),
+                world.drift.capacity(),
             ],
             "a refused birth grew one of the world's arenas, so the memory this run uses is \
              decided by how many organisms try to be born rather than by the configuration"
@@ -1410,6 +1711,25 @@ mod tests {
              17,312,000 recorded here"
         );
 
+        // And the drift, which is Group B's addition: a grain for every cell the world can
+        // hold, at sixteen bytes apiece.
+        let drift = default_world.drift.capacity() * size_of::<Detritus>();
+        assert_eq!(
+            default_world.drift.capacity(),
+            256_000,
+            "the drift is meant to have room for a grain for every cell in the world, so that \
+             the whole world dying at once has somewhere to go"
+        );
+        assert!(
+            default_world.drift.is_empty(),
+            "a world starts with nothing dead in it"
+        );
+        assert!(
+            (3_500_000..4_500_000).contains(&drift),
+            "the drift of a default world costs {drift} bytes, against the 4,096,000 recorded \
+             here"
+        );
+
         let odd_shape = World::new(&config(|raw| {
             raw.limits.max_organisms = 9;
             raw.limits.max_cells_per_organism = 5;
@@ -1433,19 +1753,31 @@ mod tests {
             raw.world.grid_rows = 18;
             raw.limits.max_organisms = 4;
         }));
-        place_two_bodies(&mut running);
+        for _ in 0..700 {
+            running.tick();
+        }
+        let purse = a_quarter_of_the_tile(
+            &running,
+            Vec2::new(
+                running.config().world.width * 0.25,
+                running.config().world.height * 0.5,
+            ),
+        );
+        place_two_bodies(&mut running, purse);
 
         let addresses = [
             running.cells.as_ptr().cast::<u8>(),
             running.springs.as_ptr().cast::<u8>(),
             running.crowd.as_ptr().cast::<u8>(),
             running.bonds.as_ptr().cast::<u8>(),
+            running.drift.as_ptr().cast::<u8>(),
         ];
         let sizes = [
             running.cells.capacity(),
             running.springs.capacity(),
             running.crowd.capacity(),
             running.bonds.capacity(),
+            running.drift.capacity(),
         ];
 
         for _ in 0..1_000 {
@@ -1459,10 +1791,11 @@ mod tests {
                 running.springs.as_ptr().cast::<u8>(),
                 running.crowd.as_ptr().cast::<u8>(),
                 running.bonds.as_ptr().cast::<u8>(),
+                running.drift.as_ptr().cast::<u8>(),
             ],
             "a thousand ticks moved the cells somewhere else in memory, so something in \
-             here is allocating as it goes - and the two mirrors are the ones to suspect, \
-             because they are emptied and refilled on every single tick"
+             here is allocating as it goes - and the three that are emptied and refilled on \
+             every single tick are the ones to suspect: the two mirrors, and the drift"
         );
         assert_eq!(
             sizes,
@@ -1471,13 +1804,15 @@ mod tests {
                 running.springs.capacity(),
                 running.crowd.capacity(),
                 running.bonds.capacity(),
+                running.drift.capacity(),
             ],
             "a thousand ticks changed how much room the world takes up"
         );
         assert_eq!(
             running.ticks(),
-            1_000,
-            "the world does not know how far through its run it is"
+            1_700,
+            "the world does not know how far through its run it is: seven hundred ticks of \
+             light to fill the field, and a thousand with two bodies standing in it"
         );
     }
 
@@ -1702,30 +2037,52 @@ mod tests {
     /// realised harvests, so anything larger than that means one of them has been written to
     /// without the other, which is precisely the bookkeeping that goes wrong.
     ///
-    /// # ⭐ Group A moved this test's centre of gravity, and the numbers are worth reading
+    /// # ⭐⭐ Group B turned this into a whole life, and the numbers are the phase's headline
     ///
-    /// It was written when a body sat in the water and did nothing. Its organisms now *eat*,
-    /// which makes it the first thing in the project to run a whole tick with income in it -
-    /// and the figures that come out are the best evidence Group A has about whether the
-    /// energy economy will balance in Group D.
+    /// It was written when a body sat in the water and did nothing; Group A gave it income;
+    /// Group B gave it costs and an ending. So this is now the only test in the project that
+    /// runs the whole of SPEC section 10 from one end to the other - a body is seeded, earns,
+    /// pays, ages, dies, falls apart into grains, and those grains sink and rot back into the
+    /// water - and asks whether the books survive it.
     ///
-    /// Eight four-celled photocyte bodies, seeded holding two units apiece, are holding
-    /// **104,497 between them after 120,000 ticks.** That is 0.109 per organism per tick, or
-    /// 0.027 per photocyte, against the 0.004 a photocyte costs to keep - a margin of nearly
-    /// **seven times upkeep**, and these bodies are deliberately seeded on top of one another
-    /// so each is shading the others. An unshaded one does better.
+    /// Measured 31 July 2026, Windows 11 x86-64, eight four-celled photocyte bodies seeded
+    /// holding two units apiece:
     ///
-    /// The field meanwhile is still full: 11,759 against a ceiling of about 11,520 plus what
-    /// is in transit. Thirty-two photocytes are not making a dent in a 2,304-tile world;
-    /// they are living off the flux through the tiles they stand on, which the light refills
-    /// as fast as they draw it down.
+    /// | | |
+    /// | --- | --- |
+    /// | All eight died at tick | **1,963** - old age, together, as their bodies are identical |
+    /// | Held between them at the end | **1,478** - and every unit of it became detritus |
+    /// | Drift empty at tick | **3,619**, so a corpse takes about 1,650 ticks to rot away |
+    /// | Relative error after 120,000 ticks | **5.77e-9**, against a tolerance of 1e-3 |
     ///
-    /// **What that means for Group D:** income is not the problem. Upkeep would have to be
-    /// several times what SPEC section 6's table says before a photosynthetic body could not
-    /// pay for itself, so the risk at the far end of Phase 4 is a *bloom* rather than a
-    /// famine - a world that fills to the population cap and stagnates, which is the failure
-    /// mode CLAUDE.md warns about under "too much light". `influx` and `upkeep_scale` are the
-    /// two levers, and this is the number to tune them against.
+    /// # ⭐⭐ The bloom prediction, re-measured now that upkeep is real
+    ///
+    /// Group A measured a photocyte earning about seven times its own upkeep *while shaded*
+    /// and predicted that Group D's risk is a world that fills and stagnates rather than one
+    /// that starves. That was measured with nothing on the cost side of the ledger at all, so
+    /// it is exactly the kind of number that ought to be checked once the costs exist.
+    ///
+    /// **It stands.** A photocyte here earns **0.0277 a tick against the 0.00408 it costs to
+    /// keep - a margin of 6.75 times upkeep**, and these bodies are deliberately seeded on top
+    /// of one another so each is shading the others. An unshaded one does better. Upkeep would
+    /// have to be nearly seven times what SPEC section 6's table says before a photosynthetic
+    /// body could not pay for itself.
+    ///
+    /// The consequence for Group D is worth setting out in full, because the interesting part
+    /// is not the margin but what it implies about *which* cap binds first. A four-celled body
+    /// costs 0.0163 a tick to run. The default world is offered 36,864 tiles × 0.012 × a mean
+    /// light profile of 0.625, which is **276 units a tick**, so the light alone would support
+    /// somewhere near **17,000 such bodies**. `limits.max_organisms` is **4,000**. The
+    /// population therefore hits the arena four times before it hits the energy budget - which
+    /// means SPEC section 4's carrying capacity, the pressure the whole ecology is supposed to
+    /// grow out of, **never actually applies at the shipped defaults**. The world fills, births
+    /// start failing, and nothing is scarce.
+    ///
+    /// That is CLAUDE.md's "too much light and everything blooms and stagnates", arriving by a
+    /// slightly different route than expected. `upkeep_scale` is the lever with the right
+    /// shape: it is live, and it scales the cost side without touching the light. Four is the
+    /// figure the arithmetic above suggests, and Group D is where it gets tried against a
+    /// running ecology rather than against a calculation.
     ///
     /// # The drift settles, and what settles is not what a reader would expect
     ///
@@ -1755,12 +2112,13 @@ mod tests {
     /// bearing rather than cosmetic - an overnight run of tens of millions of ticks sits at
     /// seven parts in a billion, a hundred and fifty thousand times inside the 1e-3 allowed.
     ///
-    /// Recorded 31 July 2026, Windows 11 x86-64: relative error **1.238e-9** after 120,000
-    /// ticks, against SPEC section 5's tolerance of 1e-3. (Before Group A gave the organisms
-    /// anything to do, the same run finished at 5.88e-9. Harvesting *lowered* the drift, which
-    /// is not a surprise once said out loud: energy an organism is holding sits in a 64-bit
-    /// account, and energy in the field sits in 32-bit tiles being added to and diffused
-    /// every tick.)
+    /// Recorded 31 July 2026, Windows 11 x86-64: relative error **5.77e-9** after 120,000
+    /// ticks, against SPEC section 5's tolerance of 1e-3. (Group A's version of this run
+    /// finished at 1.238e-9, and before Group A gave the organisms anything to do at all it
+    /// was 5.88e-9. The three figures are the same story: energy an organism is holding sits
+    /// in a 64-bit account and energy in the field sits in 32-bit tiles, so a run with more
+    /// of its energy alive drifts less. Group B hands all of it back to the field at the end,
+    /// which is why this one lands where the lifeless run did.)
     ///
     /// # Why this one is marked `ignore` and still runs on every check
     ///
@@ -1819,9 +2177,45 @@ mod tests {
 
         let mut worst = 0.0f64;
         let mut worst_early = 0.0f64;
+        let mut richest = 0.0f64;
+        let mut most_dead = 0.0f64;
+        let mut first_death = 0u64;
+        let mut last_death = 0u64;
+        let mut drift_emptied = 0u64;
+        let mut moved = 0usize;
+        let mut at_a_thousand = 0.0f64;
 
         for tick in 1..=120_000u64 {
             world.tick();
+
+            let living = world.organisms().iter().flatten().count();
+            richest = richest.max(world.ledger().biomass());
+            most_dead = most_dead.max(world.ledger().detritus());
+
+            if tick == 1_000 {
+                at_a_thousand = world.ledger().biomass();
+                // While everything is still alive, and before anything has moved far, count
+                // how many bodies the physics has actually pushed about.
+                moved = (0..population)
+                    .filter(|&slot| {
+                        world
+                            .organisms()
+                            .get(slot)
+                            .and_then(Option::as_ref)
+                            .is_some()
+                            && (world.cells_of(slot)[0].pos - seeded_at[slot]).length() > 1.0
+                    })
+                    .count();
+            }
+            if first_death == 0 && living < population {
+                first_death = tick;
+            }
+            if last_death == 0 && living == 0 {
+                last_death = tick;
+            }
+            if drift_emptied == 0 && last_death > 0 && world.drift.is_empty() {
+                drift_emptied = tick;
+            }
 
             if tick % 100 == 0 {
                 let error = relative_error(&world);
@@ -1838,9 +2232,10 @@ mod tests {
 
         assert!(
             final_error < 1e-8,
-            "with eight bodies in it, the two sides of the invariant finished {final_error} \
-             apart in relative terms, and SPEC section 5's tolerance of 1e-3 is meant to be \
-             covering the rounding in `f32` diffusion rather than an actual leak"
+            "with eight bodies living and dying in it, the two sides of the invariant \
+             finished {final_error} apart in relative terms, and SPEC section 5's tolerance \
+             of 1e-3 is meant to be covering the rounding in `f32` diffusion rather than an \
+             actual leak"
         );
         assert!(
             worst < 1e-8,
@@ -1856,6 +2251,10 @@ mod tests {
         // The world was running rather than sitting still and conserving nothing perfectly.
         assert_eq!(population, 8, "the eight seedings did not all take");
         assert!(
+            (alive - 16.0).abs() < 1e-6,
+            "eight organisms seeded with two units each left {alive} in the biomass account"
+        );
+        assert!(
             ledger.influx_total() > 90_000.0,
             "only {} units of light fell over a hundred and twenty thousand ticks",
             ledger.influx_total()
@@ -1865,59 +2264,83 @@ mod tests {
             "the field is holding {held} and should be full"
         );
         assert!(
-            ledger.dissipated() > 10_000.0,
-            "nothing has left the world through tiles that could not hold it"
-        );
-        assert!(
-            ledger.detritus() < f64::EPSILON,
-            "something has died in a phase that has no death in it"
-        );
-
-        // The organisms are in the books, and the books agree with them.
-        let holding: f64 = world
-            .organisms()
-            .iter()
-            .flatten()
-            .map(Organism::energy)
-            .sum();
-        assert!(
-            (alive - 16.0).abs() < 1e-6,
-            "eight organisms seeded with two units each left {alive} in the biomass account"
-        );
-        assert!(
-            ledger.biomass() > 50_000.0,
-            "the eight bodies are holding {} between them after a hundred and twenty \
-             thousand ticks of harvesting, against the 104,497 recorded here - so either \
-             they have stopped eating or the rate has moved",
-            ledger.biomass()
-        );
-        assert!(
-            (ledger.biomass() - holding).abs() < 1e-9,
-            "the books say {} is alive and the organisms are holding {holding} between them",
-            ledger.biomass()
-        );
-
-        // And the bodies were being pushed about while all that was counted.
-        for slot in 0..population {
-            let organism = world.organisms()[slot]
-                .as_ref()
-                .expect("nothing dies in this phase");
-            assert_eq!(
-                organism.age(),
-                120_000,
-                "the organism in slot {slot} did not age with the world"
-            );
-        }
-        let moved = (0..population)
-            .filter(|&slot| (world.cells_of(slot)[0].pos - seeded_at[slot]).length() > 1.0)
-            .count();
-        assert!(
             moved >= 6,
-            "only {moved} of the {population} bodies have moved a whole world unit from \
-             where they were seeded, and they were deliberately seeded on top of one \
-             another - so either the physics is not being handed the organisms or it is not \
-             being run at all"
+            "only {moved} of the {population} bodies had moved a whole world unit from where \
+             they were seeded after a thousand ticks, and they were deliberately seeded on \
+             top of one another - so either the physics is not being handed the organisms or \
+             it is not being run at all"
         );
+
+        // ⭐ The whole life cycle happened, in order, and the world came back to where it
+        // started. Everything the eight bodies ever earned is now either in the water or gone
+        // as heat, and there is not a fraction of it unaccounted for anywhere.
+        assert!(
+            (1_900..2_100).contains(&first_death),
+            "the first body died at tick {first_death}, against the 1,963 ticks a four-celled \
+             photocyte body with a three-gene genome is allowed - so either the lifespan has \
+             moved or something starved"
+        );
+        assert!(
+            last_death > 0 && last_death < 3_000,
+            "the last of the eight was still alive at tick {last_death}, and none of them can \
+             outlive its allowance by much"
+        );
+        assert!(
+            drift_emptied > last_death && drift_emptied < 20_000,
+            "the last body died at tick {last_death} and the drift was still holding grains \
+             at {drift_emptied}"
+        );
+        assert!(
+            world.drift.is_empty() && ledger.detritus() < 1e-9,
+            "{} grains are still in the water holding {} between them",
+            world.drift.len(),
+            ledger.detritus()
+        );
+        assert!(
+            ledger.biomass().abs() < 1e-9,
+            "nothing is alive in this world and the books say {} is",
+            ledger.biomass()
+        );
+        assert!(
+            most_dead > 100.0,
+            "the eight corpses never held more than {most_dead} between them, so either they \
+             starved rather than growing old or a corpse is not carrying what its body held"
+        );
+
+        // ⭐⭐ **The bloom question, re-measured with upkeep switched on.** Group A predicted
+        // the world would fill and stagnate on the strength of a photocyte earning about seven
+        // times its own upkeep. This is the same measurement with the cost side of the ledger
+        // actually running, and the answer is in the doc comment above.
+        //
+        // Net accumulation over a thousand ticks, per photocyte, plus what that photocyte paid
+        // over the same thousand ticks, is what it earned.
+        let cells = f64::from(population_cells());
+        let net = (at_a_thousand - alive) / (1_000.0 * cells);
+        let upkeep = f64::from(0.004f32) + 3.0 * f64::from(0.0001f32) / 4.0;
+        let margin = (net + upkeep) / upkeep;
+
+        assert!(
+            (5.0..9.0).contains(&margin),
+            "a photocyte in a shaded body earned {} a tick against the {upkeep} it costs to \
+             keep - a margin of {margin} times upkeep, against the 6.7 recorded here. Group \
+             D's whole balance question is this number",
+            net + upkeep
+        );
+        assert!(
+            richest > 1_000.0,
+            "the eight bodies never held more than {richest} between them, and eight bodies \
+             earning seven times their upkeep for two thousand ticks should reach well past a \
+             thousand"
+        );
+    }
+
+    /// How many photocytes the eight bodies of
+    /// [`energy_is_still_conserved_with_organisms_present`] have between them.
+    ///
+    /// Written as a function rather than a literal so the sum it feeds is visibly eight bodies
+    /// of four cells rather than a number somebody wrote down.
+    fn population_cells() -> u32 {
+        8 * 4
     }
 
     /// Two runs of the same seed are the same run, down to the last bit, over a world that
@@ -1954,8 +2377,11 @@ mod tests {
     ///
     /// What the seed reaches today is the blotchiness of the light - the ceilings the tiles
     /// fill to - and it reaches all of it: measured, **every one of the 1,536 tiles differs**
-    /// between seed 42 and seed 43, and the only 42 numbers that match are the six living
-    /// cells'.
+    /// between seed 42 and seed 43. Since Group A it reaches a little further than that, by a
+    /// route worth noticing: the two bodies are standing on tiles whose ceilings differ, so
+    /// they harvest different amounts and the `energy_flow` written on their cells differs
+    /// too. Their positions still do not, because nothing in the physics or in development
+    /// reads a random number.
     #[test]
     fn a_run_is_still_reproducible() {
         let run = |seed: u64| -> World {
@@ -1965,9 +2391,23 @@ mod tests {
                 raw.world.grid_rows = 32;
                 raw.limits.max_organisms = 4;
             }));
-            place_two_bodies(&mut world);
 
-            for _ in 0..2_000 {
+            // The light falls, then two bodies are put in it holding enough to outlast the
+            // run. A body seeded holding nothing dies on its first tick from Group B, and a
+            // determinism test over an empty world is a determinism test about the water.
+            for _ in 0..700 {
+                world.tick();
+            }
+            let purse = a_quarter_of_the_tile(
+                &world,
+                Vec2::new(
+                    world.config().world.width * 0.25,
+                    world.config().world.height * 0.5,
+                ),
+            );
+            place_two_bodies(&mut world, purse);
+
+            for _ in 0..1_500 {
                 world.tick();
             }
 
@@ -2068,6 +2508,17 @@ mod tests {
         /// The limits are left small and fixed. They decide how large the arenas are and
         /// nothing whatever about energy, so a property test that varied them would spend
         /// its time in the allocator instead of in the arithmetic this is about.
+        ///
+        /// # Group B widened what this is asking
+        ///
+        /// The two settings that decide what living *costs* are generated now as well, and
+        /// the two bodies are given a purse out of the water before the run rather than being
+        /// seeded holding nothing. Between them that means each case lands somewhere different
+        /// on the one question Group B introduced: in a bright world the two bodies live out
+        /// the whole five hundred ticks, and in a dim or expensive one they starve within a
+        /// few, die, leave grains, and those grains sink and rot back into the field. **Both
+        /// halves have to conserve energy**, and the second half is four movements the ledger
+        /// had never been asked about across sixty-four differently-shaped worlds.
         #[test]
         fn energy_is_conserved_for_any_config(
             seed: u64,
@@ -2080,6 +2531,8 @@ mod tests {
             gradient in 0.0f64..=1.0,
             patchiness in 0.0f64..=1.0,
             diffusion in 0.0f64..=0.25,
+            upkeep_scale in 0.05f64..4.0,
+            gene_cost in 0.0f64..0.01,
         ) {
             let mut world = World::new(&config(|raw| {
                 raw.world.seed = seed;
@@ -2092,11 +2545,23 @@ mod tests {
                 raw.light.gradient = gradient;
                 raw.light.patchiness = patchiness;
                 raw.light.diffusion = diffusion;
+                raw.metabolism.upkeep_scale = upkeep_scale;
+                raw.metabolism.gene_cost = gene_cost;
                 raw.limits.max_organisms = 2;
                 raw.limits.max_cells_per_organism = 4;
             }));
 
-            place_two_bodies(&mut world);
+            // The light falls first, so that there is something in the water for the two
+            // bodies to be seeded out of. A quarter of one tile apiece: affordable in any
+            // world this generates, and enough to keep them alive in a bright one.
+            for _ in 0..200 {
+                world.tick();
+            }
+            let purse = a_quarter_of_the_tile(
+                &world,
+                Vec2::new(world.config().world.width * 0.25, world.config().world.height * 0.5),
+            );
+            place_two_bodies(&mut world, purse);
 
             for tick in 1..=500u32 {
                 world.tick();
