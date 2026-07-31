@@ -242,6 +242,9 @@ impl Reproduction {
 
             // Both draws come out of the parent's own sequence, which is what makes a lineage
             // replay identically whatever else is happening in the world.
+            // Read before the parent's slot is borrowed again below. SPEC section 12 wants hue
+            // from lineage, and a lineage is this number recorded on the child.
+            let lineage = parent.serial();
             let mut stream = parent.stream(rng);
             let genome = mutate(parent.genome(), &self.mutation, &self.limits, &mut stream);
             let grown = develop(&genome, &self.limits);
@@ -255,6 +258,7 @@ impl Reproduction {
                 genome,
                 inheritance,
                 *next_serial,
+                Some(lineage),
                 grown.cells.len(),
                 grown.springs.len(),
             ));

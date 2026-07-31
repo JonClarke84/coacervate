@@ -31,12 +31,13 @@
               See clippy.toml, and see run.rs for why this cannot change what a run produces."
 )]
 
+mod args;
 mod census;
 mod founding;
 mod run;
 
+use args::{Arguments, Settings};
 use census::Census;
-use coacervate_sim::config::{Config, ConfigError, RawConfig};
 use coacervate_sim::world::World;
 use run::{Interrupt, Run, Stop};
 use std::process::ExitCode;
@@ -45,44 +46,8 @@ use std::process::ExitCode;
 ///
 /// Read at compile time rather than looked for on disk, so the program has settings to
 /// run on wherever it is copied to and there is no such thing as a missing configuration.
-/// Choosing a different file is Phase 4's business, along with the runner that would use
-/// it.
+/// `--config` chooses a different document; this is what is used when nothing does.
 const DEFAULT_CONFIG: &str = include_str!("../../../config/default.toml");
-
-/// Why a configuration document could not be turned into settings for a run.
-///
-/// Two quite different failures, kept apart because they happen at different points and
-/// say different things to the person reading them. One is "this is not a configuration
-/// document"; the other is "this is a configuration document, and it asks for a world
-/// that cannot exist".
-#[derive(Debug)]
-enum LoadError {
-    /// The text could not be read as a configuration document at all: broken syntax, a
-    /// key nobody recognises, a setting left out, a number where a word should be.
-    Unreadable(toml::de::Error),
-
-    /// The document was read, and the simulation refused what it asked for.
-    Refused(ConfigError),
-}
-
-impl std::fmt::Display for LoadError {
-    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unreadable(problem) => write!(out, "{problem}"),
-            Self::Refused(problem) => write!(out, "{problem}"),
-        }
-    }
-}
-
-/// Read a configuration document and check it, in that order.
-///
-/// The whole journey from text to settings a run could be started from, and the only
-/// route there is: reading produces the document as written, checking produces the
-/// settings, and there is no way to obtain the second without the first.
-fn load(document: &str) -> Result<Config, LoadError> {
-    let raw: RawConfig = toml::from_str(document).map_err(LoadError::Unreadable)?;
-    raw.validate().map_err(LoadError::Refused)
-}
 
 /// How many bodies the world is founded with.
 ///
@@ -102,15 +67,45 @@ const FOUNDERS: u32 = 8;
 const REPORT_EVERY: u64 = 5_000;
 
 fn main() -> ExitCode {
-    let config = match load(DEFAULT_CONFIG) {
-        Ok(config) => config,
+    // Everything the command line can do is decided before a tick is taken, so that a
+    // mistyped flag costs nothing and `--dump-frame` does not first spend nine thousand
+    // ticks on a dawn.
+    let arguments = match Arguments::parse(std::env::args().skip(1)) {
+        Ok(arguments) => arguments,
         // To the error stream and with a failing exit code, so that a run started by a
         // script at two in the morning stops there rather than appearing to have worked.
+        Err(problem) => {
+            eprintln!("{problem}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if arguments.help {
+        println!("{}", args::HELP);
+        return ExitCode::SUCCESS;
+    }
+
+    // ⚠️ Announced as unfinished rather than quietly ignored. A flag that is accepted and does
+    // nothing is worse than one that is refused: `--dump-frame` exists precisely so that visual
+    // work can be checked, and a person who thinks they have a PNG and has not is checking
+    // nothing. Group B of Phase 5 is what fills this in.
+    if let Some(path) = &arguments.dump_frame {
+        eprintln!(
+            "--dump-frame cannot render {} yet: there is no renderer in this build. Run without \
+             it for a headless run.",
+            path.display()
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let settings = match Settings::load(&arguments, DEFAULT_CONFIG) {
+        Ok(settings) => settings,
         Err(problem) => {
             eprintln!("This configuration cannot be used: {problem}");
             return ExitCode::FAILURE;
         }
     };
+    let config = settings.config().clone();
 
     // Plain ASCII from here down, and deliberately. A Windows console is not on a Unicode
     // code page by default, so an em dash or a plus-or-minus sign arrives as mojibake in the
@@ -123,6 +118,19 @@ fn main() -> ExitCode {
         config.world.grid_cols,
         config.world.grid_rows,
     );
+
+    // Where the settings came from and how much of a document there was, so that `--config`
+    // can be seen to have worked rather than assumed to have. The overrides are said out loud
+    // for a sharper reason: the kept document is the file as written, so a run started with
+    // `--seed` is a run whose own configuration document disagrees with it. See `args.rs`.
+    println!(
+        "Settings: {} ({} bytes).",
+        settings.source(),
+        settings.document().len()
+    );
+    if arguments.seed.is_some() || arguments.ticks.is_some() {
+        println!("The command line overrode part of them; the document above is unchanged.");
+    }
 
     let mut world = World::new(&config);
     let dawn = founding::genesis(&mut world, FOUNDERS);
@@ -255,8 +263,19 @@ fn ending(why: Stop) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_CONFIG, load};
-    use coacervate_sim::config::RawConfig;
+    use super::DEFAULT_CONFIG;
+    use crate::args::{Arguments, Settings, Source};
+    use coacervate_sim::config::{Config, RawConfig};
+
+    /// Read a configuration document and check it, with nothing overridden.
+    ///
+    /// The journey from text to settings a run could be started from, which `args.rs` owns
+    /// because the command line can change what comes out of it. These tests are about the
+    /// *document* rather than the command line, so they take the plainest route through.
+    fn load(document: &str) -> Result<Config, crate::args::SettingsError> {
+        Settings::read(document.to_owned(), Source::BuiltIn, &Arguments::default())
+            .map(|settings| settings.config().clone())
+    }
 
     /// The `[world]` table reads back the numbers written in it: seed 42, a 2048 × 1152
     /// world sampled by a 256 × 144 resource grid, and a thousand years to the tick.

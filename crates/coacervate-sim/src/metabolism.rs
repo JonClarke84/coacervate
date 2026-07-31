@@ -642,6 +642,7 @@ mod tests {
                 Genome::new(vec![blank; genes], &self.config.limits),
                 energy,
                 u64::try_from(slot).expect("a slot number fits in a serial"),
+                None,
                 cells,
                 0,
             ));
@@ -683,6 +684,7 @@ mod tests {
                 Genome::new(Vec::new(), &self.config.limits),
                 taken,
                 u64::try_from(slot).expect("a slot number fits in a serial"),
+                None,
                 body.len(),
                 0,
             ));

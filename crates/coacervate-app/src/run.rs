@@ -175,20 +175,62 @@ impl Run {
         }
     }
 
+    /// Take one tick, or say why the run is over instead of taking one.
+    ///
+    /// **This is the whole of the loop, and [`Run::go`] is a `while let` around it.** Nothing
+    /// else in this file decides when a tick happens.
+    ///
+    /// # Why the loop was turned inside out
+    ///
+    /// Phase 5 brings a window, and a window brings an event loop of somebody else's that
+    /// insists on owning the outermost loop of the program - it wakes on a keystroke, on a
+    /// resize, on the compositor asking for a frame, and it calls back into the application
+    /// rather than being called by it. `go` cannot be used from inside one: it does not return
+    /// until the run is over, so a windowed build calling it would show a frozen window for
+    /// twelve hours and then exit.
+    ///
+    /// The obvious way out is to write the loop a second time inside the window's callback,
+    /// which is the arrangement this project keeps refusing: **two loops over one simulation is
+    /// two places for a bound to be examined**, and the day one of them gains a check the other
+    /// does not is the day the windowed build and the headless build stop being the same
+    /// program. Neither would report it, because nothing compares them.
+    ///
+    /// So there is one loop and it is here. A window's event loop calls this once per frame's
+    /// worth of ticks and stops when it answers; `go` calls it until it answers. Everything
+    /// either of them can say about bounds, pacing and graceful shutdown is said in this one
+    /// function.
+    ///
+    /// # Nothing is taken when the answer is `Some`
+    ///
+    /// The bounds are examined first, so a run that is over does not take a further tick on its
+    /// way out. That is the graceful-shutdown promise stated as a shape rather than as care:
+    /// the last thing a stopping run did was finish a tick, books checked and all.
+    pub fn step(&mut self) -> Option<Stop> {
+        if let Some(why) = self.over() {
+            return Some(why);
+        }
+
+        self.wait();
+        self.world.tick();
+
+        None
+    }
+
     /// Tick until a bound arrives, showing `watch` the world after every tick.
     ///
     /// `watch` is how anything outside sees a run happen - it is what prints the progress line
     /// in `main` and what takes the readings in the tests below. It is handed the world after
     /// the tick rather than before, so what it sees is a world that has finished a tick, which
     /// is the same state a stop leaves behind.
+    ///
+    /// This is [`Run::step`] in a loop and nothing more. See that method for why the loop is
+    /// written the other way up.
     pub fn go(&mut self, mut watch: impl FnMut(&World)) -> Stop {
         loop {
-            if let Some(why) = self.over() {
+            if let Some(why) = self.step() {
                 return why;
             }
 
-            self.wait();
-            self.world.tick();
             watch(&self.world);
         }
     }
@@ -505,6 +547,250 @@ mod tests {
         assert!(
             relative_error(run.world()) < 1e-6,
             "the run stopped somewhere inside a tick"
+        );
+    }
+
+    /// ⭐ **A1.** A run can be taken one tick at a time, and a run taken that way is the same
+    /// run.
+    ///
+    /// Phase 5 brings a window, and a window brings an event loop that insists on owning the
+    /// program's outermost loop. [`Run::go`] owns one already. Two loops over one simulation is
+    /// the arrangement where a bound gets checked in one of them and not the other, and where
+    /// the windowed build and the headless build quietly stop being the same program - so
+    /// there is one loop, [`Run::step`] is the body of it, and `go` is written on top.
+    ///
+    /// # What is actually asserted, and why the second half is the load-bearing one
+    ///
+    /// That a stepped run stops for the same reason on the same tick is the easy half, and it
+    /// would pass against a `step` that had been written separately and happened to agree
+    /// about the bounds. So the two worlds are compared **tile for tile and account for
+    /// account**, exactly as `max_ticks_per_second_actually_slows_a_run` compares its pair: if
+    /// the windowed build's world differed from the headless one by a single rounding, every
+    /// frame Phase 5 dumps would be of a run that no recording could reproduce.
+    ///
+    /// # And that a step is one tick
+    ///
+    /// Counted, rather than assumed from the tick count at the end. A `step` that took two
+    /// ticks, or that took none and left the loop to spin, would reach the same tick bound and
+    /// stop for the same reason - and would make an event loop either twice as fast as it
+    /// asked for or unable to make progress at all.
+    ///
+    /// The last case is the one an event loop meets first: a run that is **already over** must
+    /// say so on the very first call, without taking a tick. That is `over` being asked
+    /// between ticks rather than inside one, which is the whole of the graceful-shutdown
+    /// promise, and it is what stops a window opening onto an empty world and ticking it for
+    /// twelve hours.
+    #[test]
+    fn a_run_can_be_stepped_one_tick_at_a_time() {
+        let allowance = 500;
+
+        // The same run twice: once driven from outside a tick at a time, once told to get on
+        // with it. Nothing else differs.
+        let world = a_small_living_world(|_| {});
+        let founded = world.ticks();
+        let mut stepped = Run::new(
+            world,
+            &bounds(|run| run.max_ticks = Some(founded + allowance)),
+            &Interrupt::new(),
+        );
+
+        let mut steps = 0u64;
+        let why = loop {
+            if let Some(why) = stepped.step() {
+                break why;
+            }
+            steps += 1;
+        };
+
+        let world = a_small_living_world(|_| {});
+        let mut wholesale = Run::new(
+            world,
+            &bounds(|run| run.max_ticks = Some(founded + allowance)),
+            &Interrupt::new(),
+        );
+        let all_at_once = wholesale.go(|_| {});
+
+        assert_eq!(why, Stop::TicksDone);
+        assert_eq!(
+            why, all_at_once,
+            "the stepped run and the run that was left to itself stopped for different reasons"
+        );
+        assert_eq!(
+            steps, allowance,
+            "the run was allowed {allowance} ticks and {steps} calls to `step` took them, so a \
+             step is not a tick and an event loop driving one would run at the wrong speed"
+        );
+        assert_eq!(
+            stepped.world().ticks(),
+            wholesale.world().ticks(),
+            "the two runs did not stop on the same tick"
+        );
+
+        // ⭐ And they are the same world, not merely two worlds that stopped at the same
+        // moment.
+        assert_eq!(
+            stepped
+                .world()
+                .grid()
+                .tiles()
+                .iter()
+                .map(|tile| tile.to_bits())
+                .collect::<Vec<u32>>(),
+            wholesale
+                .world()
+                .grid()
+                .tiles()
+                .iter()
+                .map(|tile| tile.to_bits())
+                .collect::<Vec<u32>>(),
+            "driving the run from outside changed the field, so the windowed build and the \
+             headless build are not running the same simulation"
+        );
+        for (name, one, other) in [
+            (
+                "biomass",
+                stepped.world().ledger().biomass(),
+                wholesale.world().ledger().biomass(),
+            ),
+            (
+                "detritus",
+                stepped.world().ledger().detritus(),
+                wholesale.world().ledger().detritus(),
+            ),
+            (
+                "dissipated",
+                stepped.world().ledger().dissipated(),
+                wholesale.world().ledger().dissipated(),
+            ),
+            (
+                "influx_total",
+                stepped.world().ledger().influx_total(),
+                wholesale.world().ledger().influx_total(),
+            ),
+        ] {
+            assert!(
+                one.to_bits() == other.to_bits(),
+                "the stepped run left {one} in the {name} account against {other}"
+            );
+        }
+
+        // A run that is over before it starts says so without taking a tick. An empty world is
+        // already extinct - see this module's documentation - so this is the case a window
+        // opened onto a dead world meets on its first frame.
+        let empty = World::new(&config(|raw| {
+            raw.world.width = 64.0;
+            raw.world.height = 64.0;
+            raw.world.grid_cols = 8;
+            raw.world.grid_rows = 8;
+        }));
+        let before = empty.ticks();
+        let mut over = Run::new(empty, &bounds(|_| {}), &Interrupt::new());
+
+        assert_eq!(
+            over.step(),
+            Some(Stop::Extinction),
+            "a run handed an empty world did not say so on its first step"
+        );
+        assert_eq!(
+            over.world().ticks(),
+            before,
+            "a run that was already over took a tick anyway, so a bound is being examined \
+             inside a tick rather than between two"
+        );
+    }
+
+    // -------------------------------------------------------------------------------------
+    // A golden vector, kept apart from the red-then-green tests above
+    //
+    // `docs/PHASE1.md` sets the rule for these and it is worth repeating where one lives:
+    // **if this ever fails, investigate - do not paste in the new numbers.** A golden vector
+    // is not a test of the code that produced it. It is a record of what this program did on
+    // a day somebody checked, and the only thing it can tell you is that today's program does
+    // something different.
+    // -------------------------------------------------------------------------------------
+
+    /// ⭐ **A5 group control.** A run of a fixed seed and configuration produces exactly what
+    /// it produced before Phase 5 touched anything.
+    ///
+    /// Every accessor Group A adds is a way of *reading* the simulation, and the whole claim
+    /// of the group is that reading changes nothing. That is easy to say and easy to break in
+    /// a way nothing announces: an organism gained two fields, a hash is taken at every birth,
+    /// and a run that ticked in a slightly different order or drew one extra random number
+    /// would still be perfectly deterministic - just deterministically *different*, so that
+    /// every reading in `docs/PHASE4.md` and every future recording made before today would
+    /// quietly stop being reproducible.
+    ///
+    /// The numbers below were recorded from the code as it stood at the end of Phase 4, before
+    /// a line of Group A was written. They are the bit patterns of the five quantities that
+    /// summarise a run, plus the three counts. Bit patterns rather than the numbers themselves
+    /// for the reason `world.rs` gives about its own comparisons: a tolerance would wave
+    /// through a difference in the last place, which is exactly how a determinism failure
+    /// starts.
+    ///
+    /// # Why the field's total is the sensitive one
+    ///
+    /// It is a 64-bit sum over every tile in the world, and every body in the world has been
+    /// eating out of those tiles for two thousand ticks. A perturbation anywhere - one extra
+    /// draw from a stream, one organism reaped in a different order, one birth that happened a
+    /// tick later - moves who ate what, and moves this number in its last bits. It is the
+    /// cheapest whole-world signature there is.
+    ///
+    /// # ⚠️ The arena is deliberately raised out of the way
+    ///
+    /// `a_small_living_world` allows 250 organisms and this run reaches that in about fifteen
+    /// hundred ticks. **A population pressed against its cap is the least sensitive world
+    /// there is to point at a golden vector**, because `reproduction.rs` gives up on a birth
+    /// the moment it finds no free slot - *before* it has drawn a single number from the
+    /// parent's stream. So at the cap almost nothing touches the randomness, and a change to
+    /// mutation, to development or to a per-organism stream would sail past unnoticed. Raising
+    /// the arena to two thousand keeps every birth going all the way through the draw.
+    #[test]
+    fn a_run_produces_what_it_produced_before_group_a() {
+        let mut world = a_small_living_world(|raw| raw.limits.max_organisms = 2_000);
+        let founded = genesis(&mut world, 8);
+        let mut run = Run::new(
+            world,
+            &bounds(|run| run.max_ticks = Some(founded + 2_000)),
+            &Interrupt::new(),
+        );
+
+        assert_eq!(run.go(|_| {}), Stop::TicksDone);
+
+        let world = run.world();
+        let census = Census::of(world);
+        let ledger = world.ledger();
+
+        assert_eq!(
+            [
+                world.ticks(),
+                census.born,
+                u64::try_from(census.population).expect("a population fits in a word"),
+                world.grid().total_energy().to_bits(),
+                ledger.biomass().to_bits(),
+                ledger.detritus().to_bits(),
+                ledger.dissipated().to_bits(),
+                ledger.influx_total().to_bits(),
+            ],
+            [
+                // 4,000 ticks: a dawn of 2,000 and the 2,000 the run was allowed.
+                4_000,
+                // 508 organisms have ever lived here; 470 of them are still alive.
+                508,
+                470,
+                // The field, then SPEC section 5's four accounts, as bit patterns. The
+                // quantities they stand for are written beside them so that a failure can be
+                // read as a change in the world rather than only as a change in a number:
+                // 10,754.368 in the water, 6,623.725 held by the living, 217.434 lying in the
+                // drift, 5,680.867 spent for good, and 23,276.395 fallen as light.
+                0x40c5_012f_1d23_0000,
+                0x40b9_dfb9_aadf_208c,
+                0x406b_2de6_28e9_041e,
+                0x40b6_30de_0509_9754,
+                0x40d6_bb19_4711_2000,
+            ],
+            "this run no longer produces what it produced at the end of Phase 4. Something \
+             changed what the simulation *does* rather than only what it can be asked about, \
+             and every figure recorded in docs/PHASE4.md was measured on the other one"
         );
     }
 

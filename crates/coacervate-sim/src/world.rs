@@ -583,6 +583,10 @@ impl World {
             genome,
             taken,
             self.next_serial,
+            // No parent. This is the door from outside the world, so there is nothing in the
+            // world a body coming through it could be the child of. See `organism.rs` for why
+            // that is nothing at all rather than a zero.
+            None,
             body.cells.len(),
             body.springs.len(),
         ));
@@ -739,6 +743,70 @@ impl World {
     #[must_use]
     pub fn cells(&self) -> &[Cell] {
         &self.cells
+    }
+
+    /// Every cell that belongs to something alive, packed together with no gaps.
+    ///
+    /// This is the crowd the tick already builds for the physics - see [`World::tick`] and this
+    /// module's documentation - handed out to be read rather than rebuilt for the asking. What
+    /// makes it worth having over [`World::cells`] is what is *not* in it: at SPEC section 3's
+    /// defaults the arena is 256,000 cells of which a few thousand belong to anybody, and the
+    /// rest are sitting at the origin where the arena was built. Anything that walked the arena
+    /// and drew what it found would draw all of them.
+    ///
+    /// [`World::living_cell_owners`] says whose each of these is, index for index.
+    ///
+    /// # ⚠️ It is the population of the tick just taken, which is not quite the population now
+    ///
+    /// The crowd is gathered at the *start* of a tick, and a tick ends by reaping the dead and
+    /// then letting the survivors breed. So immediately after a tick this list still holds the
+    /// cells of anything that died during it, and does not yet hold the cells of anything born
+    /// during it. Both are one tick out of date - a sixtieth of a simulated second - and
+    /// `the_living_cells_can_be_read_without_the_empty_slots` pins that contract rather than
+    /// leaving it to be discovered.
+    ///
+    /// The alternative was to gather a second time at the end of every tick so that the list
+    /// were always current. That is one copy per living cell per tick, paid by every headless
+    /// run, for the benefit of a reader that may not exist - and a run that is not being
+    /// watched is what this project is mostly for.
+    ///
+    /// Before the world's first tick it is empty, whatever has been seeded into the world.
+    #[must_use]
+    pub fn living_cells(&self) -> &[Cell] {
+        &self.crowd
+    }
+
+    /// Which slot each cell of [`World::living_cells`] belongs to, in the same order.
+    ///
+    /// Always exactly as long as that list. A caller that wants to know anything about the
+    /// organism a cell belongs to - its genome, its age, its lineage - looks the slot up in
+    /// [`World::organisms`].
+    ///
+    /// It is a *slot* rather than a serial number because a slot is what indexes the arrays: a
+    /// serial would have to be searched for. The caveat is the one `organism.rs` states, and it
+    /// bites here for exactly the reason the note above gives: a slot is a place and is handed
+    /// on to whoever is born there next, so a cell whose owner died during the last tick may
+    /// name a slot that is now empty or holds somebody else entirely. Read the serial off the
+    /// organism if two moments have to be compared.
+    #[must_use]
+    pub fn living_cell_owners(&self) -> &[usize] {
+        &self.owner
+    }
+
+    /// The dead biomass on its way down: SPEC section 10's marine snow, where it is and what it
+    /// is still holding.
+    ///
+    /// SPEC section 12 asks for the snow in the background to be **the actual detritus** rather
+    /// than a decoration drawn over the top of it, and this is what makes that possible. The
+    /// grains are real: `metabolism.rs` lays one at each cell of every body that dies, they
+    /// fall, and they give what they hold back to the water as they go. What they hold between
+    /// them is the ledger's `detritus` account exactly.
+    ///
+    /// Unlike the cells this is current the moment a tick ends, because the drift is not
+    /// gathered or copied anywhere - it is the list itself.
+    #[must_use]
+    pub fn drift(&self) -> &[Detritus] {
+        &self.drift
     }
 
     /// The run's randomness.
@@ -1294,6 +1362,249 @@ mod tests {
         );
     }
 
+    /// ⭐ **A2.** The living cells can be read as one dense list, with none of the arena's
+    /// empty slots in it.
+    ///
+    /// [`World::cells`] is the whole arena, and most of a running world's arena is empty slots
+    /// holding cells that were never written to - which is to say, cells sitting at the origin.
+    /// Anything that walked that array and drew what it found would put a pile of ghosts in the
+    /// top-left corner of the world, one for every cell every dead or unborn organism could
+    /// have had. At SPEC section 3's defaults that is 256,000 cells of which a few thousand are
+    /// real.
+    ///
+    /// The tick already builds the list that is wanted - see `gather` and this module's
+    /// documentation - because the physics needs exactly the same thing for exactly the same
+    /// reason. This is that list, and the map from a place in it back to the organism whose
+    /// cell it is, which is what a caller needs to colour a body by whose it is rather than by
+    /// what it is made of.
+    ///
+    /// # ⚠️ The contract is "the population of the tick just taken", and that is not the same
+    /// as "the population right now"
+    ///
+    /// The crowd is gathered at the *start* of a tick, and a tick ends by reaping the dead and
+    /// then letting the survivors breed. So when a tick returns, the crowd still holds the
+    /// cells of anything that died during it and does not yet hold the cells of anything born
+    /// during it. Both are one tick out of date, which is a sixtieth of a simulated second.
+    ///
+    /// That is asserted here rather than merely written down, because it is the sort of thing
+    /// that gets discovered later by somebody wondering why a corpse flickered. **The
+    /// alternative was to gather a second time at the end of every tick**, which is one copy
+    /// per living cell per tick paid by every headless run for the benefit of a reader that
+    /// may not exist.
+    ///
+    /// # Why a death is what proves the claim
+    ///
+    /// A world where nothing has ever died has a crowd that is the same length as its
+    /// population however the list was built - so the sizes below are chosen to be
+    /// individually recognisable, and one of the two bodies is deliberately starved. A
+    /// three-celled body sits in a slot of eight, so the arena holds five cells belonging to
+    /// nobody between the two bodies; a list built by walking the arena would be eight cells
+    /// long and would include them.
+    #[test]
+    fn the_living_cells_can_be_read_without_the_empty_slots() {
+        let mut world = World::new(&a_lit_world(|raw| {
+            raw.world.grid_cols = 32;
+            raw.world.grid_rows = 18;
+            raw.limits.max_organisms = 4;
+            raw.limits.max_cells_per_organism = 8;
+        }));
+        let limits = world.config().limits.clone();
+
+        for _ in 0..700 {
+            world.tick();
+        }
+
+        // A chain of photocytes, which earns its keep, and one myocyte holding nothing at all.
+        // A myocyte harvests nothing and costs 0.014 a tick, so it cannot survive the tick it
+        // is seeded on; a photocyte in this light earns several times its upkeep.
+        world
+            .seed(a_chain(3, &limits), Vec2::new(100.0, 100.0), 3.0)
+            .expect("a lit world has room and water for a three-celled body");
+        world
+            .seed(
+                a_single_cell(CellKind::Myocyte, &limits),
+                Vec2::new(300.0, 100.0),
+                0.0,
+            )
+            .expect("a body asking for nothing can always be afforded");
+
+        world.tick();
+
+        // The arena, for contrast: four slots of eight cells, of which four are somebody's.
+        assert_eq!(world.cells().len(), 32, "the arena is four slots of eight");
+        assert_eq!(
+            world
+                .cells()
+                .iter()
+                .filter(|cell| cell.pos == Vec2::ZERO)
+                .count(),
+            28,
+            "the whole arena should be twenty-eight cells at the origin and four real ones, \
+             so this is the pile of ghosts a caller walking it would draw"
+        );
+
+        // ⭐ And the dense list is only the real ones.
+        assert_eq!(
+            world.living_cells().len(),
+            4,
+            "the dense list is {} cells long and there are four in the world",
+            world.living_cells().len()
+        );
+        assert!(
+            world
+                .living_cells()
+                .iter()
+                .all(|cell| cell.pos != Vec2::ZERO),
+            "a cell in the dense list is sitting at the origin, which is where the arena was \
+             built and where nothing living has been put"
+        );
+        assert_eq!(
+            world.living_cell_owners(),
+            &[0, 0, 0, 1],
+            "the dense list does not say whose each cell is, so nothing reading it can \
+             tell one body from another"
+        );
+        assert_eq!(
+            world.living_cells().len(),
+            world.living_cell_owners().len(),
+            "the two lists are different lengths, so an index into one does not mean the \
+             same cell in the other"
+        );
+
+        // Every cell of the dense list is the cell its owner's slot says it is, which is what
+        // makes the owner map worth having. Slots that are now empty are skipped, and that
+        // exclusion is itself the contract below being demonstrated: the body that died during
+        // this tick is still in the list and its slot no longer answers for it.
+        let mut checked = 0;
+        for (index, cell) in world.living_cells().iter().enumerate() {
+            let slot = world.living_cell_owners()[index];
+            if world.organisms()[slot].is_none() {
+                continue;
+            }
+
+            assert!(
+                world.cells_of(slot).iter().any(|own| own.pos == cell.pos),
+                "cell {index} of the dense list is said to belong to slot {slot} and is not \
+                 one of that slot's cells"
+            );
+            checked += 1;
+        }
+        assert_eq!(
+            checked, 3,
+            "only {checked} cells were checked against the slot they claim, so this loop is \
+             skipping the ones it was meant to be about"
+        );
+
+        // ⚠️ The myocyte is already dead and is still in the list, because the list is the
+        // population of the tick just taken. This is the contract, written as an assertion so
+        // it cannot be discovered by accident later.
+        assert!(
+            world.organisms()[1].is_none(),
+            "the starved body survived the tick, so this case is not about a death"
+        );
+        assert_eq!(
+            world.living_cell_owners().last(),
+            Some(&1),
+            "a body that died during the tick has already gone from the list, so the list is \
+             not the population of the tick that was taken and the documented contract is \
+             wrong"
+        );
+
+        // And on the next tick it is gone, because that tick gathered afresh.
+        world.tick();
+
+        assert_eq!(
+            world.living_cells().len(),
+            3,
+            "the dead body is still in the list a whole tick after it died"
+        );
+        assert_eq!(world.living_cell_owners(), &[0, 0, 0]);
+    }
+
+    /// ⭐ **A3.** The drift can be read: the grains of dead biomass, where they are and what
+    /// they are still holding.
+    ///
+    /// SPEC section 12 asks for marine snow that **is the actual detritus** rather than a
+    /// decoration drawn over the top of it, and this is the only reason the request is
+    /// answerable: the grains already exist, they already fall, and they already rot back into
+    /// the water. Nothing here is new - `metabolism.rs` has made and moved them since Phase 4 -
+    /// and the world simply had no way of being asked.
+    ///
+    /// # Three claims, and the third is what makes the first two mean anything
+    ///
+    /// That an untouched world's drift is empty, so the list is not merely always full of
+    /// something. That a death puts a grain at each of the dead body's cells, which is what
+    /// makes the snow the *actual* detritus rather than particles scattered where a renderer
+    /// felt like it. And that what the grains hold between them is the ledger's `detritus`
+    /// account **exactly** - because a reader that could see grains the books did not know
+    /// about would be a reader watching energy that is not in the world.
+    #[test]
+    fn the_drift_can_be_read() {
+        let mut world = World::new(&a_lit_world(|raw| {
+            raw.world.grid_cols = 32;
+            raw.world.grid_rows = 18;
+            raw.limits.max_organisms = 4;
+            raw.limits.max_cells_per_organism = 8;
+        }));
+        let limits = world.config().limits.clone();
+
+        for _ in 0..700 {
+            world.tick();
+        }
+
+        assert!(
+            world.drift().is_empty(),
+            "nothing has ever died in this world and there are {} grains in the water",
+            world.drift().len()
+        );
+
+        // A chain of three photocytes, springs already at their rest length so that nothing
+        // pushes or pulls and the body stands exactly where it was put. It has no gonocyte, so
+        // it cannot breed; it earns more than it spends, so it does not starve. What ends it is
+        // age - `metabolism.rs` allows a three-celled photocyte body about two thousand ticks -
+        // and a body that dies of old age dies rich, which is what puts something in the
+        // grains worth reading.
+        world
+            .seed(a_chain(3, &limits), Vec2::new(100.0, 100.0), 0.02)
+            .expect("a lit world has room and water for a three-celled body");
+        let body: Vec<Vec2> = world.cells_of(0).iter().map(|cell| cell.pos).collect();
+        assert_eq!(body.len(), 3);
+
+        let mut ticks = 0;
+        while world.drift().is_empty() && ticks < 6_000 {
+            world.tick();
+            ticks += 1;
+        }
+
+        assert_eq!(
+            world.drift().len(),
+            3,
+            "a three-celled body died on tick {ticks} and left {} grains, so the snow is not \
+             one grain per cell",
+            world.drift().len()
+        );
+        for grain in world.drift() {
+            assert!(
+                body.iter().any(|cell| (grain.pos - *cell).length() < 0.5),
+                "a grain is at {:?} and the body that made it had cells at {body:?}, so the \
+                 snow is being scattered rather than left where the body was",
+                grain.pos
+            );
+            assert!(
+                grain.energy > 0.0,
+                "a grain holding nothing is still in the drift"
+            );
+        }
+
+        // ⭐ And what the grains hold is exactly what the books say is lying in the water.
+        let held: f64 = world.drift().iter().map(|grain| grain.energy).sum();
+        assert!(
+            (held - world.ledger().detritus()).abs() < 1e-12,
+            "the grains hold {held} between them and the detritus account says {}",
+            world.ledger().detritus()
+        );
+    }
+
     /// ⭐ When there is nowhere to put an organism, the birth **fails**. It does not make
     /// room.
     ///
@@ -1821,6 +2132,142 @@ mod tests {
             .as_ref()
             .expect("this test does not expect that slot to be empty")
             .energy()
+    }
+
+    /// ⭐ **A5.** An organism knows which organism it came from, and carries a fingerprint of
+    /// the genome it is running.
+    ///
+    /// SPEC section 12 asks for hue to come from lineage and to *drift as the lineage drifts
+    /// genetically*, which is how speciation becomes something visible while it is happening
+    /// rather than a fact reported afterwards. Until now an organism has had a serial number
+    /// and a genome and no way at all to say where it came from: two bodies could be identical
+    /// twins or entirely unrelated and nothing in the world could tell them apart.
+    ///
+    /// # A founder has no parent, and that is a `None` rather than a zero
+    ///
+    /// Serial numbers start at nought, so "no parent" written as a zero is the same value as
+    /// "the child of the very first organism in the run" - and every founder in the world would
+    /// read as a child of the first founder. Nothing about that fails; a lineage tree simply
+    /// comes out with every root joined to one arbitrary body.
+    ///
+    /// # What is asserted about the fingerprint here, and what is asserted in `genome.rs`
+    ///
+    /// The fingerprint itself - that it is stable, that it is order-sensitive, that the length
+    /// goes in before the genes - belongs to `genome.rs` and is proved there. What this test
+    /// adds is the two claims that can only be made about a *living* organism: that the number
+    /// an organism carries is the number its own genome hashes to, and that a child whose
+    /// genome came out different from its parent's carries a different one.
+    ///
+    /// That second claim is the whole point of the exercise and it is the one this test has to
+    /// work for. Mutation is stochastic, so a single birth very often produces a genome
+    /// identical to its parent's - which is not a failure, it is what an unmutated copy looks
+    /// like. So the world is run until enough births have happened for at least one of them to
+    /// have changed something, and what is asserted is that **the ones that changed genetically
+    /// are exactly the ones whose fingerprint changed**. A fingerprint that ignored the genome
+    /// and returned, say, the serial would fail the first half; one that was recomputed from
+    /// something else entirely would fail the second.
+    #[test]
+    fn an_organism_knows_its_parent() {
+        let mut world = World::new(&a_bright_world(42, 64));
+        let limits = world.config().limits.clone();
+
+        for _ in 0..300 {
+            world.tick();
+        }
+
+        // A founder, put in by hand through the only door there is from outside.
+        let founder = world
+            .seed(
+                a_breeder(1, &limits),
+                Vec2::new(128.0, 72.0),
+                the_bar_for(&[CellKind::Photocyte.upkeep(), CellKind::Gonocyte.upkeep()]) * 0.9,
+            )
+            .expect("a bright world has room and water for one founder");
+        let (founder_serial, founder_hash, founder_genome) = {
+            let first = world.organisms()[founder]
+                .as_ref()
+                .expect("the organism just seeded is in its slot");
+
+            assert_eq!(
+                first.parent(),
+                None,
+                "an organism seeded from outside has a parent, and there is nothing in the \
+                 world it could be the child of"
+            );
+            assert_eq!(
+                first.genome_hash(),
+                first.genome().hash(),
+                "an organism's fingerprint is not the fingerprint of the genome it is running"
+            );
+
+            (first.serial(), first.genome_hash(), first.genome().clone())
+        };
+
+        // Long enough for several generations. Every organism in the world after this is
+        // descended from the one founder above.
+        for _ in 0..2_000 {
+            world.tick();
+        }
+
+        let mut children = 0;
+        let mut mutated = 0;
+        for slot in 0..world.organisms().len() {
+            let Some(organism) = world.organisms()[slot].as_ref() else {
+                continue;
+            };
+
+            assert_eq!(
+                organism.genome_hash(),
+                organism.genome().hash(),
+                "the organism in slot {slot} carries a fingerprint that is not its genome's, \
+                 so the number a renderer would colour it by has come loose from the genome \
+                 it is supposed to be following"
+            );
+
+            if organism.serial() == founder_serial {
+                continue;
+            }
+
+            let parent = organism
+                .parent()
+                .expect("everything in this world but the founder was born to a parent");
+            assert!(
+                parent < organism.serial(),
+                "the organism in slot {slot} is serial {} and says its parent is serial \
+                 {parent}, which had not been born yet",
+                organism.serial()
+            );
+            children += 1;
+
+            if *organism.genome() == founder_genome {
+                assert_eq!(
+                    organism.genome_hash(),
+                    founder_hash,
+                    "the organism in slot {slot} is running the founder's genome exactly and \
+                     hashes to a different number"
+                );
+            } else {
+                mutated += 1;
+                assert_ne!(
+                    organism.genome_hash(),
+                    founder_hash,
+                    "the organism in slot {slot} is running a genome that differs from the \
+                     founder's and hashes to the same number, so its lineage drifted \
+                     genetically without its colour drifting with it"
+                );
+            }
+        }
+
+        assert!(
+            children > 4,
+            "only {children} organisms in this world were born to a parent, so barely \
+             anything has reproduced and this test has established nothing"
+        );
+        assert!(
+            mutated > 0,
+            "not one of the {children} descendants differs from the founder genetically, so \
+             the half of this test that is about drift never ran"
+        );
     }
 
     /// ⭐ **C1.** An organism reproduces once it is holding more than

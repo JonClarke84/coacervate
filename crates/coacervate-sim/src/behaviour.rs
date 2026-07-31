@@ -1535,6 +1535,7 @@ mod tests {
                 genome,
                 taken,
                 u64::try_from(slot).expect("a slot number fits in a serial"),
+                None,
                 body.len(),
                 0,
             )));
@@ -1638,6 +1639,7 @@ mod tests {
                 genome,
                 energy,
                 u64::try_from(slot).expect("a slot number fits in a serial"),
+                None,
                 cells,
                 springs,
             ));
