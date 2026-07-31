@@ -408,7 +408,11 @@ pub const DT: f32 = 1.0 / 60.0;
 /// rest length and stiffness that gene carries. This module only resolves them. They are a
 /// flat list of index pairs rather than anything owned by the cells, because that is the
 /// shape both the counting sort below and a Phase 9 shader want to read.
-#[derive(Debug, Clone, Copy)]
+///
+/// Two springs are equal when all four of their numbers are, which `development.rs` needs
+/// in order to compare one grown body against another - and comparing whole bodies is how
+/// `a_body_is_a_pure_function_of_its_genome` states the promise the museum will rest on.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Spring {
     /// The two cells it joins, by their position in the cell array.
     pub a: usize,

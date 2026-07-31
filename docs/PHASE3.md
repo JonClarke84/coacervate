@@ -13,8 +13,8 @@ duplication/divergence tested; caps hold under fuzzing*, and `.\scripts\check.ps
 | | |
 | --- | --- |
 | **Phase 3** | in progress |
-| **Current group** | A — the gene and the genome |
-| **Suite** | green — 72 tests (Phase 2), 41s |
+| **Current group** | C — mutation (A and B are done) |
+| **Suite** | green — 85 tests, 43s |
 
 ---
 
@@ -79,32 +79,44 @@ cleanly if it ever proves wrong. No golden vector and no archived run depends on
 
 ### Group A — the gene and the genome
 
-- [ ] **A1. `a_gene_has_the_fields_spec_section_7_gives_it`** — condition (`trigger_state`,
+- [x] **A1. `a_gene_has_the_fields_spec_section_7_gives_it`** — condition (`trigger_state`,
   `min_step`, `max_step`), action (`Divide` / `Differentiate` / `Terminate`), and the
   parameters each action needs. Fixed-size records so they pack into flat arrays.
-- [ ] **A2. `a_genome_is_a_list_of_genes_and_is_capped`** — `max_genes` from the config.
-- [ ] **A3. `a_random_gene_is_always_within_bounds`** *(property test)* — every field in
+- [x] **A2. `a_genome_is_a_list_of_genes_and_is_capped`** — `max_genes` from the config.
+- [x] **A3. `a_random_gene_is_always_within_bounds`** *(property test)* — every field in
   range, whatever the generator produces. The mutation operators lean on this.
 
 ### Group B — development
 
-- [ ] **B1. `a_genome_with_no_genes_grows_a_single_cell`** — the seed cell is a photocyte at
+- [x] **B1. `a_genome_with_no_genes_grows_a_single_cell`** — the seed cell is a photocyte at
   state 0, per SPEC section 7.
-- [ ] **B2. `divide_appends_a_daughter_at_the_angle_the_gene_asks_for`**
-- [ ] **B3. `an_adhered_daughter_is_sprung_to_its_parent_and_a_free_one_is_not`** — *this is
+- [x] **B2. `divide_appends_a_daughter_at_the_angle_the_gene_asks_for`**
+- [x] **B3. `an_adhered_daughter_is_sprung_to_its_parent_and_a_free_one_is_not`** — *this is
   the origin of multicellularity in the model, and it is one boolean.*
-- [ ] **B4. `differentiate_changes_a_cell_in_place`**
-- [ ] **B5. `terminate_makes_a_cell_fire_no_further_genes`**
-- [ ] **B6. `the_first_matching_gene_wins_so_gene_order_carries_information`** — *reordering
+- [x] **B4. `differentiate_changes_a_cell_in_place`**
+- [x] **B5. `terminate_makes_a_cell_fire_no_further_genes`**
+- [x] **B6. `the_first_matching_gene_wins_so_gene_order_carries_information`** — *reordering
   is therefore a meaningful mutation, and non-firing genes accumulate as the raw material
   duplication diverges from. That is a feature, not waste.*
-- [ ] **B7. `development_stops_at_the_cell_cap`** — and stops *entirely*, per SPEC section 7.
-- [ ] **B8. `development_stops_at_the_step_cap`**
-- [ ] **B9. `a_body_is_a_pure_function_of_its_genome`** ⭐ *(property test)* — same genome,
+- [x] **B7. `development_stops_at_the_cell_cap`** — and stops *entirely*, per SPEC section 7.
+- [x] **B8. `development_stops_at_the_step_cap`**
+- [x] **B9. `a_body_is_a_pure_function_of_its_genome`** ⭐ *(property test)* — same genome,
   same body, every time. This is what makes the museum able to rebuild any archived organism
   exactly, and it is what makes every other test in this phase trustworthy.
-- [ ] **B10. `development_always_terminates`** *(property test)* — over arbitrary genomes,
+- [x] **B10. `development_always_terminates`** *(property test)* — over arbitrary genomes,
   including adversarial ones. SPEC section 15 asks for this by name.
+
+**What SPEC left open, and what was decided.** All of it is argued at length in
+`genome.rs` and `development.rs`; this is the index so Groups C and D do not re-derive it.
+
+| Question | Answer |
+| --- | --- |
+| What is "the parent's body axis"? | The direction a cell was budded in, fixed at birth and never changed. The seed cell has no parent, so it faces `+x` — the same tie-break `physics.rs` already uses. Angles therefore *compound* down a chain of cells, which is what lets one gene draw a curve rather than only a straight line. |
+| Does a daughter made during a step act in that same step? | No. A step visits the cells present when it began, so a step is a **generation** and a dividing genome doubles per step. |
+| How far from its parent is a daughter placed? | An adhered one at its spring's `rest_length`, so a body is grown already relaxed; a free one just touching, which is what budding looks like and the one distance collision will not immediately undo. |
+| Is `state` really `0..=63`? | Yes, and it is now a six-bit type rather than a `u8` with a rule attached. Any byte constructs one, keeping the low six bits — which is exactly uniform, so Group C's "re-draw discrete fields uniformly" needs no retry loop. |
+| Bounds for `rest_length`, `stiffness`, `osc_freq`, `sensor_gain`? | Not in SPEC. Declared as constants in `genome.rs` with the reasoning beside each; they bound the random *draw*, not the type. **Group C must decide whether point mutation clamps to them.** |
+| Where is the cell cap checked? | *Before* the daughter is made. SPEC's pseudo-code appends and then compares, which overshoots when the cap is 1. |
 
 ### Group C — mutation, and the operator the project rests on
 
@@ -149,3 +161,18 @@ cleanly if it ever proves wrong. No golden vector and no archived run depends on
 upper bound of 1 is not derived from SPEC — it is a standard deviation, not a probability,
 and this phase is where it starts to matter), **Q6** (`spring_damping` has no stated
 semantics; a meaning has been chosen and documented in `physics.rs`).
+
+**Q8, raised by Group B.** Turning an angle into a direction needs a sine and a cosine, and
+those are the only arithmetic in this simulation that IEEE 754 does *not* pin to one answer:
+two versions of a maths library may legitimately differ in the last bit. Everything else
+would replay identically on any machine. A body's shape is reproducible here, with this
+toolchain; Phase 8's archive and Phase 9's GPU port both have to check that rather than
+assume it. A golden-vector test on a grown body — the same shape as `rng.rs`'s — is the
+cheap answer if it ever matters.
+
+**Q9, raised by Group B.** `MAX_REST_LENGTH` keeps the widest body a genome can grow to
+under 900 world units, which is inside half of SPEC's default world width and therefore
+inside the distance at which the horizontal wrap starts resolving a spring the wrong way
+round (SPEC section 8). Nothing enforces that relationship: a configuration with a world
+narrower than ~1,800 units breaks it, and `config.rs` has no reason to know. Group D places
+bodies in the world and is where a check belongs, if one is wanted.

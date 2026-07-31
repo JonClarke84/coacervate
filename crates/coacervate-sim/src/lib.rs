@@ -19,6 +19,11 @@
 //! - [`physics`] — what moves them: springs between the cells of a body, repulsion between
 //!   bodies, and the neighbour search that stops looking for either from costing
 //!   everything.
+//! - [`genome`] — the growth program an organism is: a variable-length list of rules rather
+//!   than a fixed list of numbers, which is what lets a lineage gain a body part it did not
+//!   have instead of only ever becoming a better single cell.
+//! - [`development`] — running that program: a genome in, and a body of cells and the
+//!   springs between them out. The same genome grows the same body every time.
 //! - [`world`] — all of the above owned in one place, and the tick that moves it: the light
 //!   falling, the energy spreading, the tiles shedding what they cannot hold, and the cells
 //!   being pushed about — with the books checked as it goes.
@@ -27,6 +32,8 @@
 
 pub mod cell;
 pub mod config;
+pub mod development;
+pub mod genome;
 pub mod grid;
 pub mod ledger;
 pub mod physics;

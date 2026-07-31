@@ -381,8 +381,25 @@ for step in 0..max_dev_steps:
                           with child_state / child_kind; if `adhere`, create a spring
             Differentiate → change this cell's kind and state in place
             Terminate   → mark this cell inert; it fires no further genes
-        if cells.len() == max_cells_per_organism: stop entirely
+        if there is no room for another cell: stop entirely
 ```
+
+Three things that pseudo-code leaves open, decided in `development.rs` and recorded here so
+they are not re-litigated:
+
+- **The cap is checked *before* a daughter is made, not after.** An earlier draft appended
+  and then compared `cells.len() == max_cells_per_organism`, which is correct for every cap
+  but one: a body allowed a single cell already starts at its cap, so the check arrives too
+  late and the first division takes it to two.
+- **"The parent's body axis" is the direction a cell was budded in**, fixed at birth. The
+  seed cell has no parent and faces `+x`. Angles therefore *compound* down a chain, so one
+  gene firing repeatedly draws a curve, a spiral or a ring rather than only a straight line
+  — a strictly larger space of shapes from the same genome length, which is what the
+  duplicate-and-diverge bet needs.
+- **A daughter made during a step does not act until the next one.** A step visits the cells
+  present when it began, so a step is a *generation* and a dividing genome doubles per step.
+  Under the other reading a single self-perpetuating gene fills the whole body inside step 0
+  and `min_step`/`max_step` on every other gene become nearly meaningless.
 
 The body is a **pure function of the genome**. Same genome, same body, every time — which
 makes it trivially testable and means the museum can rebuild any archived organism exactly.
@@ -406,6 +423,16 @@ Applied at reproduction, in this order:
 **Hard cap at `max_genes`.** Duplication is exponential without it. If genome bloat still
 appears under selection, add a small metabolic cost per gene rather than raising the cap —
 that is how real genomes are disciplined.
+
+**At the cap, a mutation that would lengthen the genome simply fails.** It does not truncate.
+This matters more than it sounds: truncating from the end is a silent, *biased* operator, and
+the end of the genome is exactly where the neutral, non-firing material accumulates — the raw
+material this design says duplication feeds on. A lineage that saturated its genome would
+begin eating its own raw material from the far end, quietly losing the thing that makes it
+open-ended. Failing instead matches what the rest of the simulation already does when it runs
+out of room: births fail at the population cap rather than allocating, and a full world means
+nowhere to reproduce into. Deletion still works, so a saturated lineage can shrink and grow
+again; it just cannot grow past the cap.
 
 ---
 

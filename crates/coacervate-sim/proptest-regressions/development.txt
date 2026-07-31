@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0cb4900142362900382963041437f7df04f71078f47f76874ff4aeec3d972e3a # shrinks to drawn = [], adversary = 0
+cc 7707a8784415bc0e33678292297d6b4f3d1a4ba7e8363eb08a5b19469a5c064f # shrinks to drawn = [Gene { trigger_state: State(0), min_step: 0, max_step: 0, action: Differentiate, angle: 0.0, adhere: false, child_state: State(0), child_kind: Photocyte, rest_length: 0.0, stiffness: 0.0, new_kind: Photocyte, new_state: State(1), osc_freq: 0.0, osc_phase: 0.0, sensor_gain: 0.0, sensor_target: Light }], adversary = 1
+cc b17c8f12ede82d64198b554233b08711014bdf1607b873a0493d4a777d7f230e # shrinks to drawn = [Gene { trigger_state: State(0), min_step: 0, max_step: 0, action: Differentiate, angle: 0.0, adhere: false, child_state: State(0), child_kind: Photocyte, rest_length: 0.0, stiffness: 0.0, new_kind: Photocyte, new_state: State(1), osc_freq: 0.0, osc_phase: 0.0, sensor_gain: 0.0, sensor_target: Light }], adversary = 1
