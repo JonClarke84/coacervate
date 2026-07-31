@@ -18,8 +18,10 @@
 //! tone-mapped composite, an accumulation buffer, the depth gradient, the light shafts and the
 //! marine snow.
 //!
-//! Phase 6 adds the chrome over the top of all of it: one read-only panel, and the switch that
-//! takes it away. The sliders and the charts are Groups B and C of that phase.
+//! Phase 6 adds the chrome over the top of all of it: a read-only panel of what the world is
+//! doing, twenty-one sliders that change it while it runs, three charts of where it has been, and
+//! the switch that takes the whole lot away. The chrome is sized as a fraction of the frame it is
+//! drawn into rather than of the display it is shown on - see `panel.rs`'s `chrome_scale`.
 //!
 //! # The pieces
 //!
@@ -30,6 +32,7 @@
 //! | [`camera`] | Where the world is on the frame, seam included, and the hands on it |
 //! | [`frame`] | The five passes, the offscreen targets, the copy back, and the PNG |
 //! | [`census`] | What the population looks like from outside, and what year it is |
+//! | [`series`] | The same, every hundred ticks, bounded - SPEC section 13's `stats.bin` records |
 //! | [`panel`] | The chrome: one panel over the world, and screensaver mode |
 //! | [`controls`] | What a person did, and what the camera does about it |
 //! | [`window`] | The window, the event loop, `F12`, and a clean way to stop |
@@ -68,6 +71,7 @@ pub mod frame;
 pub mod gpu;
 pub mod panel;
 pub mod scene;
+pub mod series;
 pub mod settings;
 pub mod window;
 
@@ -218,10 +222,20 @@ impl Dump {
 
     /// Draw this world with whatever trail has been built up behind it, and write it out.
     ///
+    /// ⭐ **`C1`.** The series is the *run's*, handed in rather than kept here, for the reason
+    /// `series.rs` gives: a reading is taken every hundred ticks and the only thing that knows
+    /// when a tick happened is the thing that took it. A dump that recorded its own would have one
+    /// reading in it - the last.
+    ///
     /// # Errors
     ///
     /// If the file cannot be written. See [`DumpError`].
-    pub fn write(&mut self, world: &World, path: &Path) -> Result<(), DumpError> {
+    pub fn write(
+        &mut self,
+        world: &World,
+        history: &series::Series,
+        path: &Path,
+    ) -> Result<(), DumpError> {
         let size = self.size();
         let scene = scene::Scene::of(world);
         let camera = camera::Camera::showing_all_of((scene.width, scene.height), size);
@@ -229,8 +243,10 @@ impl Dump {
         let drawn = match &mut self.chrome {
             None => self.renderer.render_through(&self.gpu, &scene, &camera),
             Some(chrome) => {
-                // A dumped frame's pixels are its own, so a point is a pixel.
-                chrome.compose(world, size, 1.0);
+                // A dumped frame is drawn at whatever the display says a point is worth, which
+                // for a machine with no window on it is one. `Chrome::compose` decides what a
+                // point is actually worth on a frame this size - see `Q29`.
+                chrome.compose(world, history, size, 1.0);
                 self.renderer
                     .render_through_under(&self.gpu, &scene, &camera, chrome)
             }
@@ -257,5 +273,7 @@ impl Dump {
 ///
 /// If there is no graphics adapter, or the file cannot be written. See [`DumpError`].
 pub fn dump_frame(world: &World, path: &Path) -> Result<(), DumpError> {
-    Dump::open()?.write(world, path)
+    // No chrome on this path, so nothing reads the series; an empty one is what a caller with no
+    // run behind it has got.
+    Dump::open()?.write(world, &series::Series::new(), path)
 }

@@ -49,6 +49,7 @@ use crate::frame::Renderer;
 use crate::gpu::{self, Gpu};
 use crate::panel::Chrome;
 use crate::scene::Scene;
+use crate::series::Series;
 use crate::settings::Dials;
 use coacervate_sim::config::Config;
 use coacervate_sim::world::World;
@@ -114,6 +115,16 @@ pub trait Watched {
 
     /// The world, to draw.
     fn world(&self) -> &World;
+
+    /// ⭐ **`C1`.** What the world has been doing, to chart.
+    ///
+    /// On the trait rather than worked out here for the reason `series.rs` gives: a reading is
+    /// taken **every hundred ticks**, and the only thing in the program that knows when a tick
+    /// happened is the thing that took it. A window draws about every eleventh tick, so a series
+    /// sampled from `draw` would be a series of whatever ticks the compositor happened to ask for
+    /// a frame on - different every run, different between a watched run and a headless one, and
+    /// not the grid SPEC section 13 describes.
+    fn series(&self) -> &Series;
 
     /// Ask the run to stop at the end of the tick it is in.
     fn ask_to_stop(&self);
@@ -449,8 +460,12 @@ impl<W: Watched> Watcher<'_, W> {
         let camera = open.controls.lens().camera();
         let size = (open.configuration.width, open.configuration.height);
         open.chrome.pausing(self.pace.paused());
-        open.chrome
-            .compose(self.watched.world(), size, scale_of(&open.window));
+        open.chrome.compose(
+            self.watched.world(),
+            self.watched.series(),
+            size,
+            scale_of(&open.window),
+        );
 
         match open.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(showing)
@@ -547,6 +562,7 @@ impl<W: Watched> Watcher<'_, W> {
         // either.
         open.chrome.compose(
             self.watched.world(),
+            self.watched.series(),
             (open.configuration.width, open.configuration.height),
             scale_of(&open.window),
         );
@@ -725,12 +741,40 @@ fn scale_of(window: &Window) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{BUDGET, Watched, advance};
+    use super::{BUDGET, Series, Watched, advance};
     use crate::controls::Pace;
     use coacervate_sim::config::spec_defaults;
     use coacervate_sim::world::World;
     use std::cell::Cell;
     use std::time::{Duration, Instant};
+
+    /// A budget nothing can exhaust.
+    ///
+    /// ⭐ **What a test says when its claim is not about a clock.** `advance` has four ways to
+    /// come back and only one of them is the budget; a test about any of the other three that
+    /// passes the real [`BUDGET`] is quietly also asserting how much this machine can get done
+    /// in eight milliseconds, which is a claim about the scheduler and not about the loop. Ten
+    /// minutes is not reachable by any run below, so what ends those frames is the pacing or
+    /// the run itself - which is what they are about.
+    const UNSPENDABLE: Duration = Duration::from_secs(600);
+
+    /// How many ticks a run has in it where the point is that a frame could take them all.
+    ///
+    /// Sixty-four is plainly *many* and costs nothing to run through. It is a supply and not a
+    /// duration on purpose: a frame bounded by the run's own ticks is bounded by a number this
+    /// file chose, and a frame bounded by a budget is bounded by whatever the operating system
+    /// felt like giving the thread.
+    const SPARE: u32 = 64;
+
+    /// How many times a measurement against the wall clock is made before the machine is
+    /// declared too busy to have made it.
+    ///
+    /// See [`the_simulation_and_the_display_run_at_their_own_speeds`], which is the only test
+    /// here whose claim genuinely is about the clock. A descheduled attempt measures the
+    /// scheduler rather than `advance`, and the answer to an interrupted measurement is to make
+    /// it again: thirty-two attempts on a machine that lost half of them to load leaves about
+    /// one chance in four thousand million of losing every one.
+    const ATTEMPTS: u32 = 32;
 
     /// A run nobody has paused, which is what every test below but one is about.
     fn going() -> Pace {
@@ -756,6 +800,8 @@ mod tests {
         asked: Cell<bool>,
         /// How many times the conditions have been changed under this run.
         retuned: Cell<u32>,
+        /// Empty, because nothing here ticks a world for a reading to be taken of.
+        series: Series,
     }
 
     impl Counted {
@@ -772,6 +818,7 @@ mod tests {
                 costs,
                 asked: Cell::new(false),
                 retuned: Cell::new(0),
+                series: Series::new(),
             }
         }
 
@@ -801,6 +848,10 @@ mod tests {
 
         fn world(&self) -> &World {
             &self.world
+        }
+
+        fn series(&self) -> &Series {
+            &self.series
         }
 
         fn ask_to_stop(&self) {
@@ -845,34 +896,88 @@ mod tests {
         );
 
         // Due, and cheap: many ticks in one frame.
-        let mut running = Counted::new(1_000_000, true, Duration::ZERO);
-        assert!(advance(&mut running, BUDGET, &mut going()));
+        //
+        // ⚠️ **This is the one measurement in this file that is genuinely against the wall
+        // clock, and it is therefore *attempted* rather than taken.** The claim is about the
+        // shipped [`BUDGET`] - that eight milliseconds is worth more than a single tick, which
+        // is a fact about the constant and is worth a test - and the only way to ask it is to
+        // spend eight milliseconds. A thread descheduled inside that slice comes back with one
+        // tick and has measured the operating system rather than `advance`, so the answer is to
+        // make the measurement again and judge the best of them. A machine that cannot spare
+        // one clean slice out of [`ATTEMPTS`] says *that*, in as many words, rather than being
+        // reported as a loop that ties the simulation to the display.
+        let most_free = (0..ATTEMPTS)
+            .map(|_| {
+                let mut running = Counted::new(1_000_000, true, Duration::ZERO);
+                assert!(advance(&mut running, BUDGET, &mut going()));
+                running.ticks()
+            })
+            .max()
+            .expect("ATTEMPTS is more than nought, so there is a best attempt");
+
         assert!(
-            running.ticks() > 1,
-            "one frame's worth of budget took {} ticks, so the simulation is running at the \
-             display's rate rather than its own",
-            running.ticks()
+            most_free > 1,
+            "the best of {ATTEMPTS} frames, each given the shipped budget and ticks that cost \
+             nothing, took {most_free} ticks. Either the loop takes one tick per frame - in which \
+             case the simulation is running at the display's rate rather than its own - or this \
+             machine was too loaded to spare {BUDGET:?} of uninterrupted wall clock {ATTEMPTS} \
+             times over, and the measurement was not made"
         );
 
         // Due, and slow: the budget is what brings it back.
-        let mut expensive = Counted::new(1_000_000, true, Duration::from_millis(2));
-        let started = Instant::now();
-        assert!(advance(
-            &mut expensive,
-            Duration::from_millis(20),
-            &mut going()
-        ));
-        let took = started.elapsed();
+        //
+        // ⚠️ The two halves of this are not the same kind of claim and are not treated as one.
+        //
+        // *Fewer than two hundred ticks* is **structural**: the run has a million ticks in it
+        // and only the budget can have stopped it, so it is checked on every attempt and load
+        // can only make it truer.
+        //
+        // *At least two ticks* is a **measurement** - it says the budget is examined between
+        // ticks rather than before the first one, so a tick that starts inside it finishes - and
+        // it needs twenty uninterrupted milliseconds to make. A thread descheduled across a
+        // two-millisecond sleep comes back with one tick and has measured the scheduler, which
+        // is how this line failed under heavy load. So it is attempted until it is made, and it
+        // stops at the first clean one: on an idle machine that is the first attempt and this
+        // costs nothing.
+        let mut most_costly = 0;
+        let mut quickest = Duration::MAX;
+
+        for _ in 0..ATTEMPTS {
+            let mut expensive = Counted::new(1_000_000, true, Duration::from_millis(2));
+            let started = Instant::now();
+            assert!(advance(
+                &mut expensive,
+                Duration::from_millis(20),
+                &mut going()
+            ));
+
+            quickest = quickest.min(started.elapsed());
+            assert!(
+                expensive.ticks() < 200,
+                "a twenty-millisecond budget at two milliseconds a tick took {} ticks, so the \
+                 budget is not what brought the frame back and a run that ticked for ever would \
+                 never give the window back",
+                expensive.ticks()
+            );
+
+            most_costly = most_costly.max(expensive.ticks());
+            if most_costly >= 2 {
+                break;
+            }
+        }
 
         assert!(
-            expensive.ticks() >= 2 && expensive.ticks() < 200,
-            "a twenty-millisecond budget at two milliseconds a tick took {} ticks",
-            expensive.ticks()
+            most_costly >= 2,
+            "the best of {ATTEMPTS} frames, each given twenty milliseconds and ticks costing two, \
+             took {most_costly} ticks. Either the budget is examined before a tick rather than \
+             between ticks - so a frame is cut off at one - or this machine was too loaded to \
+             spare twenty uninterrupted milliseconds {ATTEMPTS} times over, and the measurement \
+             was not made"
         );
         assert!(
-            took < Duration::from_millis(500),
-            "a frame spent {took:?} inside the simulation, so the window is unresponsive for \
-             that long at a time"
+            quickest < Duration::from_millis(500),
+            "the quickest frame of the lot spent {quickest:?} inside the simulation, so the \
+             window is unresponsive for that long at a time"
         );
     }
 
@@ -888,55 +993,101 @@ mod tests {
     /// the window goes on drawing, and the world stays exactly where the hand stopped it. A pause
     /// that came back `false` would close the window, which is the same key doing the opposite of
     /// what it says.
+    ///
+    /// # ⚠️ There is no clock in this test, and there used to be
+    ///
+    /// It was written against the real [`BUDGET`], opening with *"take a frame's worth of ticks
+    /// and check more than one happened"* - and that opening is a claim about how fast the
+    /// machine is. Under load it failed about half the time on this hardware with *"the run was
+    /// not going in the first place"*, because the thread was descheduled inside the eight
+    /// milliseconds and `advance` broke on the budget with one tick taken.
+    ///
+    /// **The failure was the lesser half of the problem.** The mutant this test exists to catch
+    /// (a pause examined once per frame instead of once per tick) takes *as many ticks as fit in
+    /// the budget*, so on a machine where only one fits, the mutant takes one too and the strong
+    /// assertion below passes. Relaxing the opening to *"at least one"* would therefore have
+    /// bought a green test that proves nothing: the mutant was measured surviving a quarter of
+    /// runs under load, silently, which is worse than the flake it replaced.
+    ///
+    /// So the budget is [`UNSPENDABLE`] throughout and the frames are bounded by [`SPARE`] - a
+    /// number this file chose - instead. The mutant now runs the whole run out inside the step,
+    /// which fails two assertions and reports the window closed, on any machine at any load. The
+    /// comparison the step assertion rests on is made twice over the same run under the same
+    /// budget: once before, and once at the end, where letting go of the pause takes every tick
+    /// left in one frame.
     #[test]
     fn the_run_can_be_paused_and_stepped() {
-        let mut run = Counted::new(1_000_000, true, Duration::ZERO);
-        let mut pace = Pace::new();
+        // What a frame does when nothing is holding it back, so that "a step is one tick" has
+        // something to be one tick *instead of*.
+        let mut loose = Counted::new(SPARE, true, Duration::ZERO);
+        assert!(
+            !advance(&mut loose, UNSPENDABLE, &mut going()),
+            "an unpaused frame did not run a {SPARE}-tick run out, so there is no frame here big \
+             enough for a step to be smaller than and nothing below is being tested"
+        );
+        assert_eq!(
+            loose.ticks(),
+            SPARE,
+            "an unpaused frame took {} of the {SPARE} ticks in front of it",
+            loose.ticks()
+        );
 
-        assert!(advance(&mut run, BUDGET, &mut pace));
-        let ran = run.ticks();
-        assert!(ran > 1, "the run was not going in the first place");
+        let mut run = Counted::new(SPARE, true, Duration::ZERO);
+        let mut pace = Pace::new();
 
         // The key.
         pace.pause();
         for frame in 0..5 {
             assert!(
-                advance(&mut run, BUDGET, &mut pace),
+                advance(&mut run, UNSPENDABLE, &mut pace),
                 "a paused run reported itself over on frame {frame}, so pausing closes the window"
             );
             assert_eq!(
                 run.ticks(),
-                ran,
+                0,
                 "a paused run took {} ticks over {} frames - so what is on the screen is a moving \
                  world with the word \"paused\" written over it",
-                run.ticks() - ran,
+                run.ticks(),
                 frame + 1
             );
         }
 
         // ⭐ And a step is *one*. This is the assertion the whole item is about: `advance` is
-        // given a whole frame's budget and a run whose ticks cost nothing, so a pause examined
-        // once per frame rather than once per tick would take hundreds of them here.
+        // given a budget nothing can exhaust and a run with sixty-four ticks in it, so a pause
+        // examined once per frame rather than once per tick takes all sixty-four and closes the
+        // window - which is what the two assertions below say, in that order.
         pace.step();
-        assert!(advance(&mut run, BUDGET, &mut pace));
+        assert!(
+            advance(&mut run, UNSPENDABLE, &mut pace),
+            "one press of the step key ran the whole run out and reported the window closed, \
+             because the pause is examined once per frame instead of once per tick"
+        );
         assert_eq!(
             run.ticks(),
-            ran + 1,
+            1,
             "one press of the step key took {} ticks, because the pause is examined once per \
              frame instead of once per tick",
-            run.ticks() - ran
+            run.ticks()
         );
 
         // And it stops again by itself.
-        assert!(advance(&mut run, BUDGET, &mut pace));
-        assert_eq!(run.ticks(), ran + 1, "a step left the run running");
+        assert!(advance(&mut run, UNSPENDABLE, &mut pace));
+        assert_eq!(run.ticks(), 1, "a step left the run running");
 
-        // Letting go starts it again.
+        // Letting go starts it again - and this is the same run, at the same budget, as the step
+        // above. One frame takes every tick left in it; the stepped frame took one.
         pace.pause();
-        assert!(advance(&mut run, BUDGET, &mut pace));
         assert!(
-            run.ticks() > ran + 1,
+            !advance(&mut run, UNSPENDABLE, &mut pace),
             "the run did not start again when it was un-paused"
+        );
+        assert_eq!(
+            run.ticks(),
+            SPARE,
+            "the frame that started the run again took {} of the {} ticks left, so something is \
+             still holding it back",
+            run.ticks() - 1,
+            SPARE - 1
         );
     }
 
@@ -996,15 +1147,16 @@ mod tests {
     /// frame"*, because the thread had been descheduled mid-loop and `advance` broke on the
     /// budget with a tick still to go.
     ///
-    /// A budget nothing can exhaust removes the clock from a test that was never about one.
-    /// `the_simulation_and_the_display_run_at_their_own_speeds` is where the budget *is* the
-    /// claim, and it keeps the real one.
+    /// A budget nothing can exhaust removes the clock from a test that was never about one -
+    /// [`UNSPENDABLE`], which `the_run_can_be_paused_and_stepped` was moved onto for the same
+    /// reason after failing the same way. `the_simulation_and_the_display_run_at_their_own_speeds`
+    /// is the only test here where the budget *is* the claim, and it keeps the real one.
     #[test]
     fn a_run_that_ends_on_its_own_closes_the_window() {
         let mut run = Counted::new(3, true, Duration::ZERO);
 
         assert!(
-            !advance(&mut run, Duration::from_secs(600), &mut going()),
+            !advance(&mut run, UNSPENDABLE, &mut going()),
             "a run with three ticks left in it did not report itself over"
         );
         assert_eq!(

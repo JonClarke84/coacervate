@@ -80,6 +80,7 @@ use crate::camera::Look;
 use crate::census::{Census, millions_of_years};
 use crate::controls::Ask;
 use crate::gpu::Gpu;
+use crate::series::{Sample, Series};
 use crate::settings::{DIALS, Dial, Dials};
 use coacervate_sim::world::World;
 use std::collections::BTreeMap;
@@ -95,19 +96,116 @@ const WIDTH: f32 = 208.0;
 /// How far the panel sits from the corner of the frame, in points.
 const INSET: f32 = 12.0;
 
-/// The most of a frame's height the controls are ever allowed to take.
+/// The most of a frame's height **the whole chrome** is ever allowed to take.
 ///
-/// ⚠️ **A fraction of the frame and not what is left over, and a window is what found it.** The
-/// panel is a fixed size in egui's *points*, and a point is 1.5 pixels on this machine's display -
-/// so the same panel that is 4.9% of a 1920 by 1080 dumped frame is a quarter of a 1280 by 720
-/// window. Bounded by the leftover room it would simply grow until it ran out, and on a window
-/// somebody had dragged small it would be nearly all of the picture, which is the exact opposite
-/// of SPEC section 12's *recessive*.
+/// ⚠️ **A fraction of the frame and not what is left over, and a window is what found it.**
+/// Bounded by the leftover room the controls would simply grow until they ran out, and on a window
+/// somebody had dragged small that is nearly all of the picture - the exact opposite of SPEC
+/// section 12's *recessive*.
 ///
-/// At two-fifths, a person who opens every fold at once on a small window gets a panel that
-/// scrolls rather than a panel that eats the world. On the dumped frame this project judges
-/// itself by it binds on nothing: the shipped arrangement is 260 points against a ceiling of 432.
-const CEILING: f32 = 0.4;
+/// ⭐ **Group C moved it from the controls to the column.** Group B's ceiling bounded the scroll
+/// area and nothing else, which was right while the controls were the last thing on the frame and
+/// is wrong now that the charts are under them: three separate bounds that each hold say nothing
+/// about their sum. So the readings, the controls and the charts share one ceiling, and the
+/// controls get what is left of it - which makes the chrome's share of the frame something that
+/// can be *stated* rather than measured and hoped for. See
+/// `the_chrome_is_a_small_part_of_whatever_it_is_drawn_into`, which multiplies this by the panel's
+/// width and asserts the product.
+///
+/// At eleven-twentieths, a person who opens every fold at once gets a panel that scrolls rather
+/// than a panel that eats the world. On the dumped frame this project judges itself by it binds on
+/// nothing: the shipped arrangement is about 480 points of the 594 it is allowed.
+const CEILING: f32 = 0.55;
+
+/// ⭐⭐ **`Q29`.** How large one of egui's points is, in pixels of the frame it is drawn on.
+///
+/// # The fault this replaces
+///
+/// Group B handed egui the **display's** scale factor, which is what a normal application does and
+/// is wrong for this one. A point was 1.5 pixels on this machine whatever it was drawn into, so a
+/// panel of a fixed number of points was a fixed number of *pixels* - and a fixed number of pixels
+/// is a small part of a large frame and a large part of a small one. Measured: **4.9% of a 1920 by
+/// 1080 dumped frame and 22.1% of the 1280 by 720 window this program opens.** Same panel, same
+/// code, same style; a fifth of the picture.
+///
+/// # The rule
+///
+/// **A point is a pixel of the frame this project judges itself on** - `DUMP_WIDTH` by
+/// `DUMP_HEIGHT`, the size every measurement in `frame.rs` and every note in `docs/PHASE5.md` is
+/// taken at. On a smaller frame a point is proportionally smaller, on a larger one proportionally
+/// larger, so **the chrome is the same fraction of whatever it is drawn into** - which is the
+/// whole of what `Q29` asked for. The lesser of the two ratios is taken, so a window dragged into
+/// a tall thin shape shrinks the chrome by its width rather than growing it by its height.
+///
+/// # And the two bounds, because a bare ratio is wrong at both ends
+///
+/// - ⚠️ **It never goes below [`SMALLEST`].** Below about nine pixels a monospace numeral stops
+///   being something a person can read from across a room, and SPEC section 12's *monospace
+///   numerics* is a promise about reading. A panel too small to read is a worse answer than a
+///   panel too large, because at least the large one can be turned off with `S`.
+/// - ⚠️ **It never goes above the display's own scale.** A point larger than the desktop's point
+///   is chrome that is physically bigger than every other window on the screen - which is what
+///   Group B shipped, and is the fault. On a 3840 by 2160 window on an unscaled display the ratio
+///   asks for 2.0 and the display says a point is a pixel, so a pixel it is.
+///
+/// At 1920 by 1080 with an unscaled display this is exactly 1.0, which is what the whole of Group
+/// A and Group B was looked at through: **every frame this project has dumped is unchanged.**
+fn chrome_scale(frame: (u32, u32), display: f32) -> f32 {
+    let across = points(frame.0) / points(crate::DUMP_WIDTH);
+    let down = points(frame.1) / points(crate::DUMP_HEIGHT);
+
+    across.min(down).min(display).max(SMALLEST)
+}
+
+/// The smallest a point is ever allowed to be, in pixels.
+///
+/// ⚠️ **Legibility, and it was arrived at by looking.** [`GLYPH`] is eleven points, so this is a
+/// numeral about nine pixels tall - which on the 1280 by 720 window this program opens is small
+/// and is readable, and is what the fourth dump-look-adjust round of Group C settled on. The bare
+/// ratio there is 0.667, which gives a seven-pixel glyph: still legible on a magnified crop and
+/// not legible on a screen.
+///
+/// It is the one place the chrome is allowed to be a larger fraction of a small frame than of a
+/// large one, and it is deliberately the *only* one.
+const SMALLEST: f32 = 0.8;
+
+/// How tall one chart is, in points.
+///
+/// ⚠️ **A sparkline and not a graph, and that is the whole of how `C2` stays inside SPEC section
+/// 12's register.** A chart with an axis on it has tick marks, numbers along the bottom and a
+/// legend, which between them are half a dozen bright small things in the corner of a picture that
+/// is supposed to nearly disappear. At twenty points beside a seven-character name, a chart is the
+/// same shape as a row of readings - a label on the left and something to look at on the right -
+/// and the panel gains a third block of the same rhythm rather than a dashboard.
+///
+/// What it costs is that no chart here can be read as a *quantity*. That is deliberate: the
+/// readings panel directly above prints every one of these numbers as a figure, and a second copy
+/// of a number is the thing `census.rs` exists to argue against. A chart is for the shape.
+const TRACE: f32 = 20.0;
+
+/// How many monospace characters the charts' name column is given.
+///
+/// `biomass` is the longest of the three. The same device as [`UNITS`]: a reserved width rather
+/// than a padded string, so the three traces begin on the same pixel.
+const CHART_NAME: u8 = 7;
+
+/// How tall the charts panel is, in points - contents, margins and border together.
+///
+/// ⚠️ **Known before it is laid out, because the controls above it are bounded by what is left of
+/// [`CEILING`]'s column once the charts have had their share.** A height that could only be
+/// measured after the fact would mean the ScrollArea above being sized by last frame's charts,
+/// which is exactly the one-frame lag Group B's settle loop exists to remove.
+///
+/// Three traces, the two gaps between them, [`surround`]'s eight points of padding above and below
+/// and its one-point border on each edge.
+const CHARTS: f32 = 3.0 * TRACE + 2.0 * SPACING + 18.0;
+
+/// The vertical gap between two rows of the chrome, in points.
+///
+/// Named because [`CHARTS`] has to do arithmetic with it, and a panel whose reserved height and
+/// actual height were computed from two different numbers would be a panel that slowly grew past
+/// its own ceiling.
+const SPACING: f32 = 3.0;
 
 /// How far the controls sit below the readings, in points.
 ///
@@ -220,6 +318,69 @@ const TRACK: egui::Color32 = egui::Color32::from_rgb(30, 40, 47);
 /// and not enough to be brighter than the figures on the panel above.
 const LEVEL: egui::Color32 = egui::Color32::from_rgb(74, 92, 102);
 
+/// ⭐ **`C2`.** What a chart's own trace is filled with.
+///
+/// ⚠️ **Below [`TRACK`], and the frame is what put it there.** Round one used the rail's own value
+/// on the grounds that a chart should be a groove in the panel like a slider is - but a rail is
+/// four points tall and seventy-four wide, and a trace is *twenty* points tall and a hundred and
+/// fifty wide. The same colour over eight times the area is not the same weight, and at 3× the
+/// `alive` chart read as a solid block with a line on it rather than as a line with a shadow under
+/// it. Here the body of a trace is barely above the panel and the edge does the work.
+const CHART_FILL: egui::Color32 = egui::Color32::from_rgb(20, 27, 32);
+
+/// The line along the top of a trace.
+///
+/// One step above the fill, so that a quantity which has not changed for an hour is still a *line*
+/// rather than a rectangle - and so that the eye can follow the shape without the fill having to
+/// be bright enough to see on its own.
+const CHART_EDGE: egui::Color32 = LEVEL;
+
+/// ⭐⭐ **The ledger chart, bottom to top**, in the order [`readings`] lists the accounts.
+///
+/// # ⚠️ Four bands and not five, and the fifth is not missing
+///
+/// SPEC section 5 has five accounts and the readings panel prints five rows, but `light` is not a
+/// place energy *is* - it is where the energy in the other four came from, and it is already
+/// inside them. A fifth band would count every joule twice. What it does instead is grow the whole
+/// stack: the chart is drawn as shares of the total, so the total rising is the light arriving.
+///
+/// # ⚠️ Why the shares and not the amounts
+///
+/// Because the amounts cannot share an axis. Over the shipped 30,000-tick run the field holds
+/// 139,886, `detritus` holds 3,713 and `dissipated` holds 270,506 - so a chart scaled to the
+/// largest of them draws detritus as a line along the bottom and biomass as the same line. As
+/// shares of a conserved total they are four bands that fill the box, and what the chart says is
+/// **where the world's energy is**, which is the question SPEC section 5 exists to answer.
+///
+/// # ⭐ What is filled is what the world still has, and the frame is what decided that
+///
+/// Round one drew all four bands at values a hair apart, on the reasoning that four large dark
+/// regions would be quieter than two. Magnified 4× it was a box with a dotted line in it: the
+/// composition was there and no eye could find it, which is a chart that costs twenty points of
+/// panel and says nothing.
+///
+/// So one band carries the picture and the others get out of its way. **`field` is filled and
+/// `dissipated` is not**, which makes the shaded part of the box *the energy the world still has*
+/// (a region that starts nearly full and drains over the run). The other way round works equally
+/// well as arithmetic and reads backwards: a growing grey block that means *gone*.
+///
+/// # ⚠️ And the brightest band is the smallest one
+///
+/// `biomass` is about a twentieth of the total, so it is a hairline sitting on top of the water -
+/// and it is the line that says where what is alive ends and what has been spent begins. Giving it
+/// [`LEVEL`] is the same decision `frame.rs` makes about the picture underneath: the brightest
+/// thing is the thing that is alive.
+const ACCOUNTS: [egui::Color32; 4] = [
+    // field - the water the world still has, and the one band that carries the picture
+    egui::Color32::from_rgb(28, 37, 44),
+    // biomass - what is alive, and the brightest hairline on the chrome
+    LEVEL,
+    // detritus - what was alive
+    egui::Color32::from_rgb(46, 60, 69),
+    // dissipated - spent for good, and drawn as the absence it is
+    egui::Color32::from_rgb(12, 16, 20),
+];
+
 /// How wide the rail of a slider is, in points.
 ///
 /// The panel is [`WIDTH`] and a setting's name takes most of it, so the rail is what is left. A
@@ -311,7 +472,7 @@ pub fn recessive() -> egui::Style {
     visuals.handle_shape = egui::style::HandleShape::Rect { aspect_ratio: 0.4 };
 
     let spacing = egui::style::Spacing {
-        item_spacing: egui::vec2(6.0, 3.0),
+        item_spacing: egui::vec2(6.0, SPACING),
         slider_width: RAIL,
         // A slider's own number is drawn in a drag box, and the default is wide enough for six
         // digits and a sign. Four places after the point is the most any dial here shows.
@@ -390,6 +551,135 @@ pub fn readings(world: &World) -> Vec<Reading> {
         Reading::new("dissipated", format!("{:.0}", ledger.dissipated()), ""),
         Reading::new("light", format!("{:.0}", ledger.influx_total()), ""),
     ]
+}
+
+/// ⭐ **`C2`.** What the charts show, as the shapes they are drawn as.
+///
+/// A free function over a [`Series`], for the same reason [`readings`] is a free function over a
+/// world: *what the charts say* is then checkable without a graphics card or a tessellator, and
+/// everything after this is layout. See
+/// `the_charts_show_population_biomass_and_the_ledger_over_time`.
+///
+/// Three charts, and the third is a different kind of thing from the first two - see [`ACCOUNTS`].
+/// A series with nothing in it produces three charts with no readings in them rather than no
+/// charts, because a run that has not reached its first hundredth tick should show three empty
+/// boxes and not a panel that grows a third block a second and a half in.
+#[must_use]
+pub fn charts(history: &Series) -> Vec<Chart> {
+    let samples = history.samples();
+
+    vec![
+        // The population. `Census::of`'s own figure, as it was every hundred ticks.
+        trace(
+            "alive",
+            samples.iter().map(|sample| counted(sample.population)),
+        ),
+        // Energy in living organisms, which is what a population figure cannot say on its own: a
+        // world of four thousand starving bodies and a world of four thousand fed ones are the
+        // same count and different worlds.
+        trace("biomass", samples.iter().map(|sample| sample.biomass)),
+        stack(samples),
+    ]
+}
+
+/// One chart on the panel: what it is, and the bands stacked up its height.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Chart {
+    /// What it is, in the left column - the same place a reading's name is.
+    pub name: &'static str,
+
+    /// The bands, bottom first. A chart with one band is a trace; a chart with several is a
+    /// composition that fills the box.
+    pub bands: Vec<Band>,
+}
+
+/// One region of a chart, from the band below it up to its own edge.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Band {
+    /// What it is filled with.
+    pub fill: egui::Color32,
+
+    /// Its top edge at each reading, oldest first, as a fraction of the chart's own height.
+    ///
+    /// ⚠️ **Cumulative**: it includes every band below it, so a band is drawn as the region
+    /// between this and the one before rather than as a height that has to be added up at draw
+    /// time. It is what makes a stacked chart and a single trace the same drawing code.
+    pub top: Vec<f32>,
+}
+
+/// One quantity over the run, as a single band scaled to its own greatest reading.
+///
+/// ⚠️ **Each chart has its own scale and there is no number saying what it is.** That is the
+/// honest shape for a sparkline: what it can say is *how this went*, and what it cannot say is how
+/// big it got - which the readings panel directly above prints as a figure. A shared scale would
+/// be worse in both directions, because a population of two thousand and a biomass of a hundred
+/// and forty thousand do not go on one axis.
+fn trace(name: &'static str, values: impl Iterator<Item = f32>) -> Chart {
+    let values: Vec<f32> = values.collect();
+    let peak = values.iter().copied().fold(0.0_f32, f32::max);
+
+    let top = values
+        .iter()
+        .map(|value| {
+            if peak > 0.0 {
+                (value / peak).clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        })
+        .collect();
+
+    Chart {
+        name,
+        bands: vec![Band {
+            fill: CHART_FILL,
+            top,
+        }],
+    }
+}
+
+/// SPEC section 5's accounts as shares of the energy the world is holding. See [`ACCOUNTS`].
+fn stack(samples: &[Sample]) -> Chart {
+    let mut bands = ACCOUNTS.map(|fill| Band {
+        fill,
+        top: Vec::with_capacity(samples.len()),
+    });
+
+    for sample in samples {
+        let total = sample.total();
+        let mut running = 0.0_f32;
+
+        for (band, held) in bands.iter_mut().zip([
+            sample.field,
+            sample.biomass,
+            sample.detritus,
+            sample.dissipated,
+        ]) {
+            // A world whose books have not been opened holds nothing at all, and nought over
+            // nought is not a share. Four empty bands is the right picture of it.
+            if total > 0.0 {
+                running += held / total;
+            }
+
+            band.top.push(running.clamp(0.0, 1.0));
+        }
+    }
+
+    Chart {
+        name: "energy",
+        bands: bands.into(),
+    }
+}
+
+/// A population, as a height on a chart.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a count of organisms, bounded by CLAUDE.md's hundred-thousand arena, on its way to \
+              being a fraction of a box twenty points tall. A 32-bit float holds every whole \
+              number up to sixteen million exactly, so nothing is lost at all"
+)]
+fn counted(value: u32) -> f32 {
+    value as f32
 }
 
 /// One line of the panel: what it is, what it is, and what it is measured in.
@@ -594,13 +884,15 @@ impl Chrome {
 
     /// Lay the panel out over a frame of this size, reading this world.
     ///
-    /// `scale` is what one of egui's points is worth in pixels - a window's own scale factor,
-    /// and one for a dumped frame, whose pixels are its own.
+    /// ⭐ **`display` is the *display's* scale factor and not the chrome's**, which is `Q29`. A
+    /// window hands over what winit reports and a headless dump hands over one; what a point is
+    /// actually worth on this frame is [`chrome_scale`]'s answer, and it is a fraction of the
+    /// frame rather than a fact about the monitor.
     ///
     /// # Panics
     ///
     /// If the frame has no width or no height.
-    pub fn compose(&mut self, world: &World, frame: (u32, u32), scale: f32) {
+    pub fn compose(&mut self, world: &World, history: &Series, frame: (u32, u32), display: f32) {
         // ⭐ **A3, and it is this line.** Everything below builds widgets; nothing below is
         // reached. A panel added in Group B is hidden by this without anybody remembering to
         // hide it, which is the whole of what Q24 asked for.
@@ -624,10 +916,18 @@ impl Chrome {
             frame.1
         );
 
+        // ⭐⭐ **`Q29`, and it is this line.** What a point is worth is decided by the frame the
+        // chrome is being drawn into, bounded by the display's own idea of one.
+        let scale = chrome_scale(frame, display);
         self.scale = scale;
         self.context.set_pixels_per_point(scale);
 
         let rows = readings(world);
+
+        // ⭐ **`C2`.** Worked out once and handed to every settle pass, like the readings: a
+        // composition asked for again is the same picture, and re-scaling four thousand readings
+        // per pass would be the one expensive thing on this panel.
+        let traces = charts(history);
 
         // ⚠️⚠️ **egui's very first pass over a fresh `Context` draws nothing at all**, and this
         // loop is the whole of the answer to it. Measured rather than guessed - see
@@ -670,7 +970,7 @@ impl Chrome {
         let mut jobs = Vec::new();
 
         for _ in 0..SETTLES {
-            let (output, at) = self.pass(&rows, frame, scale, std::mem::take(&mut felt));
+            let (output, at) = self.pass(&rows, &traces, frame, scale, std::mem::take(&mut felt));
 
             self.deltas.append(output.textures_delta);
             let drawn = self
@@ -698,6 +998,7 @@ impl Chrome {
     fn pass(
         &mut self,
         rows: &[Reading],
+        traces: &[Chart],
         frame: (u32, u32),
         scale: f32,
         felt: Vec<egui::Event>,
@@ -714,11 +1015,10 @@ impl Chrome {
             ..egui::RawInput::default()
         };
 
-        // How tall the frame is in egui's points, and the most of it the controls may have. See
-        // [`CEILING`], which a window measured.
+        // How tall the frame is in egui's points, and the most of it the **whole column** may
+        // have. See [`CEILING`], which a window measured and Group C moved off the controls.
         let tall = points(frame.1) / scale;
-        let ceiling = tall - INSET * 2.0;
-        let allowed = tall * CEILING;
+        let column = (tall * CEILING).min(tall - INSET * 2.0);
 
         // The closure below writes into three of this struct's fields while `run_ui` is reading
         // another, so `self` is taken apart into the fields rather than passed whole. The
@@ -776,9 +1076,10 @@ impl Chrome {
                         // no indication that they were there.
                         egui::ScrollArea::vertical()
                             .max_height(
-                                (ceiling - readings.height() - GAP)
-                                    .min(allowed)
-                                    .max(GLYPH * 4.0),
+                                // ⭐ **Group C.** What is left of the column once the readings
+                                // above and the charts below have had their share. See [`CEILING`]
+                                // and [`CHARTS`].
+                                (column - readings.height() - GAP - CHARTS - GAP).max(GLYPH * 4.0),
                             )
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
@@ -789,7 +1090,24 @@ impl Chrome {
                 .response
                 .rect;
 
-            placed = Some(readings.union(controls));
+            // ⭐ **`C2`.** Group C's panel, under Group B's and the same width again - so the
+            // chrome is still one column down the left-hand edge of the frame rather than three
+            // objects on it. `interactable` is false: the charts are looked at, like the readings.
+            let charts = egui::Area::new(egui::Id::new("coacervate charts"))
+                .fixed_pos(egui::pos2(INSET, controls.max.y + GAP))
+                .movable(false)
+                .interactable(false)
+                .fade_in(false)
+                .show(&context, |ui| {
+                    surround().show(ui, |ui| {
+                        ui.set_width(WIDTH);
+                        lay_out_charts(ui, traces);
+                    });
+                })
+                .response
+                .rect;
+
+            placed = Some(readings.union(controls).union(charts));
         });
 
         (output, placed)
@@ -851,6 +1169,166 @@ fn lay_out(ui: &mut egui::Ui, rows: &[Reading]) {
             });
         });
     }
+}
+
+/// ⭐ **`C2`.** One row per chart: the name on the left, the trace on the right.
+///
+/// The same grammar as [`lay_out`] one panel above, deliberately - a dim name in a reserved column
+/// and the thing that changes to the right of it. What sits in the right-hand column is a shape
+/// instead of a numeral, and nothing else about the row is different.
+fn lay_out_charts(ui: &mut egui::Ui, charts: &[Chart]) {
+    let font = egui::FontId::monospace(GLYPH);
+    let column = ui.fonts_mut(|fonts| fonts.glyph_width(&font, '0')) * f32::from(CHART_NAME);
+
+    for chart in charts {
+        ui.horizontal(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(column, TRACE),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.label(egui::RichText::new(chart.name).color(LABEL));
+                },
+            );
+
+            // ⚠️ `allocate_space` and not `allocate_exact_size`, because a chart senses nothing.
+            // A widget that answered a hover would put egui's own tooltip machinery over a panel
+            // whose whole argument is that nothing on it moves.
+            let (_, rect) = ui.allocate_space(egui::vec2(ui.available_width(), TRACE));
+            draw_chart(ui.painter(), rect, chart);
+        });
+    }
+}
+
+/// Paint one chart's bands into its box.
+///
+/// # ⚠️ The readings are decimated to the width of the box before anything is drawn
+///
+/// A series holds up to `series::CAPACITY` readings and a chart is about a hundred and fifty
+/// points wide, so at the far end of a long run there are twenty-seven readings behind every
+/// column. Handing all of them to the tessellator would be four thousand line segments per chart
+/// per frame for a picture that cannot show more than one point per column.
+///
+/// ⚠️ **The reading nearest the column is taken, rather than the mean of the readings behind it**,
+/// which is `series.rs`'s rule about thinning applied to drawing: a mean of two readings is a
+/// third reading that no tick of the world ever produced. Every point on every chart in this
+/// program is a reading the world actually gave.
+fn draw_chart(painter: &egui::Painter, rect: egui::Rect, chart: &Chart) {
+    let Some(first) = chart.bands.first() else {
+        return;
+    };
+
+    let readings = first.top.len();
+    if readings < 2 {
+        // One reading is a dot and no readings is nothing. Either way there is no shape yet, and
+        // an empty box is the honest picture of a run that has not been going long enough.
+        return;
+    }
+
+    let columns = columns_of(rect.width(), readings);
+    let across =
+        |column: u16| rect.left() + rect.width() * f32::from(column) / f32::from(columns - 1);
+    let reading = |column: u16| usize::from(column) * (readings - 1) / usize::from(columns - 1);
+
+    // ⚠️⚠️ **A band that holds anything at all is drawn at least [`THIN`] tall, and a *window*
+    // is what found it.** `biomass` is about a twentieth of the world's energy, which in a box
+    // sixteen pixels high is four fifths of a pixel - and a mesh is handed to the card as
+    // triangles rather than through epaint's tessellator, so it gets no feathering at all and a
+    // sub-pixel band is filled only in the columns where it happens to cross a pixel's centre.
+    // On the 1920 by 1080 dump it came out as a line; in the 1280 by 720 window, where a point
+    // is 0.8 pixels, it came out as a row of **dashes** - which reads as a rendering fault
+    // rather than as the thing that is alive.
+    //
+    // The cost, stated rather than hidden: a band forced up to a pixel is drawn larger than it
+    // is, and in the worst case - three slivers at once - three points of a twenty-point box go
+    // on saying *there is something here*. That is the right trade for this chart, because a
+    // sliver that rounds away to nothing is the one reading it must not give.
+    //
+    // ⚠️ Only for a stack. A single trace is drawn through epaint's own line tessellator, which
+    // does feather, and a floor there would lift a population of nought off the bottom of its
+    // box - a chart of an extinct world showing a line above the floor.
+    let floor = chart.bands.len() > 1;
+
+    // Where the band below this one got to. The first band stands on the floor of the box.
+    let mut lower: Vec<f32> = (0..columns).map(|_| rect.bottom()).collect();
+
+    // ⚠️⚠️ **And what it *would* have got to, unfloored - which is a second list because the first
+    // one is a lie the moment [`THIN`] has lifted anything.** Written without this and measured:
+    // once `biomass` was floored, `detritus`'s own level was still computed from the true
+    // cumulative share and came out **below** the band beneath it, so its quad was inside out -
+    // and `dissipated`, whose top is always the top of the box, then painted from there down over
+    // everything the floor had just made room for. The picture on the frame was a `biomass` line
+    // that appeared and disappeared along its length, which is exactly what the fault looks like
+    // and is nothing like what it is. Whether a band holds anything is a question about the
+    // **readings**; where it is drawn is a question about the box.
+    let mut beneath: Vec<f32> = (0..columns).map(|_| 0.0).collect();
+
+    for band in &chart.bands {
+        let mut upper = Vec::with_capacity(usize::from(columns));
+        let mut shares = Vec::with_capacity(usize::from(columns));
+
+        for column in 0..columns {
+            let at = usize::from(column);
+            let share = band.top[reading(column)];
+            let under = lower[at];
+            let mut level = rect.bottom() - share * rect.height();
+
+            if floor && share > beneath[at] {
+                level = level.min(under - THIN);
+            }
+
+            // ⚠️ Never below the band beneath it and never outside the box, which between them
+            // are what make a quad a quad.
+            upper.push(level.clamp(rect.top(), under));
+            shares.push(share);
+        }
+
+        let mut mesh = egui::Mesh::default();
+        for column in 0..columns - 1 {
+            let (near, far) = (usize::from(column), usize::from(column) + 1);
+            let base =
+                u32::try_from(mesh.vertices.len()).expect("a chart is not four billion vertices");
+
+            mesh.colored_vertex(egui::pos2(across(column), upper[near]), band.fill);
+            mesh.colored_vertex(egui::pos2(across(column + 1), upper[far]), band.fill);
+            mesh.colored_vertex(egui::pos2(across(column + 1), lower[far]), band.fill);
+            mesh.colored_vertex(egui::pos2(across(column), lower[near]), band.fill);
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base, base + 2, base + 3);
+        }
+
+        painter.add(egui::Shape::mesh(mesh));
+
+        // The line along the top of a trace. Only for a chart that is one band: on a stack it
+        // would be three rules across the box, which is the gridlines this design does not have.
+        if chart.bands.len() == 1 {
+            painter.add(egui::Shape::line(
+                (0..columns)
+                    .map(|column| egui::pos2(across(column), upper[usize::from(column)]))
+                    .collect(),
+                egui::Stroke::new(1.0, CHART_EDGE),
+            ));
+        }
+
+        lower = upper;
+        beneath = shares;
+    }
+}
+
+/// The least a band of a stacked chart is drawn at, in points.
+///
+/// One and a half, which at [`SMALLEST`] - the smallest a point is ever worth - is a whole pixel
+/// and a fifth. See [`draw_chart`], where a window found what a dumped frame could not.
+const THIN: f32 = 1.5;
+
+/// How many columns a chart this wide is drawn in.
+///
+/// One per point of width, and never more than there are readings to draw - so a run three
+/// readings old is three steps rather than a hundred and fifty copies of three readings.
+fn columns_of(width: f32, readings: usize) -> u16 {
+    let across = u16::try_from(up(width)).unwrap_or(u16::MAX);
+    let held = u16::try_from(readings).unwrap_or(u16::MAX);
+
+    across.clamp(2, held.max(2))
 }
 
 /// ⭐ **`B1`, `B2` and `B4`: the whole of the controls panel.**
@@ -1144,22 +1622,37 @@ fn points(count: u32) -> f32 {
 }
 
 /// A rectangle in egui's points, as pixels on the frame, clamped to it.
+///
+/// ⚠️ **Rounded outwards, and grown by [`FEATHER`] on every side.** Both are about the same thing:
+/// the pixels the chrome is *entitled* to have touched. A scissor rectangle smaller than the panel
+/// clips the panel's own border away, and a rectangle that
+/// `egui_draws_over_the_world_without_clearing_it` excluded less than the panel from would demand
+/// that a pixel the panel legitimately drew on come back unchanged.
+///
+/// ⚠️ **`Q29` is what found this.** Until Group C every position here was a whole number of points
+/// at a scale of one, so a rounded conversion and an outward one were the same conversion and the
+/// doc comment saying *outward* was describing something the code did not do. At a scale of 0.8
+/// the panel's corner lands on pixel 9.6, rounding puts it at 10, and the row of pixels at 9 -
+/// which the panel's own border is drawn across - is outside the rectangle the chrome claims. The
+/// test failed the moment the scale stopped being one, which is the useful kind of latent fault.
 fn pixels_of(rect: egui::Rect, scale: f32, frame: (u32, u32)) -> [u32; 4] {
-    let left = whole(rect.min.x * scale).min(frame.0);
-    let top = whole(rect.min.y * scale).min(frame.1);
-    let right = whole(rect.max.x * scale).clamp(left, frame.0);
-    let bottom = whole(rect.max.y * scale).clamp(top, frame.1);
+    let left = down(rect.min.x * scale - FEATHER).min(frame.0);
+    let top = down(rect.min.y * scale - FEATHER).min(frame.1);
+    let right = up(rect.max.x * scale + FEATHER).clamp(left, frame.0);
+    let bottom = up(rect.max.y * scale + FEATHER).clamp(top, frame.1);
 
     [left, top, right - left, bottom - top]
 }
 
-/// A coordinate in points, as a whole number of pixels.
+/// How far past its own edge a stroke is allowed to have reached, in pixels.
 ///
-/// Rounded outwards - down at the near edge, up at the far one, which is what the two callers
-/// want between them: a scissor rectangle that covered less than the panel would clip its own
-/// border away, and a rectangle that `egui_draws_over_the_world_without_clearing_it` excluded
-/// less than the panel from would demand that a pixel the panel legitimately drew on be
-/// untouched.
+/// epaint antialiases by feathering a shape outwards over about a pixel, so the border of a panel
+/// whose rectangle ends at 9.6 has put some ink on the pixel at 8. One pixel of slack on each side
+/// of a panel two hundred across costs the A1 measurement nothing and is the difference between a
+/// claim that is true and a claim that is nearly true.
+const FEATHER: f32 = 1.0;
+
+/// A coordinate in points, as the whole pixel at or below it.
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -1168,8 +1661,18 @@ fn pixels_of(rect: egui::Rect, scale: f32, frame: (u32, u32)) -> [u32; 4] {
               negative are both taken before the conversion, so there is nothing left to \
               truncate and nothing left to lose a sign"
 )]
-fn whole(value: f32) -> u32 {
-    value.max(0.0).round() as u32
+fn down(value: f32) -> u32 {
+    value.max(0.0).floor() as u32
+}
+
+/// A coordinate in points, as the whole pixel at or above it.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the same conversion as `down`, at the far edge of the same rectangle"
+)]
+fn up(value: f32) -> u32 {
+    value.max(0.0).ceil() as u32
 }
 
 /// What the card needs to know about the frame the chrome is being drawn on.
@@ -1564,12 +2067,13 @@ impl Painter {
 
 #[cfg(test)]
 mod tests {
-    use super::{Chrome, readings, recessive};
+    use super::{Chrome, charts, readings, recessive};
     use crate::census::{Census, millions_of_years};
     use crate::controls::Ask;
     use crate::frame::Renderer;
     use crate::gpu::testing::shared;
     use crate::scene::{Instance, Scene, kind_number};
+    use crate::series::Series;
     use crate::settings::{DIALS, Dial, Dials};
     use coacervate_sim::cell::CellKind;
     use coacervate_sim::config::spec_defaults;
@@ -1584,18 +2088,16 @@ mod tests {
     /// than the whole of it, and small enough that six of them cost a fraction of a second.
     const FRAME: (u32, u32) = (512, 288);
 
-    /// A world with a few ticks on it, so the ledger has moved and the clock is not nought.
-    fn ticked(ticks: u64) -> World {
-        let config = spec_defaults()
-            .validate()
-            .expect("SPEC section 3's defaults are a world");
-        let mut world = World::new(&config);
-
-        for _ in 0..ticks {
-            world.tick();
-        }
-
-        world
+    /// A world with a few ticks on it and something alive in it, and the series taken as it ran.
+    ///
+    /// ⚠️ **It has a *population* since Group C, and that is not a detail.** Until the charts
+    /// landed this was `World::new` and some ticks, which is empty water: every figure the panel
+    /// prints was nought, so `the_panel_reports_what_the_world_is_doing` was comparing nought
+    /// against nought and the `alive` chart would have been a flat line at the bottom of its box.
+    /// `series::testing` is where the seeding lives, because `coacervate-app`'s `founding.rs`
+    /// cannot be reached from this crate.
+    fn ticked(ticks: u64) -> (World, Series) {
+        crate::series::testing::living(ticks)
     }
 
     /// A world with light all over it, including underneath where the panel goes.
@@ -1651,10 +2153,18 @@ mod tests {
     /// than being copied.
     #[test]
     fn the_panel_reports_what_the_world_is_doing() {
-        let world = ticked(400);
+        let (world, _) = ticked(400);
         let census = Census::of(&world);
         let ledger = world.ledger();
         let panel = said(&world);
+
+        // ⚠️ And there is something alive to report on, which until Group C there was not: every
+        // claim below is satisfied by a panel of noughts over empty water.
+        assert!(
+            census.population > 0,
+            "the world this panel is reporting on has nothing alive in it, so every figure \
+             compared below is nought against nought"
+        );
 
         // CLAUDE.md's deep time: a tick count is never shown as a tick count.
         assert!(
@@ -1738,10 +2248,10 @@ mod tests {
             return;
         };
 
-        let world = ticked(400);
+        let (world, series) = ticked(400);
         let mut chrome = Chrome::new(gpu, shipped());
 
-        chrome.compose(&world, (1280, 720), 1.0);
+        chrome.compose(&world, &series, (1280, 720), 1.0);
         let panel = chrome
             .occupies()
             .expect("the chrome is not hidden, so there is a panel somewhere");
@@ -1752,7 +2262,7 @@ mod tests {
 
         chrome.toggle();
         assert!(chrome.hidden(), "the switch did not go on");
-        chrome.compose(&world, (1280, 720), 1.0);
+        chrome.compose(&world, &series, (1280, 720), 1.0);
         assert_eq!(
             chrome.occupies(),
             None,
@@ -1762,12 +2272,198 @@ mod tests {
         // And back again, because a mode that could only be entered would be a mode nobody
         // would ever use.
         chrome.toggle();
-        chrome.compose(&world, (1280, 720), 1.0);
+        chrome.compose(&world, &series, (1280, 720), 1.0);
         assert!(
             chrome.occupies().is_some(),
             "the chrome did not come back when the switch went off"
         );
     }
+
+    /// ⭐⭐ **`C2`.** The charts show the population, the biomass and the ledger over time.
+    ///
+    /// Two halves, and they are different claims.
+    ///
+    /// The first is about the **numbers**: `charts` is a free function over a [`Series`], so what
+    /// each chart is drawn from can be checked against the records it came from with no graphics
+    /// card anywhere near it. The population chart has to follow the populations, and the ledger
+    /// chart has to be SPEC section 5's accounts as shares of a whole that adds up.
+    ///
+    /// The second is about the **frame**, and it is the one that catches a chart that is a picture
+    /// of a chart: the same panel is drawn over the same world twice, once with the run's own
+    /// series behind it and once with an empty one, and the two frames have to differ. A `charts`
+    /// that returned perfect data into a `draw_chart` that painted nothing would pass the first
+    /// half and fail this.
+    #[test]
+    fn the_charts_show_population_biomass_and_the_ledger_over_time() {
+        let (world, series) = ticked(400);
+        let drawn = charts(&series);
+
+        assert_eq!(
+            drawn.iter().map(|chart| chart.name).collect::<Vec<_>>(),
+            ["alive", "biomass", "energy"],
+            "the charts are not the three C2 asks for"
+        );
+        assert!(
+            series.samples().len() >= 4,
+            "the series behind these charts holds {} records, which is not a shape",
+            series.samples().len()
+        );
+
+        // ⭐ The population chart is the populations, scaled to the greatest of them - so the
+        // reading that was the peak is at the top of the box and every other one is where it
+        // stands against it. Checked against the records rather than against a number written
+        // here, which is what makes it a claim about `charts` and not about this world.
+        let alive = &drawn[0].bands[0];
+        let peak = series
+            .samples()
+            .iter()
+            .map(|sample| sample.population)
+            .max()
+            .expect("there are records");
+        for (height, sample) in alive.top.iter().zip(series.samples()) {
+            let wanted = f64::from(sample.population) / f64::from(peak);
+            assert!(
+                (f64::from(*height) - wanted).abs() < 1e-6,
+                "the population chart puts tick {}'s reading of {} at {height} of the box, and \
+                 against a peak of {peak} it belongs at {wanted}",
+                sample.tick,
+                sample.population
+            );
+        }
+        assert!(
+            alive.top.iter().any(|height| *height > 0.0),
+            "every point on the population chart is on the floor of its box, so there is no shape \
+             on it at all"
+        );
+
+        // ⭐ The ledger chart is SPEC section 5's accounts as shares of a whole. Four bands, each
+        // at or above the one below it, and the top one filling the box exactly - which is the
+        // conservation law drawn: what the world holds is all of what the world holds.
+        let energy = &drawn[2];
+        assert_eq!(
+            energy.bands.len(),
+            4,
+            "the ledger chart is not four accounts"
+        );
+        for reading in 0..series.samples().len() {
+            let mut below = 0.0_f32;
+            for band in &energy.bands {
+                assert!(
+                    band.top[reading] >= below - 1e-6,
+                    "the ledger chart's bands are not stacked: {} sits below {below}",
+                    band.top[reading]
+                );
+                below = band.top[reading];
+            }
+
+            assert!(
+                (below - 1.0).abs() < 1e-4,
+                "the four accounts fill {below} of the ledger chart at reading {reading}, and \
+                 SPEC section 5 says they are everything the world is holding"
+            );
+        }
+
+        // And the other half: a chart with a run behind it draws something a chart with no run
+        // behind it does not.
+        let Some(gpu) = shared() else {
+            return;
+        };
+
+        let scene = lit();
+        let mut renderer = Renderer::new(gpu, FRAME.0, FRAME.1);
+        let mut chrome = Chrome::new(gpu, shipped());
+
+        chrome.compose(&world, &Series::new(), FRAME, 1.0);
+        renderer.forget();
+        let empty = renderer.render_through_under(gpu, &scene, &showing_all(), &mut chrome);
+
+        chrome.compose(&world, &series, FRAME, 1.0);
+        renderer.forget();
+        let charted = renderer.render_through_under(gpu, &scene, &showing_all(), &mut chrome);
+
+        let differing = charted
+            .pixels()
+            .iter()
+            .zip(empty.pixels())
+            .filter(|(with, without)| with != without)
+            .count();
+
+        assert!(
+            differing > 200,
+            "a frame drawn with 400 ticks of history behind it differs from one drawn with none \
+             in {differing} bytes, so the charts are boxes with nothing in them"
+        );
+    }
+
+    /// ⭐⭐ **`Q29`, stated as a measurement.** The chrome is a small part of *whatever it is
+    /// drawn into*.
+    ///
+    /// Group B shipped a panel sized in egui's **points**, and a point is whatever the display
+    /// says it is - 1.5 pixels on this machine. So the chrome that is 4.9% of a 1920 by 1080
+    /// dumped frame is about **22% of the 1280 by 720 window this program actually opens**, and
+    /// the person running it is looking at a fifth of their picture being interface. SPEC section
+    /// 12: *"The simulation is the subject; the chrome should nearly disappear."* A fifth of the
+    /// frame is not nearly disappearing, and no amount of quietness per widget fixes a size.
+    ///
+    /// The claim is deliberately stated over **both** shapes and both display scales at once,
+    /// because the fault is exactly that the two came apart: a bound that held on the frame this
+    /// project judges itself by and not on the window it opens is how `Q29` happened in the first
+    /// place.
+    #[test]
+    fn the_chrome_is_a_small_part_of_whatever_it_is_drawn_into() {
+        let Some(gpu) = shared() else {
+            return;
+        };
+
+        let (world, series) = ticked(400);
+        let mut chrome = Chrome::new(gpu, shipped());
+
+        for (frame, display) in [
+            // The frame every measurement in this project is taken on.
+            ((1920_u32, 1080_u32), 1.0_f32),
+            // The window this program opens, on this machine's display. `Q29`.
+            ((1280, 720), 1.5),
+            // And the same window on a display that is not scaled at all.
+            ((1280, 720), 1.0),
+            // Somebody who dragged it larger, on either.
+            ((2560, 1440), 1.5),
+        ] {
+            chrome.compose(&world, &series, frame, display);
+            let panel = chrome
+                .occupies()
+                .expect("the chrome is not hidden, so there is a panel somewhere");
+
+            let taken = f64::from(panel[2]) * f64::from(panel[3]);
+            let whole = f64::from(frame.0) * f64::from(frame.1);
+            let share = taken / whole;
+
+            println!(
+                "{} by {} at a display scale of {display}: the chrome is {panel:?}, {:.1}% of the \
+                 frame, at a point of {} pixels",
+                frame.0,
+                frame.1,
+                share * 100.0,
+                super::chrome_scale(frame, display)
+            );
+            assert!(
+                share <= SHARE,
+                "the chrome takes {:.1}% of a {} by {} frame at a display scale of {display}, \
+                 which is {panel:?} of {whole} pixels. SPEC section 12 asks for chrome that \
+                 nearly disappears, and the bound this project holds itself to is {:.1}%",
+                share * 100.0,
+                frame.0,
+                frame.1,
+                SHARE * 100.0
+            );
+        }
+    }
+
+    /// The most of any frame the chrome is allowed to be.
+    ///
+    /// A tenth. Group A's readings panel alone was 2% of a dumped frame and Group B's pair was
+    /// 4.9%, so this is not a bound that shapes the design - it is the line past which the chrome
+    /// has stopped being chrome, and it has to hold on the *window* as well as on the dump.
+    const SHARE: f64 = 0.10;
 
     /// ⚠️⚠️ **A panel appears on the very first frame it is asked for**, and that is not free.
     ///
@@ -1798,9 +2494,9 @@ mod tests {
             return;
         };
 
-        let world = ticked(400);
+        let (world, series) = ticked(400);
         let mut chrome = Chrome::new(gpu, shipped());
-        chrome.compose(&world, FRAME, 1.0);
+        chrome.compose(&world, &series, FRAME, 1.0);
 
         let first = chrome
             .occupies()
@@ -1809,18 +2505,26 @@ mod tests {
         // Where it was asked to be: `INSET` points in from the corner, at `WIDTH` plus its own
         // margins and border. A panel at the origin is egui's unsettled first pass showing
         // through.
-        let inset = super::whole(super::INSET);
-        assert_eq!(
-            [first[0], first[1]],
-            [inset, inset],
-            "the panel is at the corner of the frame rather than inset from it, which is what \
-             egui's unsettled first pass reports"
+        //
+        // ⚠️ In *pixels*, which since `Q29` is not the same number: a point on a frame this size
+        // is `chrome_scale`'s answer rather than one. Within a couple of pixels rather than
+        // exactly, because `pixels_of` rounds outward by [`FEATHER`] and egui puts an area's own
+        // corner on a whole pixel of the frame - neither of which this claim is about. What it is
+        // about is that the panel is *inset* and not at the origin, which is where egui's
+        // unsettled first pass reports it.
+        let inset = super::down(super::INSET * super::chrome_scale(FRAME, 1.0));
+        assert!(
+            first[0].abs_diff(inset) <= 2 && first[1].abs_diff(inset) <= 2,
+            "the panel came out at [{}, {}] rather than inset to [{inset}, {inset}], and the \
+             corner of the frame is what egui's unsettled first pass reports",
+            first[0],
+            first[1]
         );
 
         // And it does not move afterwards. A panel that settled into a different shape on its
         // second frame would be a thing changing size on the screen for no reason in the world.
         for again in 1..4 {
-            chrome.compose(&world, FRAME, 1.0);
+            chrome.compose(&world, &series, FRAME, 1.0);
             assert_eq!(
                 chrome.occupies(),
                 Some(first),
@@ -1848,7 +2552,7 @@ mod tests {
             return;
         };
 
-        let world = ticked(400);
+        let (world, series) = ticked(400);
         let scene = lit();
         let mut renderer = Renderer::new(gpu, FRAME.0, FRAME.1);
         let mut chrome = Chrome::new(gpu, shipped());
@@ -1859,7 +2563,7 @@ mod tests {
         renderer.forget();
         let bare = renderer.render_through(gpu, &scene, &showing_all());
 
-        chrome.compose(&world, FRAME, 1.0);
+        chrome.compose(&world, &series, FRAME, 1.0);
         let panel = chrome
             .occupies()
             .expect("the chrome is not hidden, so there is a panel somewhere");
@@ -1922,7 +2626,7 @@ mod tests {
             return;
         };
 
-        let world = ticked(400);
+        let (world, series) = ticked(400);
         let scene = lit();
         let mut renderer = Renderer::new(gpu, FRAME.0, FRAME.1);
         let mut chrome = Chrome::new(gpu, shipped());
@@ -1930,7 +2634,7 @@ mod tests {
         renderer.forget();
         let no_chrome_at_all = renderer.render_through(gpu, &scene, &showing_all());
 
-        chrome.compose(&world, FRAME, 1.0);
+        chrome.compose(&world, &series, FRAME, 1.0);
         renderer.forget();
         let shown = renderer.render_through_under(gpu, &scene, &showing_all(), &mut chrome);
         assert_ne!(
@@ -1941,7 +2645,7 @@ mod tests {
 
         // The key. Everything after this is what a person watching would see.
         chrome.toggle();
-        chrome.compose(&world, FRAME, 1.0);
+        chrome.compose(&world, &series, FRAME, 1.0);
         renderer.forget();
         let screensaver = renderer.render_through_under(gpu, &scene, &showing_all(), &mut chrome);
 
@@ -1985,7 +2689,7 @@ mod tests {
             return;
         };
 
-        let world = ticked(400);
+        let (world, series) = ticked(400);
         let mut chrome = Chrome::new(gpu, shipped());
 
         // `[light]` is the fold that opens by itself, so `influx` is on the panel from the first
@@ -1998,8 +2702,8 @@ mod tests {
         // Two compositions with no input at all, to settle the fonts and to give the widgets
         // somewhere to be. A slider cannot be found before it has been laid out once, which is
         // as true of a hand on a mouse as it is of this.
-        chrome.compose(&world, (1280, 720), 1.0);
-        chrome.compose(&world, (1280, 720), 1.0);
+        chrome.compose(&world, &series, (1280, 720), 1.0);
+        chrome.compose(&world, &series, (1280, 720), 1.0);
 
         let before = chrome.dials().value(dial);
         let accepted = chrome.dials().accepted();
@@ -2029,7 +2733,7 @@ mod tests {
                 pressed: true,
                 modifiers: egui::Modifiers::NONE,
             });
-            chrome.compose(&world, (1280, 720), 1.0);
+            chrome.compose(&world, &series, (1280, 720), 1.0);
 
             chrome.feels(egui::Event::PointerButton {
                 pos: at,
@@ -2037,7 +2741,7 @@ mod tests {
                 pressed: false,
                 modifiers: egui::Modifiers::NONE,
             });
-            chrome.compose(&world, (1280, 720), 1.0);
+            chrome.compose(&world, &series, (1280, 720), 1.0);
 
             if chrome.dials().accepted() > accepted {
                 moved = Some(at);
@@ -2100,10 +2804,10 @@ mod tests {
             return;
         };
 
-        let world = ticked(400);
+        let (world, series) = ticked(400);
         let mut chrome = Chrome::new(gpu, shipped());
 
-        chrome.compose(&world, (1280, 720), 1.0);
+        chrome.compose(&world, &series, (1280, 720), 1.0);
         assert!(
             chrome.asked().is_empty(),
             "a panel nobody has touched asked for something"
@@ -2128,7 +2832,7 @@ mod tests {
                 pressed: true,
                 modifiers: egui::Modifiers::NONE,
             });
-            chrome.compose(&world, (1280, 720), 1.0);
+            chrome.compose(&world, &series, (1280, 720), 1.0);
             pressed.extend(chrome.asked());
 
             chrome.feels(egui::Event::PointerButton {
@@ -2137,7 +2841,7 @@ mod tests {
                 pressed: false,
                 modifiers: egui::Modifiers::NONE,
             });
-            chrome.compose(&world, (1280, 720), 1.0);
+            chrome.compose(&world, &series, (1280, 720), 1.0);
             pressed.extend(chrome.asked());
 
             if pressed.contains(&Ask::Pause) {

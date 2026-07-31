@@ -71,6 +71,7 @@
 //! Until then `Ctrl-C` kills the process where it stands, which is survivable precisely because
 //! there is nothing on disk yet. The moment Phase 8's replay log exists that stops being true.
 
+use coacervate_render::series::Series;
 use coacervate_sim::config::{Config, RunConfig};
 use coacervate_sim::world::World;
 use std::sync::Arc;
@@ -157,6 +158,19 @@ pub struct Run {
     /// window's event loop, which cannot be handed a return value from a loop it does not own -
     /// and the reason a run stopped is news either way. `go` reads it from the same place.
     stopped: Option<Stop>,
+
+    /// ⭐ **Phase 6, `C1`.** What the world has been doing, every hundred ticks.
+    ///
+    /// ⚠️ **It lives on the run and not on the panel**, and that is the only place it can live.
+    /// SPEC section 13's records are on a grid of the world's own ticks, and the one thing in this
+    /// program that knows when a tick happened is [`Run::step`] - a window draws about every
+    /// eleventh tick and a headless run draws none at all, so a series sampled from anywhere else
+    /// would be a different series in the two builds. It is also where Phase 8 will want it:
+    /// `stats.bin` is a file in the *run's* directory.
+    ///
+    /// `coacervate-sim` still knows nothing about it. See `coacervate_render::series`, which
+    /// explains why the type lives over there beside the census it is made of.
+    series: Series,
 }
 
 impl Run {
@@ -180,6 +194,7 @@ impl Run {
             due: now,
             interrupt: interrupt.clone(),
             stopped: None,
+            series: Series::new(),
         }
     }
 
@@ -221,6 +236,11 @@ impl Run {
 
         self.wait();
         self.world.tick();
+
+        // ⭐ **Phase 6, `C1`.** The one line that records the run, on the one path a tick is
+        // taken by. Most calls do nothing: `Series::observe` reads the world only when its own
+        // tick count lands on SPEC section 13's hundred-tick grid.
+        self.series.observe(&self.world);
 
         None
     }
@@ -331,6 +351,12 @@ impl Run {
     #[must_use]
     pub fn world(&self) -> &World {
         &self.world
+    }
+
+    /// ⭐ **Phase 6, `C1`.** What the world has been doing, to chart.
+    #[must_use]
+    pub const fn series(&self) -> &Series {
+        &self.series
     }
 
     /// ⭐ **Phase 6, `B1` and `B4`.** Go on under these conditions from here.

@@ -292,7 +292,7 @@ fn main() -> ExitCode {
     // rather than a picture of what was hoped for, and empty water is a perfectly good answer
     // to what a world looks like when nothing is in it.
     let mut dump = filming.expect("a headless run that is drawing a frame opened a device first");
-    match dump.write(run.world(), path) {
+    match dump.write(run.world(), run.series(), path) {
         Ok(()) => {
             println!(
                 "Drew {} at {} by {}.",
@@ -352,6 +352,11 @@ impl coacervate_render::window::Watched for Run {
 
     fn world(&self) -> &World {
         Self::world(self)
+    }
+
+    /// ⭐ **Phase 6, `C1`.** The run's own record of itself, which the charts draw.
+    fn series(&self) -> &coacervate_render::series::Series {
+        Self::series(self)
     }
 
     fn ask_to_stop(&self) {

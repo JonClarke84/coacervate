@@ -11,9 +11,9 @@
 
 | | |
 | --- | --- |
-| **Phase 6** | in progress |
-| **Current group** | C — the charts (A and B are done) |
-| **Suite** | green — 201 tests, ~120s |
+| **Phase 6** | **done** |
+| **Current group** | — (A, B and C are done; `Q29` answered) |
+| **Suite** | green — **207 tests, 113s** |
 
 ---
 
@@ -397,16 +397,244 @@ measured: the sliders moved nothing, and neither did `B5`.
   a *stable* rectangle rather than on a non-empty one — so two dumps of the same tick are the same
   file, and a panel does not change size on its second frame.
 
-### Group C — the charts
+### Group C — the charts, and `Q29` — **done**
 
-- [ ] **C1. `a_time_series_is_recorded_as_the_run_goes`** — ⚠️ nothing like this exists;
-  `Census::of(world)` is a snapshot and `stats.bin` is Phase 8's. SPEC section 13 says these
-  records are small and fixed-size *"so the whole run's time-series always fits in memory for
-  charting"* — build the in-memory half now, in a shape Phase 8 can write to disk unchanged.
-- [ ] **C2. `the_charts_show_population_biomass_and_the_ledger_over_time`**
-- [ ] **C3. `the_series_is_bounded`** — an overnight run is tens of millions of ticks. A
-  record every 100 ticks unbounded is not a chart, it is a leak. Decide the bound and say so.
-- [ ] **C4. Look at a frame with the charts in it.**
+Three sparklines under the sliders, a bounded in-memory `stats.bin` behind them, and the panel
+resized so that the chrome is a fraction of *whatever it is drawn into* rather than a fixed number
+of pixels. **`Q29` is answered.**
+
+- [x] **C0. `the_chrome_is_a_small_part_of_whatever_it_is_drawn_into`** — ⭐⭐ **`Q29`, and it went
+  first because everything below it makes the panel taller.** A point is now a pixel of the
+  1920 × 1080 frame this project judges itself on, scaled with the surface and capped at the
+  display's own point. **22.1% → 8.3%** on the window this program opens. Measured at four sizes,
+  and the 30,000-tick dumped frame came back **byte-for-byte identical** to Group B's.
+- [x] **C1. `a_time_series_is_recorded_as_the_run_goes`** — `series.rs`. SPEC section 13's record,
+  **64 bytes, asserted at compile time**, taken every 100 ticks of the world's own clock by
+  `Run::step` — the one place in the program a tick happens. Every figure is `Census::of`'s or the
+  ledger's own. ⚠️ SPEC's `species counts` field is **deliberately absent**; see the decision table.
+- [x] **C2. `the_charts_show_population_biomass_and_the_ledger_over_time`** — `alive`, `biomass`
+  and `energy`, as three rows of the same grammar the readings panel uses: a dim name on the left
+  and a faint trace on the right. The ledger is the four accounts as **shares of a conserved
+  whole**, which is SPEC section 5 drawn.
+- [x] **C3. `the_series_is_bounded`** — ⭐⭐ **4,096 records, 256 KiB, allocated once and never
+  resized**, thinned by halving the resolution each time it fills. The arithmetic and what a
+  viewer loses are below.
+- [x] **C4. Looked at.** `docs/frames/phase6-charts.png` and `docs/frames/phase6-charts-window.png`,
+  seven dump-look-adjust rounds, three of them windows. Written up below.
+
+#### ⭐⭐ `Q29`, answered: a point is a pixel of the frame this project judges itself on
+
+Group B handed egui the **display's** scale factor, which is what a normal application does and is
+wrong for this one. A point was 1.5 pixels whatever it was drawn into, so a panel of a fixed number
+of points was a fixed number of *pixels* — and a fixed number of pixels is a small part of a large
+frame and a large part of a small one.
+
+```rust
+fn chrome_scale(frame: (u32, u32), display: f32) -> f32 {
+    let across = points(frame.0) / points(crate::DUMP_WIDTH);
+    let down = points(frame.1) / points(crate::DUMP_HEIGHT);
+
+    across.min(down).min(display).max(SMALLEST)
+}
+```
+
+The lesser of the two ratios, so a window dragged tall and thin shrinks the chrome by its width
+rather than growing it by its height. Two bounds, and a bare ratio is wrong at both ends: it never
+goes **below `SMALLEST` = 0.8**, because eleven points at less than that is a numeral nobody can
+read and a panel too small to read is a worse answer than one too large; and it never goes **above
+the display's own scale**, because a point larger than the desktop's point is chrome that is
+physically bigger than every other window on the screen — which is the fault.
+
+The second half is that `CEILING` moved **off the controls and onto the whole column**. Group B
+bounded the scroll area and nothing else, which was right while the controls were the last thing on
+the frame and is wrong now the charts are under them: three bounds that each hold say nothing about
+their sum. The readings, the controls and the charts now share one ceiling and the controls get
+what is left of it, so the chrome's share of a frame is something that can be *stated*.
+
+| Frame | Display | Before | **After** | A point is |
+| --- | --- | --- | --- | --- |
+| 1920 × 1080 — the dump | 1.0 | 4.9% | **6.0%** | 1.0 px |
+| **1280 × 720 — the window this program opens** | **1.5** | **22.1%** | **8.3%** | 0.8 px |
+| 1280 × 720 | 1.0 | 14.7% | **8.3%** | 0.8 px |
+| 2560 × 1440 | 1.5 | 12.4% | **5.8%** | 1.33 px |
+
+The 6.0% is Group B's 4.9% *plus the charts*, so the frame this project measures itself on grew by
+a fifth and the window it opens shrank by nearly two thirds. ⭐ **And the shipped 30,000-tick frame
+is unchanged**: dumped before and after the change, `md5 acc44185…` both times, byte for byte —
+because `chrome_scale((1920, 1080), 1.0)` is exactly 1.0 and the new ceiling binds on nothing there.
+
+⚠️ **What is left.** A window dragged down to the 320 × 180 floor `window.rs` allows is still mostly
+chrome, because `SMALLEST` stops the shrinking before the panel does. That is a window nobody uses
+and `S` empties it; the honest statement is that the chrome is bounded at a tenth of the frame for
+every size a person would actually work at, and is not bounded below that.
+
+#### ⭐⭐ `C3` — the bound is 256 KiB, and this is the arithmetic
+
+A headless run manages about 1,300 ticks a second on this machine (Phase 5 Group C measured a
+*watched* run at about 650, and **Q23** records that watching costs about half the speed). A record
+every hundred ticks, kept for ever:
+
+| Run | Ticks | Records | Bytes |
+| --- | --- | --- | --- |
+| 1 hour | 4.7 M | 47,000 | 3 MB |
+| 12 hours — CLAUDE.md's default wall-clock bound | 56 M | 562,000 | **36 MB** |
+| A week — which SPEC section 13 explicitly plans for | 786 M | 7.9 M | **503 MB** |
+
+Half a gigabyte of chart is half a gigabyte that is not a simulation, and it is the exact leak
+CLAUDE.md's *"allocate once, never grow — a simulation that cannot allocate cannot leak"* exists to
+prevent. So `Series` is an arena like the organisms and the grid: **`CAPACITY` = 4,096 records at
+`Sample`'s 64 bytes = 256 KiB, allocated in `Series::new` and never resized** — 0.0125% of
+CLAUDE.md's 2 GB resident target, for a week-long run as much as for a one-minute one.
+`the_series_is_bounded` drives a hundred times the capacity through it and asserts on
+`Vec::capacity` at every step, which is the claim stated as *the memory does not grow* rather than
+as *the length is bounded*.
+
+**Thinning, not a ring buffer**, and the two lose completely different things. A ring buffer of
+4,096 records at one per hundred ticks holds the last **409,600 ticks — about five minutes** of an
+overnight run. CLAUDE.md: *"You come back hours later and read what happened."* A chart that can
+only show the last five minutes has thrown away everything the person came back for. Thinning
+doubles the stride each time the arena fills and keeps every reading on the new grid, so the series
+always spans **the whole run**, at a resolution that falls as the run gets longer — which is the
+right trade for deep time.
+
+| Run | Ticks | Halvings | A reading every | Records held |
+| --- | --- | --- | --- | --- |
+| 7 minutes | 409,600 | 0 | 100 ticks | 4,096 |
+| 1 hour | 4.7 M | 4 | 1,600 ticks | 2,900 |
+| 12 hours | 56 M | 8 | 25,600 ticks | 2,195 |
+| A week | 786 M | 11 | 204,800 ticks | 3,840 |
+
+⚠️ **What a viewer loses, stated rather than buried.** After eight halvings a reading is one tick in
+25,600 — about twenty seconds of wall clock — and **anything that happened and was over inside that
+window is not in the series at all**. SPEC section 11's mass extinction (*"population falls by >50%
+within 5,000 ticks"*) shows on a 12-hour run's chart as a step between two adjacent readings rather
+than as a cliff with a shape. The chart says *that* it happened and roughly when; Phase 7's event
+log is what says the tick. A chart is for shape.
+
+⚠️ **A dropped reading is dropped, not averaged.** Averaging two readings makes a third that no tick
+of the world ever produced — a population of 1,712.5, a ledger that does not balance — and a chart
+drawn from those is a picture of a world that did not happen. Every point on every chart in this
+program is a reading the world actually gave.
+
+#### What Group C decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **⭐⭐ SPEC section 13's `species counts` field is omitted, deliberately** | `series.rs` | Phase 7 is what makes a species exist — clustering every 500 ticks, promotion after twenty consecutive samples, naming — and **Phase 7 lands before Phase 8**, so the field can be added by the phase that has something to put in it and nothing will have been written to disk in the meantime for it to be incompatible with. The alternative is a `species: u32` that is nought on every record of every run: a column of zeroes on a chart, and a number in a file that reads as *"this world has no species"*, which is false. CLAUDE.md: *"Don't over-build. No speculative abstractions."* An absent field cannot be believed; a wrong one can. |
+| **⭐⭐ The series lives on the `Run`, and the type lives in `coacervate-render`** | `run.rs`, `series.rs` | Two halves of one argument. It is **recorded** by `Run::step` because a reading is taken every hundred ticks *of the world's own clock* and the only thing that knows when a tick happened is the thing that took it — a window draws about every eleventh tick and a headless run draws none at all, so a series sampled from `draw` would be a different series in the two builds and neither would be SPEC's grid. And the **type** is in `coacervate-render` for `census.rs`'s reason, unchanged from Group A: a sample is made of a `Census` and the ledger, the panel that draws it is in that crate, and computing the same eleven numbers twice is what that module's opening paragraph argues against. It is also where Phase 8 wants it: `stats.bin` is a file in the run's own directory. |
+| **⭐ The grid is the world's tick count, not a count of calls** | `series.rs` | Which is what makes a series reproducible. Two runs of one seed record the same ticks; a run watched through a window records the same ticks as the same run headless; a run resumed from a Phase 8 snapshot lands on the same grid as the run it was taken from. A counter starting at nought whenever the series was constructed would have none of those. |
+| **⭐⭐ Thinning filters on the **tick** and not on the position in the list** | `series.rs` | And this is what keeps the spacing exactly even for ever. Dropping every other *record* leaves the survivors evenly spaced only until the next reading arrives, because `observe` records on multiples of the stride and the survivors are on multiples of it offset by wherever the run happened to start. Filtered on the tick, the survivors are *exactly* the readings `observe` would have taken at this stride all along, and the run carries on on the same grid. It is idempotent, which is the plainest statement of the same thing. The mutation check below is what measured it. |
+| **⚠️ `Series::record` is public and the bound does not depend on it behaving** | `series.rs` | Phase 8 reads `stats.bin` back through it, and a caller handing over ticks that are not on the grid could have every one of them survive the filter — which would push the vector past its capacity and reallocate. That is the one thing this type promises cannot happen, so `thin` holds it with a second pass by position rather than by the contract being kept. |
+| **⭐ `Sample` is 64 bytes and the size is a `const` assertion** | `series.rs` | *"Small and fixed-size"* is what `CAPACITY`'s whole arithmetic rests on, and a field added in the wrong place breaks it silently — a `vec3`-shaped mistake, and `camera.rs` carries the same note about the same class of fault. Sixty-four is also **no padding at all**: eight for the tick, then fourteen four-byte scalars. |
+| **⚠️ The energies are 32-bit and the tick is not** | `series.rs` | Nothing reads a `Sample` as a *figure* — the panel's own numbers come from the world through `panel::readings` — and these are read as a chart, which is a box twenty points tall. Seven significant digits is five more than a chart can show. The tick is not narrowed because it is not a magnitude but an **identity**: `thin` filters on it, and 16.7 million ticks (four hours in) is exactly where a 32-bit float stops being able to tell one tick from the next. |
+| **⚠️ Per-kind biomass is apportioned by cell count** | `series.rs` | An organism holds one pool of energy and its cells hold none, so the only division of it that invents nothing is an equal share per cell. The consequence is a property worth having and worth testing: **the six figures sum to the ledger's `biomass` account**, so they are a decomposition of it rather than a second opinion about it. |
+| **⭐ A chart is a *row*, in the readings panel's own grammar** | `panel.rs` | A dim name in a reserved column on the left and something to look at on the right — which is what every row of Group A's panel already is, with a shape where the numeral goes. A chart with an axis on it has tick marks, numbers along the bottom and a legend, which between them are half a dozen bright small things in a corner that is supposed to nearly disappear. The cost: no chart here can be read as a *quantity*. That is deliberate — the readings panel directly above prints every one of these numbers as a figure, and a second copy of a number is the thing `census.rs` exists to argue against. |
+| **⭐ Each chart is scaled to its own greatest reading** | `panel.rs` | A population of two thousand and a biomass of a hundred and forty thousand do not go on one axis, and a shared scale would draw one of them as a line along the floor. What a sparkline can say is *how this went*; what it cannot say is how big it got. |
+| **⭐⭐ The ledger chart is the four accounts as **shares of a conserved whole**** | `panel.rs` | Over the shipped run the field holds 139,886, `detritus` holds 3,713 and `dissipated` holds 270,506, so a chart scaled to the largest of them draws two of the four as the same line along the bottom. As shares they are four bands that fill the box, and what the chart says is **where the world's energy is** — which is the question SPEC section 5 exists to answer. ⚠️ Four bands and not five: `light` is not a place energy *is*, it is where the energy in the other four came from and is already inside them. A fifth band would count every joule twice. It shows instead as the whole stack's total rising. |
+| **⭐ What is *filled* is what the world still has** | `panel.rs` | `field` carries the picture and `dissipated` is drawn as the absence it is, so the shaded part of the box is the energy still in the water — a region that starts nearly full and drains. The other way round is identical arithmetic and reads backwards: a growing grey block that means *gone*. And the brightest band is the smallest one: `biomass` is a twentieth of the total and gets `LEVEL`, which is `frame.rs`'s decision about the picture underneath applied to the chrome — **the brightest thing is the thing that is alive**. |
+| **⚠️ The readings are decimated to the width of the box before anything is drawn** | `panel.rs` | Up to 4,096 readings behind a chart 150 points wide is twenty-seven readings a column. The reading **nearest** the column is taken rather than the mean of those behind it, which is `series.rs`'s rule about thinning applied to drawing, for the same reason. |
+| **⚠️ A band of a stack that holds anything is drawn at least 1.5 points tall** | `panel.rs` | A *window* found this; see the round table. The cost is stated rather than hidden: a band forced up to a pixel is drawn larger than it is, and in the worst case three points of a twenty-point box go on saying *there is something here*. That is the right trade, because a sliver that rounds away to nothing is the one reading this chart must not give. |
+| **⭐ `pixels_of` rounds outward, and `Q29` is what found it** | `panel.rs` | Its doc comment has said *"rounded outwards — down at the near edge, up at the far one"* since Group A and the code called `f32::round`. Until Group C every position was a whole number of points at a scale of one, so the two were the same conversion. At a scale of 0.8 the panel's corner lands on pixel 9.6, rounding puts it at 10, and the row of pixels the panel's own border is drawn across is outside the rectangle the chrome claims — which `egui_draws_over_the_world_without_clearing_it` failed on the moment the scale stopped being one. It also grows by one pixel for epaint's feathering, which is ink outside the geometry. |
+| **The charts panel's height is a constant, not a measurement** | `panel.rs` | The controls above it are bounded by what is left of the column once the charts have had their share, and a height that could only be known after the fact would mean the scroll area being sized by *last frame's* charts — which is exactly the one-frame lag Group B's settle loop exists to remove. |
+
+##### ⭐ What the mutation checks found
+
+**`Series::thin` was written to drop every other record by position first**, which is the shape the
+operation naturally takes and is subtly wrong. The test failed on the number that names it: *"the
+samples at ticks 409,600 and 411,000 are **1,400** apart and the rest are **1,600** apart, so the
+thinning left a seam."* One short interval, at the join between what survived the halving and what
+was recorded after it — invisible on a chart, and a lie about when things happened.
+
+**`chrome_scale` began as the display's own factor**, which is Group B shipped: *"the chrome takes
+**22.1%** of a 1280 by 720 frame at a display scale of 1.5, which is [18, 18, 345, 591] of 921,600
+pixels."* That is `Q29` restated by a test to the decimal place `B6` reported it at.
+
+##### ⭐⭐ And the one that was real, found by a *window* and not by a test
+
+**A stacked band a fifth of a pixel tall does not draw, and the band above it then paints over the
+one below.** Two faults, and the second is the one that took an hour.
+
+epaint tessellates lines and rectangles with a pixel of feathering; a `Mesh` is handed to the card
+as triangles and gets none, so a band 0.87 pixels tall is filled only in the columns where it
+happens to cross a pixel centre. On the 1920 × 1080 dump `biomass` came out as a line. **In the
+1280 × 720 window, where a point is 0.8 pixels, it came out as a row of dashes** — which reads as a
+rendering fault rather than as the thing that is alive.
+
+The floor that fixes it broke the stack, and the frame did not say so plainly:
+
+| Band | Share | Unfloored top | With a floor of 4 points |
+| --- | --- | --- | --- |
+| `field` | 0.319 | 531.6 | 531.6 |
+| `biomass` | 0.374 | 530.5 | **527.6** |
+| `detritus` | 0.382 | 530.4 | 530.4 — **below the band beneath it** |
+| `dissipated` | 1.000 | 518.0 | 518.0, drawn from there **down to 530.4** |
+
+Once `biomass` was lifted, `detritus`'s level was still computed from the true cumulative share and
+came out *underneath* the band beneath it, so its quad was inside out — and `dissipated`, whose top
+is always the top of the box, then painted from there down over everything the floor had just made
+room for. The visible symptom was **the same dashes**, which is why raising the floor from 1.5 to 4
+changed nothing on the frame and sent the search in the wrong direction for a while. Whether a band
+holds anything is a question about the **readings**; where it is drawn is a question about the box,
+and the two need separate lists.
+
+⚠️ **No test catches this and none is added that pretends to.** It is a claim about pixel centres
+under a particular scale, and the instrument for it is the one CLAUDE.md provides: dump a frame and
+look at it — in a window as well as headless.
+
+#### ⭐⭐ `C4` — what the charts actually look like
+
+`docs/frames/phase6-charts.png` — 1920 × 1080, world tick 30,000, seed 42, **1,713 alive, mean
+genome 1.70 ± 0.85**. The same figures every group since Phase 5 Group B has measured: the charts
+moved nothing. `docs/frames/phase6-charts-window.png` — the same run in the 1280 × 720 window this
+program opens, on a display at 150%, which is `Q29`'s own case.
+
+**Seven dump-look-adjust rounds, three of them windows**, and the windows found what no dump could.
+
+| Round | What the frame said | What changed |
+| --- | --- | --- |
+| 1 | The `alive` and `biomass` traces read exactly as wanted. The `energy` chart is **an empty box with a dotted line in it** — four bands at values a hair apart, and no eye can find the composition | One band carries the picture: `field` filled, `dissipated` drawn as absence |
+| 2 | Legible. But at 4× the trace fills are **solid blocks**: a rail's colour over eight times a rail's area is not a rail's weight | `CHART_FILL` down below `TRACK`; the edge line does the work |
+| 3 | ⭐ **A window.** `biomass` is a row of **dashes** along the energy chart | A floor of 1.5 points on any band that holds anything |
+| 4 | Nothing changed at all | — |
+| 5 | Raised the floor to 4 points. **Still nothing changed**, which is the useful kind of wrong answer: the floor was working and something downstream was undoing it | Instrumented, and found the inverted quad above |
+| 6 | Four bands, every column, at both scales | Floor restored to 1.5 |
+| 7 | ⭐ A window again. Shipped | |
+
+**The honest report.**
+
+- ⭐ **It is still recessive, and `Q29` is why.** At a glance the frame is the world: eight colonies
+  of coloured light on near-black water and a narrow dark column down the left. The three panels
+  are 232 × 537 pixels of 2,073,600 — **6.0% of the dumped frame**, against Group B's 4.9% for two
+  of them — and in the window they are **8.3%**, against the 22.1% Group B shipped. The chrome grew
+  by a third and got nearly three times smaller where it matters. Nothing on it is brighter than a
+  colony; the brightest thing in the picture is still something that is alive.
+- ⭐ **A sparkline was the right shape.** Three rows of *name, then thing* under two panels of
+  *name, then number* — the eye reads the third block as more readings rather than as a dashboard,
+  which is the whole of how a chart stays inside SPEC section 12's register. There are no
+  gridlines, no axis, no legend and no numbers on any of them.
+- ⭐ **The `energy` chart is the best thing in this group and it is the one that nearly did not
+  work.** At tick 30,000 it reads, bottom to top: a grey band a third of the box high (the water),
+  a bright hairline (what is alive), a fainter one (what was), and then nothing to the top (what
+  has been spent). Over the run the bright line **descends** — you can watch the world convert its
+  water into having-lived. That is SPEC section 5's conservation law as a picture, and it says
+  something the five numbers above it cannot: not *how much*, but *where it is going*.
+- **`alive` and `biomass` are two nearly parallel wedges**, which is honest and slightly redundant:
+  in this world the population and the energy in it track each other closely. A run where they came
+  apart would be the interesting one, and the pair of charts is what would show it.
+- ⚠️ **The traces begin part-way up their boxes and there is no mark saying why.** The series starts
+  at the first hundred-tick mark after `Run::new`, which is after `founding.rs`'s nine-thousand-tick
+  dawn — so the left edge of `alive` is the population at tick 9,900, already 55% of what it
+  reaches. It reads as though the run began mid-climb, which it did. A chart with an axis would say
+  so; this one cannot, and that is the price of the register.
+- ⚠️ **The second honest criticism is the window's controls.** With the column ceiling shared three
+  ways, the `locked` fold is now below the fold in a 1280 × 720 window and the scroll bar is what
+  says so. Group B's window scrolled sooner and further, so this is not a regression — but it is
+  worth writing down that the settings panel is a scrolling panel on a small window and a complete
+  one on a large.
+- **Nothing moves.** `animation_time` is still nought, the settle loop still stops on a stable
+  rectangle, and the charts are drawn from a series that changes once every hundred ticks — so a
+  chart is the one thing on the chrome that is *deliberately* a second and a half behind the world,
+  and two dumps of the same tick are the same file.
 
 ---
 
@@ -422,22 +650,27 @@ measured: the sliders moved nothing, and neither did `B5`.
 
 ## Open questions carried forward
 
-**Q29** (new, Group B) — ⚠️ **the panel is sized for a frame and this program opens a window.**
-See `B6`. The chrome is 4.9% of a 1920 × 1080 dumped frame and about **22%** of the 1280 × 720
-window this program opens, on a display at 150% — because everything on it is a fixed size in
-egui's *points* and a point is 1.5 pixels there. `CEILING` bounds it at two-fifths of the frame's
-height so it can never be worse than that, and `S` takes all of it away, but a person who leaves
-the window at the size it opens at is looking at a fifth of their picture being chrome. Three ways
-out and none of them is Group B's: open the window larger; scale the chrome down when the frame is
-small, which means a second font size and a second set of measurements; or make the readings panel
-fold too, which Group C's charts will make more pressing rather than less. **Whatever Group C adds
-goes below both of these**, so this is the question to answer before it does.
+**Q29** (Group B) — **answered, and it was Group C's first step rather than its last.** The chrome
+scales with the **surface** now and not with the display: a point is a pixel of the 1920 × 1080
+frame this project judges itself on, taken as the lesser of the two ratios, floored at 0.8 pixels so
+the numerals stay readable and capped at the display's own point so the chrome is never physically
+larger than every other window on the screen. `CEILING` moved off the controls and onto the whole
+column at the same time, so the chrome's share of a frame is a stated bound rather than a measured
+one. **22.1% → 8.3%** on the window this program opens; the dumped frame is byte-for-byte
+unchanged. See the write-up above, and
+`the_chrome_is_a_small_part_of_whatever_it_is_drawn_into`, which holds it at a tenth of the frame
+over four sizes and two display scales.
 
-**Q28** (Group A) — **still open, and re-checked at the top of Group B as that question asked.**
-`egui-wgpu`'s newest published version is **still 0.35.0**, still naming `wgpu ^29`, so the
-version matrix above is unchanged and `panel.rs`'s `Painter` stays. It cost Group B nothing: the
-sliders needed a texture atlas and a triangle list, which is what that backend already draws, and
-**not one line of it changed**. Ask again before Group C.
+⚠️ What is *not* fixed: a window dragged down to `window.rs`'s 320 × 180 floor is still mostly
+chrome, because `SMALLEST` stops the shrinking before the panel does. That is a window nobody uses
+and `S` empties it, but the bound is a tenth of the frame for every size a person would work at and
+is not a bound below that.
+
+**Q28** (Group A) — **still open, and re-checked at the top of Group C as that question asked.**
+`egui-wgpu`'s newest published version is **still 0.35.0**, still naming `wgpu ^29`, so the version
+matrix above is unchanged and `panel.rs`'s `Painter` stays. It cost Group C nothing either: the
+charts needed a triangle list with a colour per vertex, which is exactly what that backend already
+draws, and **not one line of it changed across two groups**. Ask again in Phase 7.
 
 **Q27** (Group A) — **answered.** The events go into the `egui::RawInput` that `Chrome::compose`
 was already building, so there is still exactly one composition route and a headless dump simply
@@ -448,6 +681,16 @@ lines that stand in for it. The property is stated as a test that could not othe
 window in the program at all. And the pointer knows the panel is there: a **grab** that starts over
 the chrome never reaches the camera, while a drag begun on open water goes on panning across the
 panel rather than stopping dead half way. See the write-up above.
+
+**Q30** (new, Group C) — ⚠️ **the charts show a run that has already begun.** The series starts at
+the first hundred-tick mark after `Run::new`, which is after `founding.rs`'s nine-thousand-tick
+dawn, so the left edge of every chart is the world at tick ~9,900 rather than at tick nought — and
+with no axis there is nothing on the panel that says so. It is the honest picture of what the run
+recorded and it is not the honest picture of what the *world* did. Two ways out and neither belongs
+to this phase: record the dawn as well, which is nine thousand ticks of a world with nothing alive
+in it and ninety records saying so; or say what span the chart covers, which is a number on a chart
+and is exactly what `C2` decided against. Phase 8's scrubbing will have to answer the same question
+about a much longer series, so it is the phase to answer it in.
 
 **Q24** (Group C) — **answered.** Screensaver mode is `S`, it arrived with the first panel
 exactly as that question asked, and the mechanism is the thing that was actually at stake:
