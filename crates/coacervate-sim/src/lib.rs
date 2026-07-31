@@ -12,10 +12,13 @@
 //!   later phases run organisms in parallel without changing the result.
 //! - [`ledger`] — where every unit of energy in the world is, and the assertion that no
 //!   unit is ever invented or lost.
+//! - [`grid`] — the field of energy the light falls on, which is the only thing in the
+//!   world there is to eat.
 
 #![forbid(unsafe_code)]
 
 pub mod config;
+pub mod grid;
 pub mod ledger;
 pub mod rng;
 
