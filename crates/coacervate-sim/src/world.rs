@@ -18,6 +18,11 @@
 //! gives them in that order and gives the reason - a ceiling enforced before the energy has
 //! finished moving is not a ceiling.
 //!
+//! Then, last of all, the survivors have children. See the note beside the call: a slot freed
+//! by this tick's deaths can be born into on this tick, a body that did not survive the tick
+//! does not breed on its way out, and a newborn is put down beside a parent the physics has
+//! already finished moving.
+//!
 //! The behaviour goes between the water and the bodies, which is where Phase 2 said it would
 //! have to: harvesting wants a field the light has already fallen on and cells that have not
 //! yet swum away from the tile they were sitting on. It also has to run before the physics for
@@ -111,12 +116,19 @@
 //! zero can be given nothing at all, because there is nothing there yet. Whoever seeds the
 //! first population has to decide whether to let the world fill first.
 //!
-//! # What is deliberately not here
+//! # Two ways an organism arrives, and only one of them is somebody's decision
 //!
-//! **Being born.** Organisms eat, pay for themselves, grow old, die and rot - Groups A and B
-//! are the whole of that - but nothing reproduces. Nothing in this module mints a genome from
-//! another, so the only organisms in a world are the ones [`World::seed`] was asked for, and a
-//! population can only fall. Group C is what turns a freed slot back into a body.
+//! [`World::seed`] is the door from outside: a genome, a place, and an amount of energy taken
+//! out of the water the body is standing in. It is how a run begins and it is the only thing in
+//! the project that can put a genome into a world that did not come from a parent.
+//!
+//! Everything after that comes through `reproduction.rs`, which nothing outside this module can
+//! call. A birth needs no place chosen for it and no energy found for it - it goes beside its
+//! parent's gonocyte and it is paid for out of its parent - so there is nothing for a caller to
+//! decide and no way for one to interfere. Between them the two doors are the whole of how the
+//! `organisms` array ever gains an entry.
+//!
+//! # What is deliberately not here
 //!
 //! **A runner.** Nothing here decides when a run ends. SPEC section 3's `max_wall_clock_hours`
 //! is a wall-clock bound, and a wall clock is exactly what a deterministic simulation must
@@ -132,8 +144,11 @@ use crate::genome::Genome;
 use crate::grid::Grid;
 use crate::ledger::Ledger;
 use crate::metabolism::{Metabolism, Mortal};
-use crate::organism::{Organism, cell_slot, cells_per_slot, spring_slot, springs_per_slot};
-use crate::physics::{Physics, Spring, cell_capacity, wrapped};
+use crate::organism::{
+    Organism, cell_slot, cells_per_slot, lay_out, spring_slot, springs_per_slot,
+};
+use crate::physics::{Physics, Spring, cell_capacity};
+use crate::reproduction::{Fertile, Reproduction};
 use crate::rng::WorldRng;
 
 /// Why an organism was not born.
@@ -196,6 +211,9 @@ pub struct World {
 
     /// What being alive costs them, and what becomes of them when they stop paying it.
     metabolism: Metabolism,
+
+    /// How a body that has earned enough turns part of itself into another body.
+    reproduction: Reproduction,
 
     /// Every cell the world could ever hold, arranged in slots of `max_cells_per_organism`.
     ///
@@ -320,6 +338,7 @@ impl World {
             physics: Physics::new(config),
             behaviour: Behaviour::new(config),
             metabolism: Metabolism::new(config),
+            reproduction: Reproduction::new(config),
             cells: vec![Cell::new(CellKind::Photocyte, Vec2::ZERO); capacity],
             // A spring joining a cell to itself, which is what an unused slot holds and what
             // nothing ever looks at. It is never handed to the physics: only the springs an
@@ -411,6 +430,29 @@ impl World {
             &mut self.ledger,
         );
 
+        // Births come last, after the reaping, and there are three reasons rather than one. A
+        // slot that fell vacant this tick is available to be born into on the same tick, which
+        // is what keeps a world at its cap turning over rather than waiting a tick between
+        // every death and the birth that replaces it. An organism that did not survive the tick
+        // does not get to breed on its way out. And a newborn is put down beside cells the
+        // physics has already finished moving, so it is placed where its parent *is* rather
+        // than where its parent was when the tick began.
+        //
+        // The consequence worth knowing is that a newborn has one free tick: it is aged, fed
+        // and charged for the first time on the tick after the one it appeared on. It is also
+        // what stops a birth from cascading - see `reproduction.rs`.
+        self.reproduction.run(
+            Fertile {
+                cells: &mut self.cells,
+                springs: &mut self.springs,
+                organisms: &mut self.organisms,
+                free: &mut self.free,
+                next_serial: &mut self.next_serial,
+            },
+            &self.rng,
+            &mut self.ledger,
+        );
+
         self.ticks += 1;
 
         if Ledger::should_check(self.ticks) {
@@ -480,21 +522,25 @@ impl World {
 
         let body = develop(&genome, &self.config.limits);
         let first_cell = cell_slot(slot, &self.config.limits).start;
-        let first_spring = spring_slot(slot, &self.config.limits).start;
 
         // The body is written into its slot before the seeding is settled, which is safe
         // precisely because the slot is free: nothing in the world reads a slot nobody is in,
         // so a refusal below leaves cells lying in it that no tick will ever look at. The
         // alternative is a second copy of the body somewhere to hold it while the water is
         // counted, which is a copy made on every birth for the sake of the births that fail.
-        for (local, grown) in body.cells.iter().enumerate() {
-            let mut cell = Cell::new(grown.kind, self.placed(at, grown.offset));
-            cell.state = grown.state.get();
-            self.cells[first_cell + local] = cell;
-        }
-        for (local, spring) in body.springs.iter().enumerate() {
-            self.springs[first_spring + local] = *spring;
-        }
+        //
+        // `lay_out` is `organism.rs`'s, and is the same call `reproduction.rs` makes when a
+        // parent has a child. Where a body's cells go, given where its seed cell went, is one
+        // question and has one answer.
+        lay_out(
+            slot,
+            &body,
+            at,
+            &self.config.world,
+            &self.config.limits,
+            &mut self.cells,
+            &mut self.springs,
+        );
 
         // The tiles underneath, each named once. A body is a few cells across and a tile is
         // several cells wide, so most bodies stand on one or two tiles and several of their
@@ -546,21 +592,6 @@ impl World {
             .expect("a run has minted every serial number there is");
 
         Ok(slot)
-    }
-
-    /// Where a body's cell goes, given where its seed cell was put.
-    ///
-    /// SPEC section 8's boundaries, applied once at birth rather than left for the physics to
-    /// sort out on the first tick: sideways the world joins up, and top and bottom it stops.
-    /// The clamp is against cell *centres*, which is the literal reading SPEC section 8 gives
-    /// and says it is giving - a cell resting on the floor has half of itself below it.
-    fn placed(&self, at: Vec2, offset: Vec2) -> Vec2 {
-        let world = &self.config.world;
-
-        Vec2::new(
-            wrapped(at.x + offset.x, world.width),
-            (at.y + offset.y).clamp(0.0, world.height),
-        )
     }
 
     /// Collect the living cells into one dense crowd for the physics.
@@ -709,6 +740,8 @@ mod tests {
     use crate::cell::{CellKind, Vec2};
     use crate::config::{LimitsConfig, RawConfig, spec_defaults};
     use crate::genome::{Action, Gene, Genome, SensorTarget, State};
+    use crate::metabolism::construction_energy;
+    use crate::mutation::mutate;
     use proptest::prelude::*;
 
     /// SPEC's default configuration with some of it changed, checked and ready to build a
@@ -1645,6 +1678,959 @@ mod tests {
         );
     }
 
+    // ---------------------------------------------------------------------------------
+    // Group C - renewal
+    //
+    // SPEC section 10's reproduction paragraph, clause by clause. The code is in
+    // `reproduction.rs`, which argues every decision it had to take; the tests are here
+    // because every claim below is about a whole world - a slot taken off the free list, a
+    // body grown from a mutated genome and written into the arena, an arena that did not
+    // grow when there was nowhere to put one - and those are things only a `World` has.
+    // ---------------------------------------------------------------------------------
+
+    /// A world small enough to reason about and bright enough to breed in.
+    ///
+    /// The light is turned up from SPEC's shipped 0.012 to 0.4 against a ceiling of 80, which
+    /// is the same trick `a_freed_slot_is_reusable_and_reaping_is_deterministic` uses and for
+    /// the same reason: a tile deep enough to pay for a body outright, filling in a few hundred
+    /// ticks rather than a few thousand. It changes how *fast* these tests run and nothing
+    /// whatever about the rules they are asserting - every threshold below is written out from
+    /// SPEC section 3's `reproduction_threshold` and SPEC section 6's table, neither of which
+    /// this touches.
+    ///
+    /// The seed is an argument because two of these tests are about what the seed reaches: one
+    /// runs the same world twice and one runs it under two different seeds.
+    fn a_bright_world(seed: u64, slots: u32) -> Config {
+        config(|raw| {
+            raw.world.seed = seed;
+            raw.world.width = 256.0;
+            raw.world.height = 144.0;
+            raw.world.grid_cols = 32;
+            raw.world.grid_rows = 18;
+            raw.light.cap = 80.0;
+            raw.light.influx = 0.4;
+            raw.limits.max_organisms = slots;
+            raw.limits.max_cells_per_organism = 4;
+        })
+    }
+
+    /// SPEC section 10's bar for a body of these cells: `reproduction_threshold ×` what it cost
+    /// to build.
+    ///
+    /// Written out from SPEC section 3's 2.2 and SPEC section 6's upkeep table rather than
+    /// asked of the code, at the 32-bit width the simulation actually stores those numbers at -
+    /// so this and `reproduction.rs` can disagree. The one thing it does borrow is
+    /// `CONSTRUCTION_TICKS`, because how many ticks of upkeep a cell is worth is a decision
+    /// `cell.rs` took and argues, not a number SPEC gives.
+    fn the_bar_for(upkeeps: &[f32]) -> f64 {
+        let worth: f64 = upkeeps
+            .iter()
+            .map(|&upkeep| f64::from(upkeep * CellKind::CONSTRUCTION_TICKS))
+            .sum();
+
+        f64::from(2.2f32) * worth
+    }
+
+    /// A genome that grows one photocyte with `gonocytes` gonocytes strung off it in a line.
+    ///
+    /// The plainest body in the world that can breed: something to earn with, and SPEC section
+    /// 6's gonocyte, without which no amount of energy is enough. One gene per join, each
+    /// firing on one step and handing its daughter a fresh state, so the body is a chain and
+    /// the order the gonocytes were made in is the order the genome put them in.
+    ///
+    /// More than one of them is what `an_offspring_is_a_mutated_copy_placed_next_to_a_gonocyte`
+    /// needs: with two, "next to a gonocyte" has two possible answers and the test can say
+    /// which one is taken. The arm between them is 13 units - nearly the longest a gene may ask
+    /// for - so that a newborn resting against one of them cannot be resting against the other
+    /// as well, whichever way round it was put down. At the eight units the other genomes here
+    /// use, the two answers overlap and the test could not tell them apart.
+    fn a_breeder(gonocytes: u8, limits: &LimitsConfig) -> Genome {
+        let genes = (0..gonocytes)
+            .map(|generation| Gene {
+                trigger_state: State::new(generation),
+                min_step: generation,
+                max_step: generation,
+                action: Action::Divide,
+                angle: 0.0,
+                adhere: true,
+                child_state: State::new(generation + 1),
+                child_kind: CellKind::Gonocyte,
+                rest_length: 13.0,
+                stiffness: 10.0,
+                new_kind: CellKind::Photocyte,
+                new_state: State::ZERO,
+                osc_freq: 0.0,
+                osc_phase: 0.0,
+                sensor_gain: 0.0,
+                sensor_target: SensorTarget::Light,
+            })
+            .collect();
+
+        Genome::new(genes, limits)
+    }
+
+    /// Which slots have somebody in them.
+    fn occupied(world: &World) -> Vec<usize> {
+        (0..world.organisms().len())
+            .filter(|&slot| world.organisms()[slot].is_some())
+            .collect()
+    }
+
+    /// What the organism in this slot is holding.
+    fn holding(world: &World, slot: usize) -> f64 {
+        world.organisms()[slot]
+            .as_ref()
+            .expect("this test does not expect that slot to be empty")
+            .energy()
+    }
+
+    /// ⭐ **C1.** An organism reproduces once it is holding more than
+    /// `reproduction_threshold ×` what its body cost to build, and not before.
+    ///
+    /// SPEC section 10's first clause. The bar is the interesting part of it: reproduction is
+    /// not free and it is not cheap, and what it is priced against is the organism's **own
+    /// body**, so an elaborate lineage has to earn more before it may copy itself than a plain
+    /// one does. That is the only thing in the simulation pushing back against bodies simply
+    /// getting bigger.
+    ///
+    /// # `construction_energy` is `metabolism.rs`'s, and that matters
+    ///
+    /// SPEC uses the phrase "construction energy" twice - here, and for what a corpse is shared
+    /// out in proportion to - and never defines it. Two sums would be two definitions of one
+    /// phrase, free to drift apart, and nothing would report it. So the last assertion here is
+    /// that the bar this test wrote out from SPEC's own numbers is `reproduction_threshold ×`
+    /// the same sum `metabolism.rs` shares a corpse by.
+    ///
+    /// # Why it watches every tick rather than looking at the end
+    ///
+    /// Because "reproduces above the threshold" is two claims and only one of them is about a
+    /// birth happening. A body seeded a unit under the bar earns its way across it over a few
+    /// ticks, and what is asserted is that **every tick before the birth ended with the parent
+    /// at or under the bar** - so the birth did not happen early - and that the tick it did
+    /// happen on, the parent was holding more than the bar. Without the first half, an
+    /// implementation that reproduced whenever it felt like it would pass.
+    ///
+    /// What the parent was holding at the moment of the birth is not directly visible, because
+    /// by the time the tick has finished it has already given part of it away. It is
+    /// reconstructed as `parent + child`, which is the same claim from the other side: those
+    /// two together are exactly what the one of them was holding a moment earlier, and
+    /// `a_birth_transfers_offspring_share_of_the_parents_energy` is what makes that true.
+    #[test]
+    fn an_organism_reproduces_above_the_threshold() {
+        let mut world = World::new(&a_bright_world(42, 8));
+        let limits = world.config().limits.clone();
+
+        for _ in 0..300 {
+            world.tick();
+        }
+
+        // SPEC section 6: a photocyte at 0.004 a tick and a gonocyte at 0.005.
+        let bar = the_bar_for(&[0.004, 0.005]);
+        let parent = world
+            .seed(a_breeder(1, &limits), Vec2::new(120.0, 72.0), bar - 1.0)
+            .expect("a lit world holds nineteen units under a two-celled body");
+
+        assert!(
+            (bar - f64::from(world.config().metabolism.reproduction_threshold)
+                * construction_energy(world.cells_of(parent)))
+            .abs()
+                < 1e-9,
+            "this test's bar of {bar} is not `reproduction_threshold` times the same \
+             construction energy `metabolism.rs` shares a corpse out by, so SPEC section 10's \
+             one phrase has become two different sums"
+        );
+
+        let mut born_on = 0u64;
+        let mut at_the_birth = 0.0f64;
+
+        for tick in 1..=400u64 {
+            world.tick();
+
+            let alive = occupied(&world);
+            if alive.len() == 1 {
+                let short = holding(&world, parent);
+                assert!(
+                    short <= bar,
+                    "the parent finished tick {tick} holding {short}, which is over SPEC \
+                     section 10's bar of {bar}, and it did not reproduce"
+                );
+                continue;
+            }
+
+            born_on = tick;
+            at_the_birth = alive.iter().map(|&slot| holding(&world, slot)).sum();
+            break;
+        }
+
+        assert!(
+            born_on > 0,
+            "four hundred ticks of a lit world and a body that started a unit under the bar \
+             never reproduced at all"
+        );
+        assert!(
+            at_the_birth > bar,
+            "a birth happened on tick {born_on} with the parent holding {at_the_birth}, and \
+             SPEC section 10's bar is {bar}"
+        );
+        assert_eq!(
+            occupied(&world).len(),
+            2,
+            "one organism crossing the bar produced more than one child in a tick"
+        );
+    }
+
+    /// ⭐ **C2.** However rich it gets, an organism with no gonocyte never reproduces.
+    ///
+    /// SPEC section 6, in as many words: *"an organism with no gonocyte cannot reproduce"*, and
+    /// section 6's design intent says why - *"requiring a gonocyte means reproduction has a
+    /// real structural cost"*. A lineage has to spend part of the body it could have spent on
+    /// feeding, and part of its upkeep on every tick of its life, on tissue that earns nothing
+    /// whatever. That is the whole of what makes breeding a trade rather than a reward.
+    ///
+    /// # The two bodies are in the same world on purpose
+    ///
+    /// Two separate worlds would make this a comparison of two runs, and a run is a great many
+    /// things at once. Here the same light falls on both, both are seeded on the same tick
+    /// holding the same energy, and both are far above the bar their own bodies set - so the
+    /// only thing that differs is the one thing SPEC names.
+    ///
+    /// # And what says the barren one *could* have bred
+    ///
+    /// That it grows, and keeps growing. A body that reproduces gives away nearly half of
+    /// itself every time it does, so it saws back and forth across its own bar for its whole
+    /// life; a body that cannot reproduce simply accumulates. So the closing assertions are
+    /// that the barren body ended well past twice its own bar, and that it never once fell by
+    /// so much as a unit in a tick - which is what handing over `offspring_share` of anything
+    /// above that bar would look like.
+    #[test]
+    fn an_organism_with_no_gonocyte_cannot_reproduce() {
+        let mut world = World::new(&a_bright_world(42, 6));
+        let limits = world.config().limits.clone();
+
+        for _ in 0..300 {
+            world.tick();
+        }
+
+        let fertile = world
+            .seed(a_breeder(1, &limits), Vec2::new(64.0, 72.0), 30.0)
+            .expect("a lit world holds thirty units under a two-celled body");
+        let barren = world
+            .seed(a_chain(2, &limits), Vec2::new(192.0, 72.0), 30.0)
+            .expect("a lit world holds thirty units under a two-celled body");
+
+        // Two photocytes at SPEC section 6's 0.004, which is a *lower* bar than the fertile
+        // body's - so the barren one is not being kept childless by an accountant.
+        let barren_bar = the_bar_for(&[0.004, 0.004]);
+        assert!(
+            barren_bar < the_bar_for(&[0.004, 0.005]),
+            "the barren body is being asked for more than the fertile one, so this test \
+             cannot tell a missing gonocyte from a bar it never reached"
+        );
+
+        let mut worst_fall = 0.0f64;
+        let mut previously = holding(&world, barren);
+
+        for _ in 0..400 {
+            world.tick();
+
+            let now = holding(&world, barren);
+            worst_fall = worst_fall.max(previously - now);
+            previously = now;
+        }
+
+        assert!(
+            occupied(&world).len() > 2,
+            "four hundred ticks and the body with a gonocyte in it never reproduced either, \
+             so this test proves nothing about gonocytes"
+        );
+        assert!(
+            previously > barren_bar * 2.0,
+            "the barren body finished holding {previously}, against its own bar of \
+             {barren_bar} - so it never got rich enough for the missing gonocyte to be what \
+             stopped it"
+        );
+        assert!(
+            worst_fall < 1.0,
+            "the barren body lost {worst_fall} in a single tick, and handing over \
+             `offspring_share` of anything above {barren_bar} would look like exactly that"
+        );
+        assert_eq!(
+            world.cells_of(barren).len(),
+            2,
+            "the barren body is not the body this test seeded"
+        );
+        assert!(
+            !world
+                .cells_of(barren)
+                .iter()
+                .any(|cell| cell.kind == CellKind::Gonocyte),
+            "the barren body has grown a gonocyte, which nothing in the simulation can do"
+        );
+        assert!(
+            world
+                .cells_of(fertile)
+                .iter()
+                .any(|cell| cell.kind == CellKind::Gonocyte),
+            "the body that did reproduce has no gonocyte either, so the two bodies do not \
+             differ in the one thing this test is about"
+        );
+    }
+
+    /// ⭐ **C3.** An offspring is a **mutated copy** of its parent's genome, and its body is put
+    /// down touching one of its parent's gonocytes.
+    ///
+    /// SPEC section 10's middle three clauses: *"copy the genome, mutate, develop the new body,
+    /// place the seed cell adjacent to a gonocyte with a small random offset"*.
+    ///
+    /// # What "a mutated copy" is asserted against
+    ///
+    /// The child's genome is recomputed here, from the parent's genome and a fresh stream of
+    /// the parent's own random numbers, and compared gene for gene. That is a stronger claim
+    /// than "it differs sometimes": it says the child is *this* copy rather than any copy, that
+    /// the copy was made with the operators `mutation.rs` implements, and - the part Phase 4
+    /// actually needs - that the numbers came out of the **parent's** sequence rather than the
+    /// world's. `a_lineage_is_still_deterministic_across_generations` is the same claim made
+    /// without looking inside.
+    ///
+    /// Most copies are perfect, because most reproductions mutate nothing: SPEC section 3's
+    /// rates are per gene and per genome and they are all small. So the last claim here is over
+    /// a run long enough for the operators to bite, and it is that somewhere in the world there
+    /// is now a genome that is not the founder's.
+    ///
+    /// # "Adjacent" and "a small random offset" are both decisions, and both are pinned
+    ///
+    /// SPEC gives neither a distance nor a direction. `reproduction.rs` reads adjacent as
+    /// **exactly touching** - the two radii added together, from SPEC section 6's table - and
+    /// the offset as **which way**, drawn from the parent's stream. The two bodies here have
+    /// two gonocytes apiece so that "a gonocyte" has more than one answer, and what is asserted
+    /// is that the child went next to the **first** one, which is the one the genome grew
+    /// first.
+    ///
+    /// The direction is pinned by running the same world under a second seed. Everything about
+    /// the two runs is identical up to this point - the physics reads no random numbers and a
+    /// seeded body is placed where it is asked for - so a child landing on a different side is
+    /// a direction that was *drawn*. A fixed one would stack every child of every body in the
+    /// world on the same spot, which is the case `physics.rs` has to break a tie for.
+    ///
+    /// # And that a newborn beside its parent does not blow the physics up
+    ///
+    /// A body put down touching another body is a body the collision force will push away, and
+    /// an explicit integrator pushed hard enough diverges - a lineage flung across the world
+    /// rather than an error message. So the world is then left to breed freely for four hundred
+    /// ticks, and every cell in it is checked for being somewhere real: inside the world, at a
+    /// finite position, and not moving faster than anything in a viscous soup has any business
+    /// moving.
+    #[test]
+    fn an_offspring_is_a_mutated_copy_placed_next_to_a_gonocyte() {
+        // The same world twice, differing only in its seed. Everything up to the first birth is
+        // identical in the two.
+        let first_child = |seed: u64| -> (World, usize, usize) {
+            let mut world = World::new(&a_bright_world(seed, 32));
+            let limits = world.config().limits.clone();
+
+            for _ in 0..300 {
+                world.tick();
+            }
+
+            // Three cells - a photocyte and two gonocytes - so "adjacent to a gonocyte" has two
+            // possible answers. Seeded well over the bar, so the birth is on the first tick.
+            let parent = world
+                .seed(a_breeder(2, &limits), Vec2::new(96.0, 72.0), 34.0)
+                .expect("a lit world holds thirty-four units under a three-celled body");
+            assert!(
+                34.0 > the_bar_for(&[0.004, 0.005, 0.005]),
+                "the parent is not seeded above its own bar, so no birth is expected at all"
+            );
+
+            world.tick();
+
+            let child = *occupied(&world)
+                .iter()
+                .find(|&&slot| slot != parent)
+                .expect("a body seeded over the bar reproduces on its first tick");
+
+            (world, parent, child)
+        };
+
+        let (mut world, parent, child) = first_child(42);
+        let (elsewhere, _, other_child) = first_child(43);
+
+        // ⭐ The child's genome, recomputed from the parent's own numbers.
+        let founder = a_breeder(2, &world.config().limits);
+        let mut stream = WorldRng::from_seed(world.config().world.seed).new_organism_stream(
+            world.organisms()[parent]
+                .as_ref()
+                .expect("the parent is alive")
+                .serial(),
+        );
+        let expected = mutate(
+            &founder,
+            &world.config().mutation,
+            &world.config().limits,
+            &mut stream,
+        );
+
+        assert_eq!(
+            world.organisms()[child]
+                .as_ref()
+                .expect("the child is alive")
+                .genome(),
+            &expected,
+            "the child's genome is not what `mutation.rs` makes of its parent's genome from \
+             the parent's own stream of random numbers"
+        );
+        assert_eq!(
+            world.organisms()[child]
+                .as_ref()
+                .expect("the child is alive")
+                .age(),
+            0,
+            "a newborn is not newborn"
+        );
+
+        // ⭐ Where it went: touching the **first** of its parent's two gonocytes.
+        let body = world.cells_of(parent);
+        let (near, far) = (body[1].pos, body[2].pos);
+        assert!(
+            body[1].kind == CellKind::Gonocyte && body[2].kind == CellKind::Gonocyte,
+            "this body is meant to have two gonocytes on it and has {:?}",
+            body.iter().map(|cell| cell.kind).collect::<Vec<_>>()
+        );
+
+        let seed_cell = world.cells_of(child)[0];
+        let touching = CellKind::Gonocyte.radius() + seed_cell.kind.radius();
+        let reach = (seed_cell.pos - near).length();
+
+        assert!(
+            (reach - touching).abs() < 1e-4,
+            "the newborn's seed cell is {reach} from its parent's first gonocyte, and SPEC \
+             section 6's radii put the two exactly touching at {touching}"
+        );
+        assert!(
+            (seed_cell.pos - far).length() > touching + 0.5,
+            "the newborn is resting against the *second* of its parent's gonocytes at {} away, \
+             and the first one is the one the genome grew first",
+            (seed_cell.pos - far).length()
+        );
+
+        // ⭐ Which side it went on was drawn rather than fixed.
+        let here = seed_cell.pos - near;
+        let there = elsewhere.cells_of(other_child)[0].pos - elsewhere.cells_of(parent)[1].pos;
+        assert!(
+            (here - there).length() > 1.0,
+            "two runs differing only in their seed put the first newborn on the same side of \
+             its parent, at {here:?} and {there:?} - so the offset is fixed, and every child a \
+             body ever has would be laid down in the same spot"
+        );
+
+        // The copy is imperfect, given enough births for SPEC section 3's rates to bite. Most
+        // of them change nothing: the rates are per gene and per genome and they are all small,
+        // so a two-gene genome comes through about five reproductions in six untouched.
+        for _ in 0..1_200 {
+            world.tick();
+        }
+
+        assert!(
+            occupied(&world).len() > 8,
+            "twelve hundred ticks of a breeding world and it holds only {} organisms, so \
+             there have not been enough births for a mutation to be expected in any of them",
+            occupied(&world).len()
+        );
+        assert!(
+            occupied(&world)
+                .iter()
+                .filter_map(|&slot| world.organisms()[slot].as_ref())
+                .any(|organism| organism.genome() != &founder),
+            "twelve hundred ticks of a breeding world and every genome in it is still exactly \
+             the founder's, so the copy is perfect and nothing can ever change"
+        );
+
+        // ⭐ And nothing was flung anywhere. A newborn is laid down touching its parent, which
+        // is a collision force from the first tick of its life.
+        let (width, height) = (world.config().world.width, world.config().world.height);
+        for slot in occupied(&world) {
+            for cell in world.cells_of(slot) {
+                assert!(
+                    cell.pos.x >= 0.0 && cell.pos.x < width,
+                    "a cell of the body in slot {slot} is at x = {} in a world {width} wide",
+                    cell.pos.x
+                );
+                assert!(
+                    cell.pos.y >= 0.0 && cell.pos.y <= height,
+                    "a cell of the body in slot {slot} is at y = {} in a world {height} deep",
+                    cell.pos.y
+                );
+                assert!(
+                    cell.vel.length() < 1_000.0,
+                    "a cell of the body in slot {slot} is moving at {} units a second, and \
+                     SPEC section 8 says a cell shoved at sixty travels under two body-widths \
+                     before it stops",
+                    cell.vel.length()
+                );
+            }
+        }
+    }
+
+    /// ⭐⭐ **C4.** A birth moves `offspring_share` of the parent's energy to the child - **out
+    /// of the parent**, and not from anywhere else.
+    ///
+    /// SPEC section 10's last clause, and the most dangerous line in Group C.
+    ///
+    /// # Why the assertion is that the parent went down
+    ///
+    /// SPEC section 5 spells out the failure this is guarding against, and it is the one the
+    /// energy invariant provably **cannot** see. An organism's energy and the ledger's
+    /// `biomass` account are two records of one quantity. A newborn handed a share its parent
+    /// never gave up leaves all five accounts exactly where they were - the books balance
+    /// perfectly, the check at the end of the tick says nothing, and a body stands in the world
+    /// holding energy nobody counted. It stays silent until that body dies and its energy is
+    /// moved out of an account that never received it, hours into a run, with no cause to find.
+    ///
+    /// Phase 2 learned this about seeded organisms and wrote it into SPEC. This is the same
+    /// trap one phase along, and the same answer: assert the parent went **down** by what the
+    /// child went **up** by, rather than that the books balance.
+    ///
+    /// # The parent is a body that cannot earn, which is what makes the arithmetic exact
+    ///
+    /// A single gonocyte: SPEC section 6 gives it no way to take anything out of the water, so
+    /// over one tick the only thing that happens to its energy besides the birth is one tick of
+    /// upkeep. Every figure below is therefore written out in full from SPEC's own numbers -
+    /// what it was seeded with, less its upkeep, split 45:55 - rather than measured and
+    /// compared with itself. A photosynthetic parent would have earned an unknown amount in the
+    /// same tick and the test would have had to ask the code what that was.
+    ///
+    /// # And the tick after, which pins a decision SPEC does not make
+    ///
+    /// The child is born holding more than its own bar, and it does **not** reproduce on the
+    /// tick it was born. `reproduction.rs` argues why: the pass walks the slots from the front,
+    /// so without that rule one rich body would fill the entire world between two ticks. It
+    /// breeds on the very next tick instead, which is what the closing assertion checks - the
+    /// rule delays a birth by a tick rather than forbidding one.
+    #[test]
+    fn a_birth_transfers_offspring_share_of_the_parents_energy() {
+        let mut world = World::new(&a_bright_world(42, 8));
+        let limits = world.config().limits.clone();
+
+        for _ in 0..300 {
+            world.tick();
+        }
+
+        // One gonocyte, one gene. SPEC section 6 gives it an upkeep of 0.005 and no income at
+        // all, and SPEC section 3's `gene_cost` is 0.0001 for the one gene it carries.
+        let parent = world
+            .seed(
+                a_single_cell(CellKind::Gonocyte, &limits),
+                Vec2::new(120.0, 72.0),
+                30.0,
+            )
+            .expect("a lit world holds thirty units under a single cell");
+
+        let seeded = holding(&world, parent);
+        let biomass_before = world.ledger().biomass();
+        let upkeep = f64::from(0.005f32) + f64::from(0.0001f32);
+        let bar = the_bar_for(&[0.005]);
+        assert!(
+            seeded > bar,
+            "the parent is holding {seeded} against a bar of {bar}, so no birth is expected"
+        );
+
+        world.tick();
+
+        let alive = occupied(&world);
+        assert_eq!(alive.len(), 2, "a body well over the bar had no child");
+        let child = *alive
+            .iter()
+            .find(|&&slot| slot != parent)
+            .expect("two organisms and one of them is the parent");
+
+        // What SPEC's arithmetic says the two of them hold, worked out from the outside.
+        let at_the_birth = seeded - upkeep;
+        let dowry = f64::from(0.45f32) * at_the_birth;
+
+        assert!(
+            (holding(&world, child) - dowry).abs() < 1e-12,
+            "the child is holding {}, against the {dowry} that `offspring_share` of the {} its \
+             parent had comes to",
+            holding(&world, child),
+            at_the_birth
+        );
+        // ⭐ The claim. What the parent has left is what it had less exactly what the child is
+        // holding - so the child's energy came out of the parent and out of nothing else.
+        assert!(
+            (holding(&world, parent) - (at_the_birth - dowry)).abs() < 1e-12,
+            "the parent was holding {at_the_birth} and gave away {dowry}, and it is left with \
+             {} rather than {}",
+            holding(&world, parent),
+            at_the_birth - dowry
+        );
+        assert!(
+            holding(&world, parent) < seeded,
+            "the parent finished the tick it reproduced on holding more than it started with"
+        );
+
+        // And the books never had to move, because both ends of a birth are living tissue. That
+        // is precisely why this failure is invisible to them, and why the assertion that
+        // catches it is the one above rather than this one.
+        let alive_now: f64 = alive.iter().map(|&slot| holding(&world, slot)).sum();
+        assert!(
+            (world.ledger().biomass() - alive_now).abs() < 1e-12,
+            "the books say {} is alive in this world and the two organisms in it are holding \
+             {alive_now} between them - so a birth has either invented energy or lost it",
+            world.ledger().biomass()
+        );
+        assert!(
+            (biomass_before - world.ledger().biomass() - upkeep).abs() < 1e-12,
+            "a tick with a birth in it moved the living-biomass account by {}, and the only \
+             thing that should have moved it is one tick of upkeep at {upkeep}",
+            biomass_before - world.ledger().biomass()
+        );
+
+        // The child is already over its own bar and waited a tick anyway. See above.
+        assert!(
+            holding(&world, child) > bar,
+            "the child is holding {} against a bar of {bar}, so this test cannot tell a body \
+             that waited from a body that could not afford to breed",
+            holding(&world, child)
+        );
+
+        world.tick();
+
+        assert_eq!(
+            occupied(&world).len(),
+            4,
+            "the parent and the child were both over the bar on the tick after the birth and \
+             the world holds {} organisms",
+            occupied(&world).len()
+        );
+    }
+
+    /// ⭐⭐ **C5.** When there is nowhere to put a child, the birth **does not happen** - and
+    /// nothing is spent on it, and no arena grows.
+    ///
+    /// CLAUDE.md: *"When the population cap is reached, births fail rather than allocating.
+    /// (This is also biologically reasonable: a full world should mean nowhere to reproduce
+    /// into.) A simulation that cannot allocate cannot leak."* SPEC section 10 adds the word
+    /// that matters - **silently**. There is nothing to report, because a full world is not a
+    /// fault; it is the pressure the whole ecology is meant to grow out of.
+    ///
+    /// `a_birth_fails_at_the_cap_rather_than_allocating` already makes this claim about
+    /// [`World::seed`], which is the door from outside. This is the same claim about the door
+    /// organisms come in through by themselves, which is the one a run of tens of millions of
+    /// ticks actually uses.
+    ///
+    /// # ⚠️ Half of this test passes against a world where nothing is ever born
+    ///
+    /// That is the trap in it, and it is worth stating plainly because it is how this test
+    /// first ran: with reproduction not yet written, a full world declining to produce children
+    /// is exactly what a world with no reproduction in it looks like. Every assertion about the
+    /// cap went green immediately and meant nothing whatever.
+    ///
+    /// So the test is in two halves and the second one is not optional. The same three bodies,
+    /// in the same world with **one slot free**, and one of them has a child. Without that, this
+    /// is a test that a feature which does not exist has not been used.
+    ///
+    /// # What is measured is capacity, not length
+    ///
+    /// For the reason `a_birth_fails_at_the_cap_rather_than_allocating` gives at length: the
+    /// failure being guarded against is not a wrong answer, it is a `Vec` quietly doubling
+    /// itself in a process that is meant to have a fixed footprint all night. A vector that has
+    /// grown has moved, so the addresses of the two largest are compared as well.
+    ///
+    /// # And nothing was spent on the birth that did not happen
+    ///
+    /// The three bodies are lone gonocytes, which earn nothing, so a tick costs each of them
+    /// exactly one upkeep and there is nothing else for their energy to do. A parent that had
+    /// handed over its share and *then* found there was nowhere to put the child would show up
+    /// here as a body 45% lighter - and in a run that spends most of a long night at its cap,
+    /// that is every organism in the world paying for children that do not exist, every tick.
+    #[test]
+    fn births_fail_silently_at_the_population_cap() {
+        let mut world = World::new(&a_bright_world(42, 3));
+        let limits = world.config().limits.clone();
+
+        for _ in 0..300 {
+            world.tick();
+        }
+
+        for along in [40.0f32, 120.0, 200.0] {
+            world
+                .seed(
+                    a_single_cell(CellKind::Gonocyte, &limits),
+                    Vec2::new(along, 72.0),
+                    30.0,
+                )
+                .expect("a lit world holds thirty units under a single cell");
+        }
+
+        assert!(
+            world.free.is_empty(),
+            "this test needs a full world and there are {} slots free",
+            world.free.len()
+        );
+
+        let capacities = [
+            world.cells.capacity(),
+            world.springs.capacity(),
+            world.organisms.capacity(),
+            world.free.capacity(),
+            world.crowd.capacity(),
+            world.bonds.capacity(),
+            world.live.capacity(),
+            world.owner.capacity(),
+            world.drift.capacity(),
+        ];
+        let addresses = [
+            world.cells.as_ptr().cast::<u8>(),
+            world.springs.as_ptr().cast::<u8>(),
+        ];
+        let before: Vec<f64> = (0..3).map(|slot| holding(&world, slot)).collect();
+        let upkeep = f64::from(0.005f32) + f64::from(0.0001f32);
+        let bar = the_bar_for(&[0.005]);
+        assert!(
+            before.iter().all(|&held| held > bar),
+            "all three bodies have to be over the bar of {bar} for this to be a test about \
+             the cap, and they are holding {before:?}"
+        );
+
+        world.tick();
+
+        assert_eq!(
+            occupied(&world).len(),
+            3,
+            "a full world produced a child anyway"
+        );
+        for (slot, &held) in before.iter().enumerate() {
+            let spent = held - holding(&world, slot);
+            assert!(
+                (spent - upkeep).abs() < 1e-12,
+                "the body in slot {slot} paid {spent} over a tick in which it could not \
+                 reproduce, against the {upkeep} a tick of its upkeep costs - so it handed \
+                 over a share for a child that was never born"
+            );
+        }
+        assert_eq!(
+            capacities,
+            [
+                world.cells.capacity(),
+                world.springs.capacity(),
+                world.organisms.capacity(),
+                world.free.capacity(),
+                world.crowd.capacity(),
+                world.bonds.capacity(),
+                world.live.capacity(),
+                world.owner.capacity(),
+                world.drift.capacity(),
+            ],
+            "a birth that could not happen grew one of the world's arenas, so the memory this \
+             run uses is decided by how many organisms try to be born rather than by the \
+             configuration"
+        );
+        assert_eq!(
+            addresses,
+            [
+                world.cells.as_ptr().cast::<u8>(),
+                world.springs.as_ptr().cast::<u8>()
+            ],
+            "a birth that could not happen moved an arena somewhere else in memory"
+        );
+
+        // And the world is undamaged: it still ticks, and it still holds three organisms.
+        world.tick();
+        assert_eq!(occupied(&world).len(), 3);
+
+        // ⭐ The positive control. Everything above is also true of a world in which nothing is
+        // ever born, so the same three bodies are given one slot to breed into.
+        let mut roomy = World::new(&a_bright_world(42, 4));
+        for _ in 0..300 {
+            roomy.tick();
+        }
+        for along in [40.0f32, 120.0, 200.0] {
+            roomy
+                .seed(
+                    a_single_cell(CellKind::Gonocyte, &limits),
+                    Vec2::new(along, 72.0),
+                    30.0,
+                )
+                .expect("a lit world holds thirty units under a single cell");
+        }
+        let roomy_before: Vec<f64> = (0..3).map(|slot| holding(&roomy, slot)).collect();
+
+        roomy.tick();
+
+        assert_eq!(
+            occupied(&roomy),
+            vec![0, 1, 2, 3],
+            "three bodies over the bar with one slot between them did not fill it"
+        );
+        assert!(
+            roomy_before[0] - holding(&roomy, 0) > 1.0,
+            "the body in slot 0 paid {} for the one child there was room for, and a share of \
+             thirty units is a great deal more than that",
+            roomy_before[0] - holding(&roomy, 0)
+        );
+        for slot in [1, 2] {
+            let spent = roomy_before[slot] - holding(&roomy, slot);
+            assert!(
+                (spent - upkeep).abs() < 1e-12,
+                "the body in slot {slot} paid {spent} over the tick, and the one free slot had \
+                 already gone to the body in slot 0 - so the slots are not being walked from \
+                 the front, and which body gets the last place in a full world is not decided \
+                 by anything written down"
+            );
+        }
+    }
+
+    /// ⭐⭐ **C6.** A lineage mutates the same way whatever else is alive around it, and a whole
+    /// world of them replays exactly.
+    ///
+    /// SPEC section 2 calls determinism load-bearing and gives the reason: when something
+    /// interesting happens you will want to see it again. `a_run_is_still_reproducible` makes
+    /// that claim about a world of water, light and bodies being pushed around, and says in its
+    /// own documentation that *"the seed will reach the organisms in Phase 4, when reproduction
+    /// mutates a genome out of an organism's own stream, and this test should grow to cover
+    /// that when it does"*. This is that test.
+    ///
+    /// # The two halves are different claims and the second is the load-bearing one
+    ///
+    /// The first is the ordinary one: two runs of one seed, with births and deaths in them,
+    /// agree down to the last bit. It would pass against an implementation that drew every
+    /// mutation from a single world-wide generator, because a single generator is perfectly
+    /// reproducible as long as nothing changes the order it is drawn from in.
+    ///
+    /// The second is what SPEC section 2 actually asks for: *"each organism carries its own RNG
+    /// stream, seeded deterministically from `(world_seed, organism_serial)`. This keeps
+    /// organism-level randomness independent of evaluation order, which is what allows `rayon`
+    /// parallelism without breaking reproducibility."* So the same founder is bred in two
+    /// worlds - one where it is alone, and one where three other bodies are sitting on top of
+    /// it, shading it and shoving it about - and its first child has to be the same child. It
+    /// is born on a **different tick** in the two, because its parent earns differently under a
+    /// crowd, and the assertion that the two ticks differ is what makes the genome assertion
+    /// mean something.
+    ///
+    /// Under a world-wide generator the crowded run would have drawn a different number of
+    /// times before that birth, and the child would be somebody else.
+    #[test]
+    fn a_lineage_is_still_deterministic_across_generations() {
+        // Half one: the same seed, twice, over a world where things are born.
+        let run = |seed: u64| -> World {
+            let mut world = World::new(&a_bright_world(seed, 8));
+            let limits = world.config().limits.clone();
+
+            for _ in 0..300 {
+                world.tick();
+            }
+            world
+                .seed(a_breeder(1, &limits), Vec2::new(120.0, 72.0), 30.0)
+                .expect("a lit world holds thirty units under a two-celled body");
+            for _ in 0..600 {
+                world.tick();
+            }
+
+            world
+        };
+
+        let once = run(42);
+        let again = run(42);
+
+        assert!(
+            occupied(&once).len() > 2,
+            "six hundred ticks and the founder had at most one child, so this test is not \
+             looking at generations"
+        );
+        assert_eq!(
+            every_number_in(&once),
+            every_number_in(&again),
+            "two runs of seed 42, with organisms breeding in them, no longer agree"
+        );
+        assert_eq!(
+            occupied(&once)
+                .iter()
+                .map(|&slot| once.organisms()[slot]
+                    .as_ref()
+                    .expect("this slot is occupied")
+                    .genome()
+                    .clone())
+                .collect::<Vec<_>>(),
+            occupied(&again)
+                .iter()
+                .map(|&slot| again.organisms()[slot]
+                    .as_ref()
+                    .expect("this slot is occupied")
+                    .genome()
+                    .clone())
+                .collect::<Vec<_>>(),
+            "two runs of seed 42 grew different genomes, so the mutations are being drawn \
+             from something that is not the seed"
+        );
+
+        // ⭐ Half two: the same founder, with and without neighbours.
+        let lineage = |crowded: bool| -> (u64, Genome) {
+            let mut world = World::new(&a_bright_world(42, 8));
+            let limits = world.config().limits.clone();
+
+            for _ in 0..300 {
+                world.tick();
+            }
+
+            // The founder is seeded first in both worlds, so it holds serial 0 either way.
+            world
+                .seed(a_breeder(1, &limits), Vec2::new(120.0, 72.0), 12.0)
+                .expect("a lit world holds twelve units under a two-celled body");
+            let seeded = if crowded {
+                for over in [1.0f32, 2.0, 3.0] {
+                    world
+                        .seed(
+                            a_chain(3, &limits),
+                            Vec2::new(120.0 + over, 72.0 - over * 2.0),
+                            2.0,
+                        )
+                        .expect("a lit world holds two units under a three-celled body");
+                }
+                4
+            } else {
+                1
+            };
+
+            for tick in 1..=2_000u64 {
+                world.tick();
+                if occupied(&world).len() > seeded {
+                    let child = *occupied(&world)
+                        .iter()
+                        .find(|&&slot| slot >= seeded)
+                        .expect("the population grew, so somebody is in a new slot");
+
+                    return (
+                        tick,
+                        world.organisms()[child]
+                            .as_ref()
+                            .expect("the newborn is alive")
+                            .genome()
+                            .clone(),
+                    );
+                }
+            }
+
+            panic!("two thousand ticks and the founder never reproduced");
+        };
+
+        let (alone_on, alone) = lineage(false);
+        let (crowded_on, crowded) = lineage(true);
+
+        assert_ne!(
+            alone_on, crowded_on,
+            "the founder had its first child on tick {alone_on} in both worlds, so the three \
+             bodies sitting on top of it changed nothing and this test has not established \
+             that its numbers are its own"
+        );
+        assert_eq!(
+            alone, crowded,
+            "the same founder, breeding on tick {alone_on} alone and tick {crowded_on} under a \
+             crowd, produced two different children - so an organism's mutations depend on what \
+             else was in the world and in what order it was walked, and SPEC section 2's \
+             per-organism streams are not doing the one thing they exist for"
+        );
+    }
+
     /// The arenas are the size the configuration asks for, and they are that size for the
     /// whole run.
     ///
@@ -2371,9 +3357,14 @@ mod tests {
     /// in the physics reads a random number, so two worlds differing only in their seed push
     /// their bodies around identically. Nor does anything else here: a genome handed to
     /// [`World::seed`] is the genome that grows, so two seeds grow the same body in the same
-    /// place. **The seed will reach the organisms in Phase 4**, when reproduction mutates a
-    /// genome out of an organism's own stream, and this test should grow to cover that when
-    /// it does.
+    /// place. **The seed reaches the organisms from Group C**, where reproduction mutates a
+    /// genome out of an organism's own stream - and it is
+    /// `a_lineage_is_still_deterministic_across_generations` that covers it, rather than this
+    /// test, because the interesting half of that claim is not about a seed at all. It is that
+    /// a lineage draws its numbers independently of what else is alive in the world, which is
+    /// what SPEC section 2 wants per-organism streams for and what no amount of running the
+    /// same seed twice can establish. The two bodies here have no gonocyte between them, so
+    /// nothing in this test is ever born.
     ///
     /// What the seed reaches today is the blotchiness of the light - the ceilings the tiles
     /// fill to - and it reaches all of it: measured, **every one of the 1,536 tiles differs**

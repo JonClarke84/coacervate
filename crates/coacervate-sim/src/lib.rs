@@ -35,10 +35,14 @@
 //! - [`metabolism`] — the other side: what every cell costs its organism per tick simply for
 //!   existing, what a genome costs to carry, and what becomes of a body that cannot pay or
 //!   has been alive too long. Death, and the slow fall of what it leaves behind.
+//! - [`reproduction`] — the third side, and the one that closes the circle: a body that has
+//!   earned enough, and has grown the tissue to do it with, copies its genome imperfectly and
+//!   puts a child down beside itself out of its own energy. Until this existed a population
+//!   could only fall, so nothing a mutation happened to make better could ever become common.
 //! - [`world`] — all of the above owned in one place, and the tick that moves it: the light
 //!   falling, the energy spreading, the tiles shedding what they cannot hold, the bodies
-//!   being fed and pushed about, and the dead being taken away — with the books checked as it
-//!   goes.
+//!   being fed and pushed about, the dead being taken away and the living having offspring —
+//!   with the books checked as it goes.
 
 #![forbid(unsafe_code)]
 
@@ -53,6 +57,7 @@ pub mod metabolism;
 pub mod mutation;
 pub mod organism;
 pub mod physics;
+pub mod reproduction;
 pub mod rng;
 pub mod world;
 

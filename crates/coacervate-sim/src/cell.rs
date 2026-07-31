@@ -280,9 +280,15 @@ impl CellKind {
     /// the organism was holding - energy is conserved - so what construction energy decides
     /// there is the *ratio* in which a body is shared out between its cells, and a ratio does
     /// not care about the multiplier. It is Group C's reproduction threshold that the
-    /// thousand actually sets, and Group C may well want to move it: at the shipped rates a
-    /// photosynthetic body climbs to `2.2 × 1,000 ticks of upkeep` in a couple of hundred
-    /// ticks, which is the generation time of the whole simulation.
+    /// thousand actually sets: at the shipped rates it *is* the generation time of the whole
+    /// simulation.
+    ///
+    /// **Group C measured it and left it alone.** A photocyte-and-gonocyte body seeded into a
+    /// full default world holding two units reaches `2.2 × 9` and has its first child on **tick
+    /// 458**, against the 1,963 ticks `metabolism.rs` allows such a body to live - so a lineage
+    /// gets three or four generations out of every body, which is the ratio `metabolism.rs`'s
+    /// lifetime allowance was chosen against. Moving the thousand moves both of those numbers
+    /// together and changes nothing about the ratio between them.
     #[must_use]
     pub const fn construction(self) -> f32 {
         self.upkeep() * Self::CONSTRUCTION_TICKS

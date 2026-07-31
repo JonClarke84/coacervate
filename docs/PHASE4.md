@@ -12,8 +12,8 @@ extinction or explosion*, and `.\scripts\check.ps1` exits 0.
 | | |
 | --- | --- |
 | **Phase 4** | in progress |
-| **Current group** | C — renewal |
-| **Suite** | green — 116 tests, 55s |
+| **Current group** | D — the runner |
+| **Suite** | green — 122 tests, 54s |
 
 ---
 
@@ -130,16 +130,70 @@ searched through a bucket index — `a_crowded_drift_is_searched_rather_than_sca
 | **The drift's size** | `world.rs`, `drift` | One grain per cell the world can hold — 256,000 grains, **4 MB**. That is the whole world dead at once. A corpse that will not fit is dissipated rather than allocated for. |
 | **`gene_cost`'s magnitude** | `config.rs`, `MetabolismConfig::gene_cost` | 0.0001. Twenty genes cost what one sclerocyte costs; a genome at the 128 cap costs 0.0128 a tick, which is 3.2 photocytes; a ten-gene genome is 6% of a four-celled body's upkeep. |
 
-### Group C — renewal
+### Group C — renewal — **done**
 
-- [ ] **C1. `an_organism_reproduces_above_the_threshold`** — `reproduction_threshold ×
-  body construction cost`.
-- [ ] **C2. `an_organism_with_no_gonocyte_cannot_reproduce`** — reproduction has a real
-  structural cost.
-- [ ] **C3. `an_offspring_is_a_mutated_copy_placed_next_to_a_gonocyte`**
-- [ ] **C4. `a_birth_transfers_offspring_share_of_the_parents_energy`**
-- [ ] **C5. `births_fail_silently_at_the_population_cap`**
-- [ ] **C6. `a_lineage_is_still_deterministic_across_generations`**
+Almost all of it lives in a new module, `reproduction.rs`, which the tick runs **last of all**,
+after the reaping. Nothing else in the project can call it: `World::seed` is the door from
+outside and this is the only other way the `organisms` array ever gains an entry.
+
+The tests are in `world.rs` rather than beside the code, and that is a departure from Group B.
+Every claim here is about a whole world — a slot coming off the free list, a body grown from a
+mutated genome and written into the arena, an arena that did not grow when there was nowhere to
+put a child — and only a `World` has those. `metabolism.rs` builds its scenes by hand because
+its claims are about *amounts*, and an amount can be measured without a world around it.
+
+- [x] **C1. `an_organism_reproduces_above_the_threshold`** — and the sum it multiplies is
+  `metabolism.rs`'s `construction_energy`, asserted to be the same one a corpse is shared out
+  by. SPEC uses the phrase "construction energy" twice and defines it nowhere; two sums would
+  have been free to drift apart with nothing reporting it. The test watches every tick, so it
+  asserts the birth did not happen *early* as well as that it happened.
+- [x] **C2. `an_organism_with_no_gonocyte_cannot_reproduce`** — both bodies in one world, so the
+  only thing differing between them is the one SPEC section 6 names. What says the barren one
+  *could* have bred is that it ends holding twice its own bar and never once falls by so much
+  as a unit in a tick, which is what handing over `offspring_share` would look like.
+- [x] **C3. `an_offspring_is_a_mutated_copy_placed_next_to_a_gonocyte`** — the child's genome is
+  **recomputed in the test**, from the parent's genome and a fresh stream of the parent's own
+  numbers, and compared gene for gene. The parent is given two gonocytes so that "next to a
+  gonocyte" has more than one answer, and a second seed is run to show the side it lands on was
+  drawn rather than fixed. It also checks nothing exploded: a newborn is laid down *touching*
+  its parent, which is a collision force from the first tick of its life.
+- [x] **C4. `a_birth_transfers_offspring_share_of_the_parents_energy`** — ⚠️ **checked by
+  breaking it.** The parent was made not to pay, so the child's energy came from nowhere, and
+  **two tests failed: this one and C5.** Everything else went green — including
+  `energy_is_still_conserved_with_organisms_present`, which asserts the invariant across
+  120,000 ticks. That is not a gap in the suite; it is SPEC section 5's warning being exactly
+  right. Both ends of a birth are `biomass`, so a transfer nobody declared moves *no account at
+  all*, and the books balance perfectly around a body holding energy that was never counted. The
+  parent is a lone gonocyte, which earns nothing, so every figure in the test is written out
+  from SPEC's own numbers rather than measured and compared with itself.
+- [x] **C5. `births_fail_silently_at_the_population_cap`** — ⚠️ **half of this test passes
+  against a world in which nothing is ever born**, and it did: run before the code existed,
+  every assertion about the cap went green and meant nothing. Its red was the **positive
+  control** — the same three bodies with one slot free, which came back `[0, 1, 2]` against the
+  `[0, 1, 2, 3]` expected. Capacity is compared rather than length, and so are the addresses of
+  the two largest arenas.
+- [x] **C6. `a_lineage_is_still_deterministic_across_generations`** — two halves, and the second
+  is the load-bearing one. Two runs of one seed agreeing would pass against a single world-wide
+  generator. So the same founder is bred in two worlds — alone, and with three bodies sitting on
+  top of it shading it — and its first child has to be the *same child*. It is born on a
+  different tick in the two, and the assertion that the ticks differ is what makes the genome
+  assertion mean anything.
+
+#### What Group C decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **Where a birth sits in the tick** | `world.rs`, `tick` | **Last**, after the reaping. A slot this tick's deaths freed can be born into on the same tick, so a world at its cap turns over rather than idling a tick between every death and its replacement; a body that did not survive the tick does not breed on its way out; and a newborn is laid down beside a parent the physics has finished moving. The price is that a newborn gets one free tick — it is not aged, fed or charged until the next one. |
+| **A body does not breed on the tick it was born** | `reproduction.rs`, the `age() == 0` skip | The pass walks the slots from the front and a newborn can land in a slot the walk has not reached. Without this, a rich body has a child holding enough to have a child, and a world goes from one organism to its cap between two frames. Written as a rule about organisms — *a body that has not lived a tick has not had a tick in which to accumulate anything* — rather than as a guard over a loop. |
+| **Which gonocyte** | `reproduction.rs`, `nursery` | The **first in the body**, which is the order development made them and therefore an order the genome decides. Rejected: a random one, which spends a draw from the parent's stream to no visible end, and the nearest or richest, neither of which means anything — a gonocyte holds no energy of its own and there is nothing for a nursery to be near. A lineage that wants a different one grows it first. |
+| **What "adjacent" is** | `reproduction.rs`, `beside` | **Exactly touching**: the two radii added, from SPEC section 6's table. It is the one distance SPEC section 8's collision does not immediately act on, and the same reading `development.rs` already takes when it buds a daughter that does not adhere. Placing a newborn *on top of* its parent works — the physics shoves them apart — but every birth in the world would start with a spike of collision force, and a spike is what an explicit integrator does not want. |
+| **What "a small random offset" is** | `reproduction.rs`, `beside` | **Which way.** A fixed direction would stack a body's successive children in the same spot, because a gonocyte does not move between one birth and the next — and cells at exactly one point are the case `physics.rs` has to break a tie for. One number from the parent's stream scatters them. |
+| **A birth is a named ledger movement** | `ledger.rs`, `Ledger::inherit` | `biomass → biomass`, so no total in the world changes and the check at the end of the tick can never see it. Named anyway, for the reason `predate` already gives: the alternative is somebody adding to one organism and subtracting from another by hand, which is the same arithmetic with nothing watching it. |
+| **Where a body's cells go** | `organism.rs`, `lay_out` | One definition, shared by a seeding and a birth, replacing `World::placed`. It became worth extracting because a newborn can be budded **across the seam** — a child of a body at the world's right-hand edge belongs at the left-hand one — where a seeded body's position was always chosen by a caller. |
+| **`CONSTRUCTION_TICKS` stays at 1,000** | `cell.rs` | Group B invited Group C to move it. Measured instead: a photocyte-and-gonocyte body seeded into a full default world has its first child on **tick 458**, against the 1,963 ticks `metabolism.rs` allows it to live — three or four generations a body, which is the ratio `LIFETIME_UPKEEP` was chosen against. Moving the thousand moves both numbers together and changes nothing about that ratio. |
+
+⚠️ **The loop now turns, and Group C ran it.** The first ecology reading is under Q15 below,
+and it is not reassuring. Read it before Group D touches a single number.
 
 ### Group D — the runner, and the question the project exists to ask
 
@@ -156,17 +210,23 @@ searched through a bucket index — `a_crowded_drift_is_searched_rather_than_sca
 
 ---
 
-⚠️ **Two things Group C and Group D have to pick up.**
+⚠️ **Three things Group D has to pick up.**
 
-**Group C reuses `construction_energy`.** It is in `metabolism.rs`, takes the body's own cells
-(`World::cells_of`), and is the same sum C1's `reproduction_threshold × body construction
-cost` needs. Do not write a second one. At the shipped multiplier a four-celled photocyte body
-is worth 16 units, so C1's threshold is 35.2 and such a body reaches it in about 370 ticks
-from empty — against a lifespan of 1,963. Group C may reasonably want to move
-`CONSTRUCTION_TICKS`; nothing in Group B depends on its size, only on the ratios.
+**⭐⭐ The balance question is no longer a calculation.** Q15 below now carries a measured run
+of the whole loop, from one seeded body to a world pinned at its population cap. Read it before
+touching `upkeep_scale`.
 
-**⭐⭐ Group D's balance question has moved, and not in the direction Group A expected.** See
-Q15 below.
+**A run is not bounded by anything yet.** `world.rs` says plainly that the world cannot time
+itself — `clippy.toml` refuses `Instant` and `SystemTime` in `coacervate-sim` outright — so
+whatever ends a run does it from outside, by counting ticks. That is D1, and `clippy.toml`
+already carries the note about how `coacervate-app` is to be allowed a clock without losing the
+five cast lints.
+
+**Nothing in the simulation limits how *fast* the population grows, only how large it gets.**
+Group C's measured doubling time is about 2,700 ticks, so a world reaches its cap from a single
+body in twenty thousand — before D2's `max_ticks_per_second` has had a chance to make a run
+watchable. If the `slow` profile is meant to give a person something to notice rather than a
+result to read, the interesting number is the doubling time and not the tick rate.
 
 ## The decision this phase has to take: a metabolic cost per gene
 
@@ -214,8 +274,57 @@ than expected.
 
 `upkeep_scale` is the lever with the right shape: it is live, it scales the cost side without
 touching the light, and it is now also the lifespan slider (a hotter world is one where
-everything dies younger). The arithmetic above suggests about **4**. It is a calculation, not
-an experiment, and Group D is where it gets tried against a running ecology.
+everything dies younger). The arithmetic above suggests about **4**.
+
+### ⭐⭐ The first ecology reading — the whole loop turning, once, for real
+
+Group C's last act was to run it, because the calculation above was only ever a calculation.
+**One** photocyte-and-gonocyte body, holding two units, seeded into a default-config world
+that had been lit for 1,500 ticks first. Nothing else changed. Measured 31 July 2026,
+Windows 11 x86-64, release build.
+
+| Tick | Population | What is happening |
+| --- | --- | --- |
+| **458** | 1 → 2 | first birth |
+| 1,000 | 7 | |
+| 2,500 | 42 | first deaths; the founder's generation reaches old age |
+| 5,000 | 177 | |
+| 10,000 | 762 | |
+| 15,000 | 2,059 | |
+| **19,565** | **4,000** | **`limits.max_organisms`. Births start failing.** |
+| 115,000 | 4,000 | still 4,000, and still nowhere near running out of food |
+
+**It does not crash and it does not stabilise. It fills.** Growth is clean exponential —
+population roughly doubles every 2,700 ticks — from one body to the arena cap in **under
+twenty thousand ticks**, which is about five minutes of simulated time and a few seconds of
+wall clock. It then sits at exactly 4,000 for as long as it was watched, with the population
+turning over underneath (14,000 grains of detritus in the water at tick 115,000, against a
+drift built for 256,000, so the arena is not close to being the binding constraint either).
+
+**Q15 is confirmed, and it is worse than the calculation suggested.** The world is not short of
+anything. Over the 95,000 ticks after the cap was reached:
+
+- the **field falls only 12%**, from 184,000 units to 163,000 — the water is still nearly full
+  while every slot in the world is taken;
+- **biomass climbs four-fold**, from 61,000 to 235,000, because the bodies at the cap keep
+  getting richer with nothing to spend it on;
+- **mean cell count climbs from 2.00 to 5.06** and **mean genome length from 1.97 to 4.24**.
+
+That last line is the interesting one and it cuts both ways. Bodies are growing, which is what
+this project was built to see — but they are growing under *no selection pressure at all*,
+because the only thing stopping a lineage reproducing is that there is nowhere to put a child.
+When every birth fails for the same reason regardless of how well the parent is doing, being
+better at anything buys nothing. That is a world where drift is the only force acting, and it
+is exactly the "blooms and stagnates" failure CLAUDE.md warns about, arriving by the route
+Group A predicted.
+
+**Group D therefore has a real, measured problem rather than an arithmetic worry**, and the
+lever is the one already identified: `upkeep_scale`, which is live, scales the cost side
+without touching the light, and doubles as the lifespan slider. The calculation said about 4.
+The reading above is what it now has to be tried against — and the thing to watch is not
+whether the population survives but whether the **cap stops being what limits it**: D4's
+"living, non-degenerate population" is only a meaningful test in a world where the energy
+budget binds first.
 
 **Q13** — **the light gradient is nearly invisible at body scale.** SPEC's `gradient` of 0.75
 spread over 1,152 world units is a change of about half a per cent per tile, so a sensocyte

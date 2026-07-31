@@ -203,6 +203,27 @@ impl Ledger {
         self.transfer(Account::Biomass, Account::Biomass, amount);
     }
 
+    /// A parent has handed `amount` to the child it has just had.
+    ///
+    /// The second movement in this file with living tissue at both ends, and no total in the
+    /// world changes across it. It exists as a named operation for the reason
+    /// [`Ledger::predate`] gives: the alternative to naming it is somebody adding to one
+    /// organism and subtracting from another by hand, which is the same arithmetic with nothing
+    /// watching it.
+    ///
+    /// ⚠️ **What it does not do is notice a birth that never called it.** SPEC section 5 is
+    /// explicit that a conservation check cannot see energy that was never declared, and a
+    /// newborn handed energy its parent never gave up leaves all five accounts exactly where
+    /// they were. The books balance, the invariant is silent, and a body stands in the world
+    /// holding energy nobody counted. What guards against that is a test asserting the parent
+    /// went **down**; see `reproduction.rs`.
+    ///
+    /// A negative amount is refused, like every other movement here, so a birth cannot be run
+    /// backwards to take energy off a child.
+    pub fn inherit(&mut self, amount: f64) {
+        self.transfer(Account::Biomass, Account::Biomass, amount);
+    }
+
     /// `amount` has gone on upkeep and on the work of moving.
     ///
     /// A one-way street with one exception, and the exception is named: [`Ledger::write_off`]

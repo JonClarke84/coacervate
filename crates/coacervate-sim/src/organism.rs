@@ -62,8 +62,11 @@
 //! organism that forgets to put back replays the same numbers for the rest of its life,
 //! which is a lineage that mutates the same way every generation.
 
-use crate::config::LimitsConfig;
+use crate::cell::{Cell, Vec2};
+use crate::config::{LimitsConfig, WorldConfig};
+use crate::development::Body;
 use crate::genome::Genome;
+use crate::physics::{Spring, wrapped};
 use crate::rng::WorldRng;
 use rand::rngs::ChaCha8Rng;
 use std::ops::Range;
@@ -105,9 +108,13 @@ pub struct Organism {
     /// How many ticks this organism has been alive.
     ///
     /// SPEC section 10 gives death two causes, and this is half of the second one: energy
-    /// reaching zero, or age passing a limit the genome decides. Nothing kills anything yet -
-    /// that is Phase 4 - but the count has to start at the moment of birth, and the moment of
-    /// birth is here.
+    /// reaching zero, or age passing a limit the genome decides. `metabolism.rs` derives that
+    /// limit from what the body costs to run.
+    ///
+    /// It answers a second question too, and `reproduction.rs` is where the reasoning is: an
+    /// organism only breeds once it has been alive for a tick. A body born during this tick has
+    /// nought here, and a body that was already in the world has at least one, so the two can be
+    /// told apart without anything having to keep a list of who is new.
     age: u64,
 
     /// Which organism this is, for as long as the run lasts.
@@ -211,9 +218,11 @@ impl Organism {
     /// it until that energy is moved out of an account that never received it - hours into a
     /// run, with no cause to find.
     ///
-    /// This is why the field is private and why there is no setter. The only callers are
-    /// `world.rs`, at a birth, and `behaviour.rs`, which does every one of its movements in
-    /// one place for exactly this reason.
+    /// This is why the field is private and why there is no setter. The only caller is
+    /// `behaviour.rs`, which does every one of its movements in one place for exactly this
+    /// reason. The two ways an organism *starts* holding something - being seeded, and being
+    /// born - both hand the figure to [`Organism::new`] instead, so there is no moment at which
+    /// an organism exists holding nothing and is then topped up.
     pub(crate) fn gain(&mut self, amount: f64) {
         self.energy += amount;
     }
@@ -285,6 +294,62 @@ pub(crate) fn spring_slot(slot: usize, limits: &LimitsConfig) -> Range<usize> {
     let width = springs_per_slot(limits);
 
     slot * width..(slot + 1) * width
+}
+
+/// Write a grown body into the stretch of the world's arenas its slot owns, with its seed cell
+/// at `at`.
+///
+/// There are two ways an organism arrives in the world - somebody seeds it, or a parent has
+/// one - and this is the part they share. It lives here because it is entirely about the slot
+/// arithmetic this module owns: the same range of the same two arrays, whichever way the body
+/// got there. Written out twice it would be two places to fix on the day a slot changes shape,
+/// and one of them would be missed.
+///
+/// # Turning a shape into a position
+///
+/// `development.rs` grows a body as a set of offsets from its seed cell, which is a shape and
+/// not a place. Every cell lands at `at` plus its own offset, brought inside the world by SPEC
+/// section 8's boundaries: sideways it joins up, and top and bottom it stops. The clamp is
+/// against cell *centres*, which is the literal reading SPEC section 8 gives and says it is
+/// giving - a cell resting on the floor has half of itself below the world.
+///
+/// Doing it here rather than leaving it to the physics' first tick matters for a birth in a way
+/// it never did for a seeding: a newborn is placed beside its parent, and its parent may be
+/// standing on the seam. A daughter cell budded eastward from a body at the world's right-hand
+/// edge belongs at the left-hand edge, and a body laid down without this would have cells
+/// outside the world for one tick - long enough for the neighbour search, which assumes
+/// otherwise.
+///
+/// # Nothing here is told whether the slot was free
+///
+/// It is the caller's business, and both callers check. `world.rs` writes a seeded body into a
+/// free slot before it knows whether the water can pay for it, deliberately, because the
+/// alternative is a spare copy of every body for the sake of the seedings that fail.
+pub(crate) fn lay_out(
+    slot: usize,
+    body: &Body,
+    at: Vec2,
+    world: &WorldConfig,
+    limits: &LimitsConfig,
+    cells: &mut [Cell],
+    springs: &mut [Spring],
+) {
+    let first_cell = cell_slot(slot, limits).start;
+    let first_spring = spring_slot(slot, limits).start;
+
+    for (local, grown) in body.cells.iter().enumerate() {
+        let put = at + grown.offset;
+        let mut cell = Cell::new(
+            grown.kind,
+            Vec2::new(wrapped(put.x, world.width), put.y.clamp(0.0, world.height)),
+        );
+        cell.state = grown.state.get();
+        cells[first_cell + local] = cell;
+    }
+
+    for (local, spring) in body.springs.iter().enumerate() {
+        springs[first_spring + local] = *spring;
+    }
 }
 
 #[cfg(test)]
