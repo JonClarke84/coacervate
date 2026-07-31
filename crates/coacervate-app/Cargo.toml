@@ -8,6 +8,7 @@ edition.workspace = true
 # simulation crate does no I/O" boundary is actually enforced.
 [dependencies]
 coacervate-sim = { workspace = true }
+coacervate-render = { workspace = true }
 toml = { workspace = true }
 
 # Test-only. `the_bundled_config_seeds_the_world_rng` has to actually draw numbers from

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/coacervate-sim", "crates/coacervate-app"]
+members = ["crates/coacervate-sim", "crates/coacervate-app", "crates/coacervate-render"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,6 +8,7 @@ edition = "2024"
 
 [workspace.dependencies]
 coacervate-sim = { path = "crates/coacervate-sim" }
+coacervate-render = { path = "crates/coacervate-render" }
 # `chacha` + `std` with default features OFF gives ChaCha8Rng from `rand` itself, so
 # rand_chacha is not needed and the sim's direct dependencies stay at exactly rand +
 # serde, as CLAUDE.md requires. It also compiles out rand::rng(), random(), ThreadRng,
@@ -17,6 +18,36 @@ rand = { version = "0.10.2", default-features = false, features = ["chacha", "st
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.4"
 proptest = "1.11.0"
+
+# The renderer's four, and only the renderer's. CLAUDE.md's rule that the simulation
+# crate must not know rendering exists is enforced by coacervate-sim's manifest not
+# naming any of them.
+#
+# `wgpu` with default features OFF and `dx12` alone. CLAUDE.md's Windows setup section:
+# "wgpu talks to the card through DirectX 12, which is already present on Windows 11",
+# and the decision log rejects CUDA for the same portability reason that makes wgpu's
+# other backends irrelevant here -- this is a Windows-only executable, so compiling
+# Metal, Vulkan, GLES and WebGPU support into it is time spent on code that can never
+# run. `wgsl` is the shading language; `std` and `parking_lot` are what the default
+# feature set would have given anyway.
+wgpu = { version = "30.0.0", default-features = false, features = [
+    "std",
+    "parking_lot",
+    "dx12",
+    "wgsl",
+] }
+# wgpu's setup is async and this project has no async runtime, wants none, and would
+# gain nothing from one: the whole program blocks on the GPU exactly three times per
+# frame. `pollster` drives a future to completion on the calling thread and is about a
+# hundred lines.
+pollster = "1.0.1"
+# Turning an instance record into the bytes a vertex buffer wants. The alternative is a
+# pointer cast, and CLAUDE.md forbids `unsafe` outright -- so this crate proves the cast
+# is sound with a derive rather than with a comment.
+bytemuck = { version = "1.25.2", features = ["derive"] }
+# Writing the frame out. Chosen over `image`, which pulls in a decoder for every format
+# it knows and a colour-management stack, for the one format this project ever writes.
+png = "0.18.1"
 
 [workspace.lints.rust]
 # Belt and braces with the #![forbid(unsafe_code)] in each crate root. This form is a

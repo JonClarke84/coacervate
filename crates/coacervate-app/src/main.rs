@@ -38,6 +38,7 @@ mod run;
 
 use args::{Arguments, Settings};
 use census::Census;
+use coacervate_sim::config::RunConfig;
 use coacervate_sim::world::World;
 use run::{Interrupt, Run, Stop};
 use std::process::ExitCode;
@@ -66,6 +67,35 @@ const FOUNDERS: u32 = 8;
 /// the plainest output this program has.
 const REPORT_EVERY: u64 = 5_000;
 
+/// Where a run stops when it is only being run in order to draw one frame of it.
+///
+/// ⭐ **`--dump-frame` needs a world worth looking at, and a world is not worth looking at for
+/// some time after it starts.** The count is the *world's*, so it includes the dawn -
+/// `--ticks`' meaning, which Group A pinned - and at the shipped light the dawn is about ten
+/// thousand ticks with nothing alive in it at all. Thirty thousand therefore means twenty
+/// thousand ticks of life.
+///
+/// Measured rather than guessed, on the machine CLAUDE.md describes and against the shipped
+/// settings:
+///
+/// | World tick | Alive | Mean genes | Release build |
+/// | --- | --- | --- | --- |
+/// | 10,000 | 8 | 1.00 | 3 s |
+/// | 20,000 | 873 | 1.45 | 12 s |
+/// | 30,000 | 1,713 | 1.70 | 23 s |
+/// | 60,000 | 2,260 | 2.11 | 65 s |
+///
+/// Thirty thousand is where those two curves cross usefully. The population is well past its
+/// founding - a couple of thousand bodies spread over the whole world rather than eight - and
+/// mutation has visibly done something, with genomes averaging 1.7 genes and a spread of 0.85
+/// around it, so what is drawn is a population that has diverged rather than eight copies of
+/// `founding.rs`'s founder. And it costs twenty-three seconds, which is a wait somebody
+/// checking a shader will actually sit through.
+///
+/// **`--ticks` overrides it**, and that is the whole of the answer to wanting an older world:
+/// `--dump-frame frames/late.png --ticks 200000` draws one four times as old.
+const DUMP_TICKS: u64 = 30_000;
+
 fn main() -> ExitCode {
     // Everything the command line can do is decided before a tick is taken, so that a
     // mistyped flag costs nothing and `--dump-frame` does not first spend nine thousand
@@ -83,19 +113,6 @@ fn main() -> ExitCode {
     if arguments.help {
         println!("{}", args::HELP);
         return ExitCode::SUCCESS;
-    }
-
-    // ⚠️ Announced as unfinished rather than quietly ignored. A flag that is accepted and does
-    // nothing is worse than one that is refused: `--dump-frame` exists precisely so that visual
-    // work can be checked, and a person who thinks they have a PNG and has not is checking
-    // nothing. Group B of Phase 5 is what fills this in.
-    if let Some(path) = &arguments.dump_frame {
-        eprintln!(
-            "--dump-frame cannot render {} yet: there is no renderer in this build. Run without \
-             it for a headless run.",
-            path.display()
-        );
-        return ExitCode::FAILURE;
     }
 
     let settings = match Settings::load(&arguments, DEFAULT_CONFIG) {
@@ -132,19 +149,38 @@ fn main() -> ExitCode {
         println!("The command line overrode part of them; the document above is unchanged.");
     }
 
+    // ⚠️ A run that is only being run so that a frame can be drawn of it needs somewhere to
+    // stop, and the shipped settings deliberately have no tick bound at all. `--ticks` is
+    // still what decides it when it is given - so `--dump-frame` and `--ticks` together draw a
+    // world of exactly the age asked for - and [`DUMP_TICKS`] is what is used when it is not.
+    let bounds = if arguments.dump_frame.is_some() {
+        RunConfig {
+            max_ticks: Some(config.run.max_ticks.unwrap_or(DUMP_TICKS)),
+            ..config.run.clone()
+        }
+    } else {
+        config.run.clone()
+    };
+
     let mut world = World::new(&config);
     let dawn = founding::genesis(&mut world, FOUNDERS);
     println!(
         "The light fell for {dawn} ticks; {FOUNDERS} founders are in the water. Press Enter to \
          stop.\n"
     );
+    if let (Some(path), Some(until)) = (&arguments.dump_frame, bounds.max_ticks) {
+        println!(
+            "Running to tick {until} and then drawing one frame to {}.\n",
+            path.display()
+        );
+    }
     heading();
 
     let interrupt = Interrupt::new();
     listen(&interrupt);
 
     let years = f64::from(world.config().world.years_per_tick);
-    let mut run = Run::new(world, &config.run, &interrupt);
+    let mut run = Run::new(world, &bounds, &interrupt);
     let why = run.go(|world| {
         if world.ticks().is_multiple_of(REPORT_EVERY) {
             report(world, years);
@@ -154,7 +190,29 @@ fn main() -> ExitCode {
     report(run.world(), years);
     println!("\n{}", ending(why));
 
-    ExitCode::SUCCESS
+    let Some(path) = &arguments.dump_frame else {
+        return ExitCode::SUCCESS;
+    };
+
+    // The world is drawn as it was left, whatever left it there. A run that went extinct before
+    // its bound is drawn extinct: SPEC section 12's frame dump is a picture of what happened
+    // rather than a picture of what was hoped for, and empty water is a perfectly good answer
+    // to what a world looks like when nothing is in it.
+    match coacervate_render::dump_frame(run.world(), path) {
+        Ok(()) => {
+            println!(
+                "Drew {} at {} by {}.",
+                path.display(),
+                coacervate_render::DUMP_WIDTH,
+                coacervate_render::DUMP_HEIGHT
+            );
+            ExitCode::SUCCESS
+        }
+        Err(problem) => {
+            eprintln!("{problem}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// Ask for a graceful stop as soon as anybody presses Enter.

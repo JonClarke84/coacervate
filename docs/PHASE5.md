@@ -12,8 +12,8 @@
 | | |
 | --- | --- |
 | **Phase 5** | in progress |
-| **Current group** | B — one frame, on disk |
-| **Suite** | green — 147 tests, 110s |
+| **Current group** | C — the window |
+| **Suite** | green — 156 tests, 107s |
 
 ---
 
@@ -94,21 +94,139 @@ is invisible at a glance — a hair below nought reads as zero in anything print
 places, and it is a position the rest of the codebase has been written on the assumption that
 nothing can hold.
 
-### Group B — one frame, on disk ⭐
+### Group B — one frame, on disk ⭐ — **done**
 
-**The phase's done-criterion.** Headless: no window, no event loop.
+**The phase's done-criterion.** Headless: no window, no event loop. A new crate,
+`coacervate-render`, against `wgpu` 30.0.0, `pollster` 1.0.1, `bytemuck` 1.25.2 and
+`png` 0.18.1. `coacervate-sim` gained nothing at all.
 
-- [ ] **B1. `a_headless_gpu_device_can_be_created`** — and skips cleanly rather than failing
-  if no adapter is available, so the suite still runs on a machine without a GPU.
-- [ ] **B2. `a_frame_renders_to_a_png`** — `--dump-frame <path>` renders once and exits.
-- [ ] **B3. `cells_are_drawn_in_one_instanced_call`** — SPEC section 12. Per-instance:
-  position, radius, hue, energy flow, kind.
-- [ ] **B4. `neighbouring_cells_merge_into_one_silhouette`** — ⭐ soft radial falloff in the
-  fragment shader, drawn additively. *SPEC section 12: "This one technique is most of the
-  difference between 'creature' and 'physics demo'."*
-- [ ] **B5. `the_camera_maps_world_coordinates_to_the_frame`** — including the horizontal
-  wrap, so a body on the seam is drawn on both sides rather than half-vanishing.
-- [ ] **B6. Look at the frame.** Write down what it actually looks like.
+- [x] **B1. `a_headless_gpu_device_can_be_created`** — an adapter and a device with no
+  surface, no display handle and no event loop. **Two ways of failing, told apart**: no
+  adapter is a *skip*, an adapter that refuses a device is a *failure*. See the decision
+  table.
+- [x] **B2. `a_frame_renders_to_a_png`** — an offscreen texture, a copy back, a PNG. The
+  frame in the test is **300 pixels across on purpose**, which is 1,200 bytes a row and not
+  a multiple of 256, so the row padding is exercised rather than avoided. `--dump-frame
+  <path>` runs the world and then draws it.
+- [x] **B3. `cells_are_drawn_in_one_instanced_call`** — one draw for one cell, for five
+  hundred, and for none. `Frame::draws` is what makes that a count rather than a promise.
+  The five attributes' offsets are checked against Rust's own field offsets.
+- [x] **B4. `neighbouring_cells_merge_into_one_silhouette`** — ⭐ **three measurements**, not
+  an impression. See below.
+- [x] **B5. `the_camera_maps_world_coordinates_to_the_frame`** — the middle, the surface, the
+  floor, and the seam drawn on both edges at once.
+- [x] **B6. Looked at.** `docs/frames/phase5-groupb.png`. Written up below.
+
+#### ⭐ How B4 was stated as a measurement
+
+SPEC's sentence is about how something looks, so the test turns it into three numbers taken
+off the frame. All three are measured in **linear light** — `Frame::light_at` undoes the
+sRGB curve first — and all three subtract the water, because additive blending adds to the
+background as much as to anything and leaving it in drags every ratio towards one.
+
+1. **The light adds up.** Two cells six units apart, and then the left-hand one of that pair
+   *alone*. The midpoint between them is measured in both. The second cell is the first's
+   mirror image about that point, so the answer has to be exactly **two**, and it is:
+   `2.00`. Anything near one means the cells are being drawn *over* one another.
+2. **There is no valley between them.** Walking the row from one centre to the other, the
+   dimmest point is at least three-quarters of the brightest. It measures ~0.86 — and the
+   *brightest* point on that walk is the midpoint, not either centre, which is the metaball
+   bulge that makes a pair read as one swollen shape rather than two circles touching.
+3. **A pair genuinely far apart does have a valley.** Twenty units apart, the middle is
+   empty water — under 1% of the peaks. Without this the first two would also pass on a
+   renderer that flooded the frame with light.
+
+Six units is not arbitrary: `founding.rs` springs the two cells of the plainest body in this
+world **eight** units apart.
+
+#### What Group B decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **⭐ The seam is a second *quad*, not a second draw** | `cells.wgsl` | Twelve vertices a cell instead of six: the same cell, drawn again a world's width away. For a cell that is not near an edge that copy lands entirely outside the frame and is thrown away before a fragment of it is shaded. This is what keeps SPEC section 12's **one instanced draw call** literally true while a body sitting on the join is still whole. The alternative — three copies, or a second draw for the cells near an edge — costs either 50% more vertices on every cell in the world or the one property SPEC actually asks for. |
+| **⭐ A cell's light reaches 2.6× its own radius** | `camera.rs` | A glow that stopped at the cell's edge would leave two units of black water between the two halves of every founder — `founding.rs` springs them **eight** apart and a photocyte is **three** wide — and SPEC's "silhouette rather than a string of beads" would be false of the plainest body in the world. At 2.6 the pair overlaps over almost its whole separation. |
+| **⭐ A cell's peak brightness is a half, not one** | `camera.rs` | The technique is *additive*. At one, every overlap clips to white and the sum that makes the silhouette exists and cannot be seen. Held as a `const { assert!(…) }`, so tuning it past a half stops the build rather than one test. Group D's `D1` HDR target is what makes this a choice rather than a ceiling. |
+| **No depth buffer, and that is the point** | `frame.rs` | Additive light has no nearer and no further. A depth test would make cells occlude one another, which is precisely the string of beads the falloff exists to avoid. |
+| **The target is sRGB, and every measurement undoes it** | `frame.rs` | Blending on an sRGB target happens in **linear** light and is encoded on the way out, which is what makes "two cells are twice one" true of the light and false of the bytes. `Frame::light_at` decodes before anything is measured. A test written against raw bytes would have had to accept a fudge factor, and a fudge factor is where a real error hides. |
+| **The camera fits the world's *width*, not its height** | `camera.rs` | The seam only means anything if the left and right edges of the frame are the same place. The depth is scaled by the same factor and centred, so nothing is stretched; at SPEC's exactly-sixteen-by-nine world a sixteen-by-nine frame shows all of it and no water that is not there. |
+| **⚠️ No adapter is a skip; an adapter that refuses is a failure** | `gpu.rs` | Two quite different events. `docs/PHASE5.md` asks the suite to skip on a machine with no GPU, and the over-applied version of that swallows a `RequestDeviceError` too — under which the entire renderer could stop working on the one machine this project is built for and the suite would still report green. |
+| **⚠️ A skipped test prints a line nobody sees unless they ask** | `gpu.rs` | There is no standard way to report a skip in Rust and no dependency worth adding for one. The message goes to stdout, which cargo captures for a test that passes, so it is visible under `cargo test -- --nocapture` and not otherwise. Carried below as **Q22**. |
+| **One device is shared by the whole suite** | `gpu.rs` | Opening a device costs a couple of hundred milliseconds and six tests need one. A `OnceLock` makes the nine tests in this crate run in **0.67 s** total, which is what keeps `docs/PHASE5.md`'s "fast or `#[ignore]`d" on the fast side. |
+| **`Frame::draws` exists so that "one instanced call" is a count** | `frame.rs` | The obvious way to write a renderer — a draw per organism, or per cell — works perfectly at the scale of a test and falls over at four thousand organisms. Nothing about the *output* can tell the two apart, so the renderer reports what it did. |
+| **`--dump-frame` reuses `--ticks`, and defaults to tick 30,000** | `main.rs` | A world is not worth looking at for some time after it starts. Measured on the shipped settings: tick 10,000 is 8 alive (the dawn, 3 s); 20,000 is 873 (12 s); **30,000 is 1,713, mean genome 1.70 ± 0.85 genes (23 s)**; 60,000 is 2,260 (65 s). Thirty thousand is a population well past its founding with mutation visibly having done something, for a wait somebody checking a shader will sit through. A second flag was not invented: `--ticks` already means "the world's own tick count, dawn included", so `--dump-frame late.png --ticks 200000` draws one four times as old. |
+| **The frame is drawn from whatever the run left** | `main.rs` | A run that went extinct before its bound is drawn extinct. A frame dump is a picture of what happened rather than of what was hoped for, and empty water is a perfectly good answer to what a world looks like when nothing is in it. |
+| **All five per-instance fields are used, none decoratively** | `cells.wgsl` | Position and radius are the geometry; hue is the colour; **kind** sets saturation (a sclerocyte is structure with no metabolic function and is drawn nearly colourless; a gonocyte, which carries the lineage, is the most saturated thing in the world); **energy flow** shifts brightness, clamped to a third down and just over a half up. A field carried in the vertex layout and never read would be a lie in a struct the tests check the offsets of. `D6` is where the feeding glow becomes worth looking at. |
+
+##### ⭐ What the mutation checks found
+
+Three mutations, chosen as the three ways this group could be quietly wrong.
+
+**The blend was changed from `One + One` to `One + Zero`** — cells drawn *over* one another
+instead of added. One test failed, and it failed on the number that names the fault:
+*"the midpoint between two cells has 0.25057006 of light with both of them there and
+0.25057006 with one, a ratio of 1"*. Exactly one, which is what "the nearer one wins" gives.
+
+**The draw was shortened from twelve vertices to six** — the second quad, and with it the
+seam, simply gone. One test failed: *"a cell sitting on the seam lights the left edge of the
+frame with 0.41760978 and the right with 0, so half of every body crossing the join simply
+vanishes"*. Nothing else in the suite noticed, which is the point of B5 existing separately.
+
+**The row padding was left in the copy back** — `row * real` instead of `row * padded`,
+which is the single most likely typo in this crate. Three tests failed, and the one that
+*names* the fault is B2's: *"row 148's brightest pixel is at column 299 rather than at the
+middle, so the copy back from the texture is not taking the row padding out."* The other two
+failed with everything at nought, which on its own would read as a shader that draws
+nothing — and that is exactly why B2's frame is 300 pixels wide rather than a convenient
+multiple of 64.
+
+#### ⭐ B6 — what the frame actually looks like
+
+`docs/frames/phase5-groupb.png` — 1920 × 1080, world tick 30,000, seed 42, 1,713 organisms.
+This is the first time anybody has looked at this simulation.
+
+**The renderer.** It works, and the merging works better than expected. A two-celled body
+does not read as two beads: it is one soft rounded lozenge with a faint waist where the two
+cells join, which is exactly what SPEC section 12 asks for. Where several bodies are pressed
+against one another they fuse into a single continuous blob — at this density a cluster of
+four organisms of similar hue is genuinely indistinguishable from one larger animal, which
+is arguably *too* merged and is a thing to watch when Group D adds bloom on top. The
+background is flat, very dark, slightly blue. The one pale, near-white cell visible in a
+crowd of coloured ones is a sclerocyte, so the kind-to-saturation mapping is doing something
+legible. The seam is continuous: bodies straddling the join are whole, with no cut edges and
+no dark stripe.
+
+The honest criticism of the drawing is that the **interiors are flat**. The falloff's plateau
+plus an 8-bit target means a body is a solid slab of colour with a soft rim and no internal
+structure at all. It looks like a paper cut-out lit from behind rather than like something
+with substance. `D1`'s HDR target and bloom are what that is waiting for.
+
+**The world.** Four things, and three of them were surprises.
+
+- ⭐ **It is eight separate colonies, not a population.** The eight founders are still eight
+  distinct patches on `founding.rs`'s four-by-two grid, twenty thousand ticks after they were
+  seeded, with wide black water between them. `founding.rs` argues at length that founders
+  are spread so the population meets the whole world from the first generation — and what the
+  frame shows is that at this age it has not met most of it. Nothing is wrong; the note simply
+  described the intent and not the timescale.
+- ⭐ **The depth gradient is enormously visible and nobody predicted how much.** The four
+  shallow colonies are **several times** the area of the four deep ones. `light.gradient` is
+  0.75 and this is what it buys: the top row has grown up until it is pressed against the
+  surface and sideways until the four patches nearly touch, and the bottom row has barely
+  spread past where it was seeded. Between the two rows is a band of water the full width of
+  the world with **nothing in it at all**. Depth is not a minor axis of this world; it is the
+  dominant one.
+- ⭐ **The hue is confetti, and it should not be.** Adjacent bodies inside one colony are
+  cyan, magenta, orange and green in no pattern at all. The hue is the top sixteen bits of the
+  genome fingerprint, so *any* mutation — a change to one gene's angle in the fourth decimal —
+  rerolls the colour completely. SPEC section 12 wants hue to *drift* as the lineage drifts,
+  and a hash does not drift, it jumps. The result is that speciation is currently **less**
+  visible than it would be with no colour at all: there are no clusters to see. It is also
+  loud, which CLAUDE.md's visually-calm constraint is entitled to object to. This is `D5`'s
+  problem and it is now a measured one rather than a predicted one. Carried below as **Q20**.
+- Every body is two cells. Mean 1.98 with a spread of 0.14 — twenty thousand ticks of
+  mutation have changed the genome (1.70 genes on average, from 1.00) without changing the
+  body once. Nothing in the frame contradicts `docs/PHASE4.md`; it is simply the first time
+  it has been possible to *see* that the world is entirely made of one shape.
 
 ### Group C — the window
 
@@ -154,6 +272,31 @@ nothing can hold.
 ---
 
 ## Open questions carried forward
+
+**Q20** (new, Group B) — **hue from a genome fingerprint does not drift, it jumps.** SPEC section
+12 wants *"hue from species; hue drifts as the lineage drifts genetically"*, and the frame shows
+what a hash gives instead: neighbouring bodies inside one colony are unrelated colours, because
+any mutation at all rerolls sixteen bits. The effect is that colour currently *hides* speciation
+rather than showing it. Two ways out and both are `D5`'s: a hue carried as a **value that mutates
+by a small step**, inherited from the parent alongside the genome — which drifts by construction
+and needs a field on `Organism` — or a hue derived from Phase 7's species clustering, which does
+not exist yet and would make the colour of a body depend on the whole population. The first is
+cheap and honest; the second is what SPEC's word *"species"* actually says. Do not decide it here.
+
+**Q21** (new, Group B) — **the merging works so well that a crowd is one animal.** B4's whole
+point is that neighbouring cells fuse, and in the frame four organisms of similar hue pressed
+together are indistinguishable from one larger organism. That is correct for a *body* and wrong
+for a *population*, and there is no information in the frame that separates them. Group D's bloom
+will make it more pronounced, not less. Whether anything should — a faint rim, a slightly
+different falloff at the boundary between two organisms, or simply leaving it to Phase 7's
+inspector — is undecided. It may be that nothing should: a coral reef looks like this too.
+
+**Q22** (new, Group B) — **a test that skips because there is no graphics card says so where
+nobody looks.** Rust has no notion of a skipped test and cargo captures the output of a test that
+passes, so the line `gpu.rs` prints is visible under `cargo test -- --nocapture` and invisible
+otherwise. On a machine with no adapter the six GPU tests therefore report *passing*, which is a
+mild lie. A dependency exists for this and is not worth taking for one line; the honest fix if it
+ever matters is for `scripts/check.ps1` to open a device itself and say out loud what it found.
 
 **Q18** (new, Group A) — **a configuration overridden from the command line is a run whose own
 verbatim document disagrees with it.** SPEC section 13 wants `config.toml` copied into the run's

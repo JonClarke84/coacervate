@@ -1,0 +1,20 @@
+[package]
+name = "coacervate-render"
+version.workspace = true
+edition.workspace = true
+
+# Reads the simulation and draws it. The dependency goes one way only: nothing here is
+# visible from coacervate-sim, which is CLAUDE.md's rule about the simulation crate never
+# learning that rendering exists.
+[dependencies]
+coacervate-sim = { workspace = true }
+wgpu = { workspace = true }
+pollster = { workspace = true }
+bytemuck = { workspace = true }
+png = { workspace = true }
+
+# `workspace = true` INHERITS the workspace table, which is what is wanted. It is not the
+# thing clippy.toml warns about: a package-level [lints.clippy] table with entries of its
+# own would REPLACE the workspace table and silently take the five cast lints with it.
+[lints]
+workspace = true

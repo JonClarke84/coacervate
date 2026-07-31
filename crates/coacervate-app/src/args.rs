@@ -64,7 +64,8 @@ pub struct Arguments {
     /// Stop when the world has taken this many ticks, instead of when the settings say.
     pub ticks: Option<u64>,
 
-    /// Render one frame here and exit. Nothing renders yet; see `main.rs`.
+    /// Run the world, draw one frame of it here, and stop. See `main.rs`'s `DUMP_TICKS` for
+    /// how long it runs first and why.
     pub dump_frame: Option<PathBuf>,
 }
 
@@ -145,7 +146,10 @@ Usage: coacervate [options]
                        the world's own count and it includes the ticks the light
                        spent falling before anything was seeded. 0 means no tick
                        bound, which is what the shipped settings ask for.
-  --dump-frame <path>  Render one frame to this PNG and exit. Not built yet.
+  --dump-frame <path>  Run the world, draw one frame of it to this PNG, and
+                       stop. Without --ticks it runs to tick 30000, which at
+                       the shipped settings is about twenty thousand ticks of
+                       life after the dawn and takes around twenty seconds.
   --help               Show this and stop.
 
 With no options at all it runs the settings built into the program until it is
@@ -738,8 +742,9 @@ mod tests {
     /// feature nobody finds, and a flag removed and still mentioned is worse. So both directions
     /// are checked here.
     ///
-    /// It is also where `--dump-frame` being unfinished is written down. Advertising a flag that
-    /// does nothing would be worse than not advertising it at all, so the text says so.
+    /// It is also where `--dump-frame`'s one surprise is written down. The flag does not draw
+    /// the world as it is seeded - it runs it first, for some tens of seconds - and a person
+    /// who expects an immediate PNG and gets a silence is entitled to have been told.
     #[test]
     fn help_describes_every_flag_and_only_the_flags() {
         for flag in ["--config", "--seed", "--ticks", "--dump-frame", "--help"] {
@@ -750,8 +755,9 @@ mod tests {
         }
 
         assert!(
-            HELP.contains("Not built yet"),
-            "--dump-frame does not render anything yet, and --help does not say so"
+            HELP.contains("30000"),
+            "--dump-frame runs the world before it draws anything, and --help does not say how \
+             far - so the wait looks like a program that has hung"
         );
 
         // Nothing invented. Every word in the text beginning with two dashes has to be a flag
