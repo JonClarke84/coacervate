@@ -37,6 +37,7 @@ point_sigma = 0.12       # gaussian magnitude on numeric fields
 duplication_rate = 0.02  # per genome
 deletion_rate = 0.02
 insertion_rate = 0.01
+reorder_rate = 0.02      # swap two adjacent genes; order carries information
 genome_duplication_rate = 0.0008
 
 [limits]

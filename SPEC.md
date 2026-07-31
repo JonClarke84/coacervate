@@ -97,6 +97,7 @@ point_sigma = 0.12       # gaussian magnitude on numeric fields
 duplication_rate = 0.02  # per genome
 deletion_rate = 0.02
 insertion_rate = 0.01
+reorder_rate = 0.02      # swap two adjacent genes; order carries information
 genome_duplication_rate = 0.0008
 
 [limits]
@@ -417,7 +418,7 @@ Applied at reproduction, in this order:
 2. **Gene duplication** — with `duplication_rate`: copy a random gene, insert adjacent.
 3. **Gene deletion** — with `deletion_rate`: remove a random gene.
 4. **Gene insertion** — with `insertion_rate`: insert a fully random gene.
-5. **Reordering** — swap two adjacent genes.
+5. **Reordering** — with `reorder_rate`: swap two adjacent genes.
 6. **Whole-genome duplication** — with `genome_duplication_rate`: append a full copy.
 
 **Hard cap at `max_genes`.** Duplication is exponential without it. If genome bloat still

@@ -143,6 +143,7 @@ mod tests {
         assert_eq!(raw.mutation.duplication_rate, 0.02);
         assert_eq!(raw.mutation.deletion_rate, 0.02);
         assert_eq!(raw.mutation.insertion_rate, 0.01);
+        assert_eq!(raw.mutation.reorder_rate, 0.02);
         assert_eq!(raw.mutation.genome_duplication_rate, 0.0008);
 
         assert_eq!(raw.limits.max_organisms, 4000);

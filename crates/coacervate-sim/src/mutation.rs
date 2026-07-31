@@ -133,30 +133,6 @@ use std::f32::consts::{PI, TAU};
 /// the simulation would report it.
 const FIELDS_IN_A_GENE: u32 = 16;
 
-/// How often a reproduction swaps two adjacent genes.
-///
-/// ⚠️ **This is the one mutation rate that is not in the configuration, because it is not in
-/// SPEC.** Section 7 lists six operators and gives five of them a rate; reordering is written
-/// as *"Reordering — swap two adjacent genes"* with no rate beside it, and `[mutation]` in
-/// section 3 has no key for one. That is an omission rather than a decision — the same shape
-/// of gap Phase 1 found and recorded as Q1, when section 2 referred to a cap on ticks per
-/// second that section 3 had no key for.
-///
-/// So the number is declared here with its reasoning beside it, which is what `genome.rs`
-/// already does for the four bounds SPEC does not give. It is **0.02**: the rate SPEC gives
-/// duplication and deletion, the other two operators that rearrange a genome rather than
-/// change what is written in it. Reordering is the gentlest of the three — it creates nothing,
-/// destroys nothing, and undoes itself if it happens twice in the same place — so if any of
-/// them can afford to be common it is this one, and putting it below the others would mean
-/// silent genes accumulating faster than a lineage can ever bring one forward. Expressing a
-/// silent gene is the *second* half of duplicate-then-diverge; the first half is worth much
-/// less without it.
-///
-/// It wants a config key and a slider, which is a one-line addition to SPEC section 3 and is
-/// not this group's decision to make. Until it has one, the operator cannot be switched off,
-/// which is why the tests below check each operator directly as well as through [`mutate`].
-pub const REORDER_RATE: f32 = 0.02;
-
 /// Copy a genome, imperfectly. SPEC section 7's six operators, in SPEC section 7's order.
 ///
 /// The order is SPEC's and it is not arbitrary: point mutation runs before the operators that
@@ -204,7 +180,7 @@ pub fn mutate(
         insert_a_random_gene(&mut genes, cap, limits, rng);
     }
 
-    if rng.random_bool(f64::from(REORDER_RATE)) {
+    if rng.random_bool(f64::from(mutation.reorder_rate)) {
         swap_two_adjacent_genes(&mut genes, rng);
     }
 
@@ -298,6 +274,28 @@ fn insert_a_random_gene(
 /// decides whether it is ever consulted. It is also how a gene that has been silent for a
 /// thousand generations gets its turn: one swap puts it in front of the gene that was
 /// shadowing it.
+///
+/// # Where its rate comes from, and why that took a change to SPEC
+///
+/// It fires on `mutation.reorder_rate`, like every other operator here. That was not true when
+/// this module was written: SPEC section 7 listed six operators and gave five of them a rate,
+/// reordering was written as *"Reordering — swap two adjacent genes"* with nothing beside it,
+/// and `[mutation]` in section 3 had no key for one — the same shape of gap Phase 1 recorded
+/// as Q1, where section 2 referred to a cap on ticks per second that section 3 had no key for.
+/// So the number lived here as a `REORDER_RATE` constant, the way `genome.rs` declares the four
+/// bounds SPEC does not give, and Phase 3 raised it as Q10.
+///
+/// **The key was added, because an operator with no rate cannot be switched off.** A constant
+/// meant reordering fired on one reproduction in fifty during every other operator's test,
+/// which is a rate every one of those tests had to be written around; it meant the `bloom`,
+/// `famine` and `slow` profiles could not touch it; and it meant the one operator whose whole
+/// job is to decide which genes are *expressed* was the one nobody could turn down. It is
+/// **0.02** — the rate SPEC gives duplication and deletion, the other two operators that
+/// rearrange a genome rather than change what is written in it. Reordering is the gentlest of
+/// the three: it creates nothing, destroys nothing, and undoes itself if it happens twice in
+/// the same place, so if any of them can afford to be common it is this one. Putting it below
+/// the others would mean silent genes accumulating faster than a lineage can ever bring one
+/// forward, and expressing a silent gene is the *second* half of duplicate-then-diverge.
 ///
 /// A genome of fewer than two genes has no pair to swap and is left alone.
 fn swap_two_adjacent_genes(genes: &mut [Gene], rng: &mut ChaCha8Rng) {
@@ -467,12 +465,17 @@ mod tests {
     }
 
     /// Every operator switched off. The starting point for turning exactly one back on.
+    ///
+    /// All six of them, which it could not say before `mutation.reorder_rate` existed: until
+    /// then reordering had no key and went on firing on one reproduction in fifty whatever a
+    /// test had turned down to zero. See [`swap_two_adjacent_genes`].
     fn nothing_happens() -> MutationConfig {
         mutation_with(|rates| {
             rates.point_rate = 0.0;
             rates.duplication_rate = 0.0;
             rates.deletion_rate = 0.0;
             rates.insertion_rate = 0.0;
+            rates.reorder_rate = 0.0;
             rates.genome_duplication_rate = 0.0;
         })
     }
@@ -517,28 +520,6 @@ mod tests {
     /// One organism's own generator, which is the only place a mutation may draw from.
     fn organism_rng(seed: u64, serial: u64) -> ChaCha8Rng {
         WorldRng::from_seed(seed).new_organism_stream(serial)
-    }
-
-    /// Which genes a genome holds, said in a way a swap cannot disturb.
-    ///
-    /// Reordering is the one operator with no rate in the configuration (see [`REORDER_RATE`]),
-    /// so it cannot be switched off, and it fires on about one reproduction in fifty whatever
-    /// else a test has turned down to zero. A claim about what a genome *contains* therefore
-    /// has to be made without reference to where things sit.
-    ///
-    /// The genomes in these tests are numbered by trigger state, so the sorted list of those
-    /// says exactly which genes are present and how many of each. That is enough for the
-    /// claims it is used for: a genome at the cap that came back with the same genes in it did
-    /// not gain one, and - the failure that actually matters - was not quietly trimmed at the
-    /// far end to make room for one, because trimming loses a gene and this would show it.
-    fn genes_present(genome: &Genome) -> Vec<u8> {
-        let mut numbers: Vec<u8> = genome
-            .genes()
-            .iter()
-            .map(|gene| gene.trigger_state.get())
-            .collect();
-        numbers.sort_unstable();
-        numbers
     }
 
     /// How many springs each cell of a body has.
@@ -596,6 +577,7 @@ mod tests {
             rates.duplication_rate = 0.0;
             rates.deletion_rate = 0.0;
             rates.insertion_rate = 0.0;
+            rates.reorder_rate = 0.0;
             rates.genome_duplication_rate = 0.0;
         });
 
@@ -769,43 +751,41 @@ mod tests {
              selection can see and punish"
         );
 
-        // And the operator is actually wired into the mutation as a whole. The claim is
-        // about the genome's contents rather than its order, because the reordering operator
-        // runs afterwards and has no rate of its own to turn off.
+        // And the operator is actually wired into the mutation as a whole. Every other rate is
+        // zero, reordering included, so the genome that comes back has to be one of the
+        // genomes the operator above is allowed to produce - not merely one holding the right
+        // genes in some order.
         let rates = mutation_with(|rates| {
             rates.point_rate = 0.0;
             rates.duplication_rate = 1.0;
             rates.deletion_rate = 0.0;
             rates.insertion_rate = 0.0;
+            rates.reorder_rate = 0.0;
             rates.genome_duplication_rate = 0.0;
         });
         let genome = Genome::new(parent.clone(), &limits);
         let child = mutate(&genome, &rates, &limits, &mut rng);
 
-        assert_eq!(
-            child.genes().len(),
-            parent.len() + 1,
-            "mutation as a whole does not duplicate anything, so the operator above is not \
-             reached by a reproduction"
+        assert!(
+            copied_next_to_itself
+                .iter()
+                .any(|candidate| candidate == child.genes()),
+            "a reproduction did not produce the parent with one of its genes copied \
+             immediately after itself, so the operator above is not the one a reproduction \
+             reaches"
         );
-        for gene in &parent {
-            assert!(
-                child.genes().contains(gene),
-                "a gene went missing from a genome that was only supposed to gain one"
-            );
-        }
 
-        // At the cap. A genome that is full comes back exactly as it went in.
+        // At the cap. A genome that is full comes back exactly as it went in - identical,
+        // rather than merely the same length or holding the same genes.
         let tight = limits_with(|limits| limits.max_genes = 4);
         let full = Genome::new(numbered_genes(4), &tight);
         for _ in 0..64 {
             assert_eq!(
-                genes_present(&mutate(&full, &rates, &tight, &mut rng)),
-                genes_present(&full),
-                "a genome at max_genes came back holding different genes after a duplication. \
-                 At the cap a lengthening mutation fails; it does not truncate, because \
-                 truncating eats the far end of the genome, which is where the material \
-                 duplication feeds on lives"
+                mutate(&full, &rates, &tight, &mut rng),
+                full,
+                "a genome at max_genes came back changed after a duplication. At the cap a \
+                 lengthening mutation fails; it does not truncate, because truncating eats the \
+                 far end of the genome, which is where the material duplication feeds on lives"
             );
         }
     }
@@ -930,6 +910,7 @@ mod tests {
             rates.duplication_rate = 1.0;
             rates.deletion_rate = 0.0;
             rates.insertion_rate = 0.0;
+            rates.reorder_rate = 0.0;
             rates.genome_duplication_rate = 0.0;
         });
         let duplicated = (0..64_u64)
@@ -1090,6 +1071,7 @@ mod tests {
             rates.duplication_rate = 0.0;
             rates.deletion_rate = 1.0;
             rates.insertion_rate = 0.0;
+            rates.reorder_rate = 0.0;
             rates.genome_duplication_rate = 0.0;
         });
         let child = mutate(
@@ -1210,6 +1192,7 @@ mod tests {
             rates.duplication_rate = 0.0;
             rates.deletion_rate = 0.0;
             rates.insertion_rate = 1.0;
+            rates.reorder_rate = 0.0;
             rates.genome_duplication_rate = 0.0;
         });
         let genome = Genome::new(parent.clone(), &limits);
@@ -1226,8 +1209,8 @@ mod tests {
         let full = Genome::new(numbered_genes(4), &tight);
         for _ in 0..64 {
             assert_eq!(
-                genes_present(&mutate(&full, &rates, &tight, &mut rng)),
-                genes_present(&full),
+                mutate(&full, &rates, &tight, &mut rng),
+                full,
                 "a genome at max_genes gained a gene, or was truncated to make room for one"
             );
         }
@@ -1246,12 +1229,12 @@ mod tests {
     /// swap away from being the gene that fires. Duplication provides the material and this is
     /// what eventually reads it out.
     ///
-    /// Two things are checked, and the second exists because this operator has no rate in the
-    /// configuration and so cannot be switched off. The first is the operator itself: exactly
-    /// one adjacent pair changes places, every pair is reachable, and nothing is added or
-    /// lost. The second is that a reproduction actually performs it, about
-    /// `REORDER_RATE` of the time — which is the only way to notice a wire that was never
-    /// connected, since a missing operator here breaks no other test in this file.
+    /// Two things are checked. The first is the operator itself: exactly one adjacent pair
+    /// changes places, every pair is reachable, and nothing is added or lost. The second is
+    /// that a reproduction actually performs it, about `mutation.reorder_rate` of the time —
+    /// which is the only way to notice a wire that was never connected, since a missing
+    /// operator here breaks no other test in this file. `reordering_can_be_switched_off` is
+    /// the other end of the same claim.
     #[test]
     fn reordering_swaps_two_adjacent_genes() {
         let limits = spec_limits();
@@ -1300,16 +1283,21 @@ mod tests {
             );
         }
 
-        // Wired into a reproduction, and firing at the rate the constant names. Every rate
-        // the configuration *has* is zero here, so anything that happens below is this
-        // operator and nothing else.
-        let never = nothing_happens();
+        // Wired into a reproduction, and firing at the rate SPEC section 3 ships. Every other
+        // rate is zero here, so anything that happens below is this operator and nothing else.
+        let shipped = mutation_with(|rates| {
+            rates.point_rate = 0.0;
+            rates.duplication_rate = 0.0;
+            rates.deletion_rate = 0.0;
+            rates.insertion_rate = 0.0;
+            rates.genome_duplication_rate = 0.0;
+        });
         let genome = Genome::new(parent.clone(), &limits);
         const REPRODUCTIONS: u32 = 4_000;
         let mut reordered = 0_u32;
         for serial in 0..u64::from(REPRODUCTIONS) {
             let mut own_rng = organism_rng(7, serial);
-            if mutate(&genome, &never, &limits, &mut own_rng).genes() != parent {
+            if mutate(&genome, &shipped, &limits, &mut own_rng).genes() != parent {
                 reordered += 1;
             }
         }
@@ -1319,10 +1307,75 @@ mod tests {
         assert!(
             (45..=125).contains(&reordered),
             "{reordered} of {REPRODUCTIONS} reproductions came back with their genes in a \
-             different order, where REORDER_RATE of {REORDER_RATE} asks for about 80. Zero \
-             means the operator is never reached by a reproduction; far more means every \
-             genome is being shuffled every generation"
+             different order, where a reorder_rate of {} asks for about 80. Zero means the \
+             operator is never reached by a reproduction; far more means every genome is \
+             being shuffled every generation",
+            shipped.reorder_rate
         );
+    }
+
+    /// ⭐ Reordering can be **switched off**, which is the whole reason
+    /// `mutation.reorder_rate` was added to SPEC section 3.
+    ///
+    /// Until it existed, this operator was the one thing in the file firing at a rate nobody
+    /// could change: a `REORDER_RATE` constant, one reproduction in fifty, during every other
+    /// operator's test. Every claim in this module about a genome at its cap had to be phrased
+    /// in terms of which genes it *held* rather than what order they were in, the `bloom`,
+    /// `famine` and `slow` profiles could not reach it, and the operator that decides which
+    /// genes are expressed at all was the only one an experiment could not turn down.
+    ///
+    /// So: four thousand reproductions of a five-gene genome with every rate at zero, and not
+    /// one of them may come back in a different order. The old constant would have shuffled
+    /// about eighty of them, which is what makes this a test of the configured value actually
+    /// reaching the operator rather than a test that nothing happens when nothing is asked
+    /// for.
+    ///
+    /// The second half is what stops that being vacuous. The same genome, the same loop, the
+    /// same everything-else-at-zero, and `reorder_rate` at certainty: now *every* reproduction
+    /// comes back with a pair changed places. The key is a dial the operator reads, rather
+    /// than a value that happens to be ignored in one direction.
+    #[test]
+    fn reordering_can_be_switched_off() {
+        let limits = spec_limits();
+        let parent = numbered_genes(5);
+        let genome = Genome::new(parent.clone(), &limits);
+        const REPRODUCTIONS: u64 = 4_000;
+
+        let never = nothing_happens();
+        for serial in 0..REPRODUCTIONS {
+            let mut rng = organism_rng(7, serial);
+            assert_eq!(
+                mutate(&genome, &never, &limits, &mut rng),
+                genome,
+                "a genome mutated with reorder_rate at zero came back with its genes \
+                 rearranged, so the operator is still firing at a rate of its own and the \
+                 configuration cannot switch it off"
+            );
+        }
+
+        let always = mutation_with(|rates| {
+            rates.point_rate = 0.0;
+            rates.duplication_rate = 0.0;
+            rates.deletion_rate = 0.0;
+            rates.insertion_rate = 0.0;
+            rates.reorder_rate = 1.0;
+            rates.genome_duplication_rate = 0.0;
+        });
+        for serial in 0..REPRODUCTIONS {
+            let mut rng = organism_rng(7, serial);
+            let child = mutate(&genome, &always, &limits, &mut rng);
+
+            assert_ne!(
+                child, genome,
+                "a genome mutated with reorder_rate at one came back untouched, so the rate \
+                 above is not the number the operator is reading"
+            );
+            assert_eq!(
+                child.genes().len(),
+                parent.len(),
+                "reordering changed how many genes the genome holds"
+            );
+        }
     }
 
     /// Whole-genome duplication appends a second copy of everything — or, if that will not
@@ -1373,6 +1426,7 @@ mod tests {
             rates.duplication_rate = 0.0;
             rates.deletion_rate = 0.0;
             rates.insertion_rate = 0.0;
+            rates.reorder_rate = 0.0;
             rates.genome_duplication_rate = 1.0;
         });
         let mut rng = organism_rng(42, 0);
@@ -1395,12 +1449,11 @@ mod tests {
         let three = Genome::new(numbered_genes(3), &tight);
         for _ in 0..64 {
             assert_eq!(
-                genes_present(&mutate(&three, &rates, &tight, &mut rng)),
-                genes_present(&three),
-                "a genome of three in a world that allows five came back holding different \
-                 genes after a whole-genome duplication. Half a copy of a genome is not a \
-                 genome, and appending one is a different operator from the one SPEC section 7 \
-                 describes"
+                mutate(&three, &rates, &tight, &mut rng),
+                three,
+                "a genome of three in a world that allows five came back changed after a \
+                 whole-genome duplication. Half a copy of a genome is not a genome, and \
+                 appending one is a different operator from the one SPEC section 7 describes"
             );
         }
 
@@ -1452,6 +1505,7 @@ mod tests {
             rates.duplication_rate = 0.5;
             rates.deletion_rate = 0.5;
             rates.insertion_rate = 0.5;
+            rates.reorder_rate = 0.5;
             rates.genome_duplication_rate = 0.1;
         });
         let parent = Genome::new(numbered_genes(6), &limits);
@@ -1582,6 +1636,7 @@ mod tests {
                 rates.duplication_rate = 1.0;
                 rates.deletion_rate = 1.0;
                 rates.insertion_rate = 1.0;
+                rates.reorder_rate = 1.0;
                 rates.genome_duplication_rate = 1.0;
             });
 

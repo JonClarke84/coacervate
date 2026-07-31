@@ -136,7 +136,8 @@ cleanly if it ever proves wrong. No golden vector and no archived run depends on
   chain but a body plan a chain cannot be.
 - [x] **C4. `gene_deletion_removes_one`**
 - [x] **C5. `gene_insertion_adds_a_random_one`**
-- [x] **C6. `reordering_swaps_two_adjacent_genes`**
+- [x] **C6. `reordering_swaps_two_adjacent_genes`** — and `reordering_can_be_switched_off`
+  beside it, which is what Q10's `reorder_rate` key bought.
 - [x] **C7. `whole_genome_duplication_appends_a_full_copy`**
 - [x] **C8. `the_genome_cap_holds_under_ten_thousand_mutations`** ⭐ *(property test)* —
   **critical.** CLAUDE.md marks `max_genes` as the one cap that must never be raised without
@@ -155,7 +156,7 @@ argued at length in `mutation.rs`; this is the index, on the same terms as Group
 | Does point mutation clamp drifted numbers to the bounds `Gene::random` draws from? | **Yes**, and the two that are angles wrap instead. `MAX_STIFFNESS` is where the physics' explicit integrator diverges at a sixtieth of a second and `MAX_REST_LENGTH` is what keeps a body from reaching round the world into SPEC section 8's seam — those are edges of the arithmetic, not preferences. Clamping does pile probability on the wall; rejecting instead would *freeze the field* for a gene sitting on it, which is worse. `angle` and `osc_phase` are circles and have no ends to clamp to. |
 | Where does an inserted gene go? SPEC says "insert a fully random gene" and not where. | **Anywhere, uniformly.** Appending would make every inserted gene the last one consulted, so it could only fire on a state no existing gene claims — insertion would be an operator that mostly inserts silence. |
 | Is the duplicated copy inserted before or after its original? | **After.** In front, the *copy* would be the expressed gene and the original the silent one, so the gene under selection would be the one made a moment ago rather than the one that has been working. |
-| What rate does reordering fire at? SPEC gives five rates for six operators. | Not in SPEC and not in `[mutation]`. Declared as `REORDER_RATE = 0.02` in `mutation.rs` with the reasoning beside it, matching duplication and deletion — the other two operators that rearrange rather than rewrite. **See Q10: it wants a config key.** |
+| What rate does reordering fire at? SPEC gave five rates for six operators. | **`mutation.reorder_rate = 0.02`**, now a key in SPEC section 3 like the other five, matching duplication and deletion — the other two operators that rearrange rather than rewrite. It was a `REORDER_RATE` constant in `mutation.rs` until Jonathan decided Q10; **see Q10, resolved.** |
 | Is `point_sigma` absolute or scaled to each field's range? | **Absolute**, one sigma for all six numbers, which is the literal reading and what Phase 1's Q5 assumed. The consequence is that fields drift at very different speeds *relative to their ranges* — see Q11. |
 
 ### Group D — organisms in the world
@@ -196,23 +197,15 @@ round (SPEC section 8). Nothing enforces that relationship: a configuration with
 narrower than ~1,800 units breaks it, and `config.rs` has no reason to know. Group D places
 bodies in the world and is where a check belongs, if one is wanted.
 
-**Q10, raised by Group C, and the one that wants an answer.** **SPEC section 7 lists six
-mutation operators and gives five of them a rate.** Reordering is written as *"Reordering —
-swap two adjacent genes"* with no rate beside it, and `[mutation]` in section 3 has no key for
-one. This is the same shape of gap as Phase 1's Q1, where section 2 referred to a cap on ticks
-per second that section 3 had no key for; that one was closed by adding the key to SPEC with
-Jonathan's authorisation. No key has been invented here. Instead `mutation.rs` declares
-`REORDER_RATE = 0.02` with its reasoning, the way `genome.rs` declares the four bounds SPEC
-does not give.
-
-The cost of leaving it that way is concrete and shows up in the tests: **an operator with no
-rate cannot be switched off**, so it fires on one reproduction in fifty during every other
-operator's test. That is why the tests in `mutation.rs` exercise each operator directly as
-well as through `mutate`, and why the claims made about a genome at its cap are about which
-genes it holds rather than what order they are in. Adding `reorder_rate = 0.02  # per genome`
-to SPEC section 3, `config/default.toml`, `RawMutation`, `MutationConfig` and the two
-default-asserting tests would remove all of that and give the operator a slider like the other
-five. **It is a one-line change to the document and it is Jonathan's to make.**
+**~~Q10. SPEC section 7 listed six mutation operators and gave five of them a rate.~~
+RESOLVED 2026-07-31.** Reordering was written as *"Reordering — swap two adjacent genes"*
+with no rate beside it and `[mutation]` had no key for one, so `mutation.rs` declared
+`REORDER_RATE = 0.02` — and an operator with no rate cannot be switched off, so it fired on
+one reproduction in fifty during every other operator's test. Jonathan decided the key goes
+in: `reorder_rate = 0.02` is now in SPEC sections 3 and 7, `config/default.toml`,
+`RawMutation`, `MutationConfig` and the validation gate, the constant is gone, and
+`reordering_can_be_switched_off` is the test that says so. The claims about a genome at its
+cap are now about the genome being *identical* rather than merely holding the same genes.
 
 **Q11, raised by Group C.** `point_sigma` is a single absolute number applied to all six of a
 gene's real-valued fields, which is the literal reading of SPEC section 7 and what Phase 1's

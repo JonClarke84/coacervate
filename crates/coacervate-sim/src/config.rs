@@ -107,6 +107,7 @@ pub struct RawMutation {
     pub duplication_rate: f64,
     pub deletion_rate: f64,
     pub insertion_rate: f64,
+    pub reorder_rate: f64,
     pub genome_duplication_rate: f64,
 }
 
@@ -193,6 +194,7 @@ pub fn spec_defaults() -> RawConfig {
             duplication_rate: 0.02,
             deletion_rate: 0.02,
             insertion_rate: 0.01,
+            reorder_rate: 0.02,
             genome_duplication_rate: 0.0008,
         },
         limits: RawLimits {
@@ -329,7 +331,7 @@ impl std::error::Error for ConfigError {}
 ///
 /// `field` is the setting's full path, `light.influx` and the like. It is carried here
 /// purely so a refusal can name it - a complaint about a number, with no indication which
-/// of thirty-one settings it came from, sends you hunting through the file by hand.
+/// of thirty-three settings it came from, sends you hunting through the file by hand.
 ///
 /// # The rule
 ///
@@ -601,6 +603,7 @@ pub struct MutationConfig {
     pub duplication_rate: f32,
     pub deletion_rate: f32,
     pub insertion_rate: f32,
+    pub reorder_rate: f32,
     pub genome_duplication_rate: f32,
 }
 
@@ -755,6 +758,7 @@ impl RawConfig {
                 )?,
                 deletion_rate: fraction("mutation.deletion_rate", self.mutation.deletion_rate)?,
                 insertion_rate: fraction("mutation.insertion_rate", self.mutation.insertion_rate)?,
+                reorder_rate: fraction("mutation.reorder_rate", self.mutation.reorder_rate)?,
                 genome_duplication_rate: fraction(
                     "mutation.genome_duplication_rate",
                     self.mutation.genome_duplication_rate,
@@ -839,6 +843,7 @@ mod tests {
             ("mutation.duplication_rate", raw.mutation.duplication_rate),
             ("mutation.deletion_rate", raw.mutation.deletion_rate),
             ("mutation.insertion_rate", raw.mutation.insertion_rate),
+            ("mutation.reorder_rate", raw.mutation.reorder_rate),
             (
                 "mutation.genome_duplication_rate",
                 raw.mutation.genome_duplication_rate,
@@ -851,8 +856,8 @@ mod tests {
     ///
     /// Obvious, and it is here because the obvious rule for narrowing a number fails it.
     /// That rule is "accept the number only if converting it back gives exactly what was
-    /// written", which sounds like precisely the right standard and rejects fourteen of
-    /// the twenty-two numbers in SPEC's own defaults - `influx`, `drag`, `patchiness` and
+    /// written", which sounds like precisely the right standard and rejects fifteen of
+    /// the twenty-three numbers in SPEC's own defaults - `influx`, `drag`, `patchiness` and
     /// most of the mutation rates among them. The reason is that a value like `0.012` has
     /// no exact representation in binary at either size, so the two sizes round it
     /// slightly differently and the comparison fails. Under that rule the shipped
@@ -868,8 +873,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            22,
-            "SPEC section 3 has twenty-two decimal settings; this list has {}, so one has \
+            23,
+            "SPEC section 3 has twenty-three decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );
@@ -882,7 +887,7 @@ mod tests {
 
         assert!(
             refused.is_empty(),
-            "{} of the 22 numbers in SPEC's own default configuration cannot be loaded:\n  {}",
+            "{} of the 23 numbers in SPEC's own default configuration cannot be loaded:\n  {}",
             refused.len(),
             refused.join("\n  ")
         );
@@ -930,9 +935,9 @@ mod tests {
 
     /// SPEC's own defaults go through the gate and come out the other side unchanged.
     ///
-    /// Every one of the thirty-one settings is checked, not a sample, and the reason is
+    /// Every one of the thirty-three settings is checked, not a sample, and the reason is
     /// the shape of the code being tested rather than thoroughness for its own sake.
-    /// Turning a document into a checked configuration is thirty-one hand-written
+    /// Turning a document into a checked configuration is thirty-three hand-written
     /// assignments in a row, all of the same shape, several of them neighbours with
     /// identical types - `gradient` and `patchiness` sit side by side and are both
     /// fractions between zero and one. Copy the wrong one and every test that looks at a
@@ -977,6 +982,7 @@ mod tests {
         assert_eq!(config.mutation.duplication_rate, 0.02);
         assert_eq!(config.mutation.deletion_rate, 0.02);
         assert_eq!(config.mutation.insertion_rate, 0.01);
+        assert_eq!(config.mutation.reorder_rate, 0.02);
         assert_eq!(config.mutation.genome_duplication_rate, 0.0008);
 
         assert_eq!(config.limits.max_organisms.get(), 4000);
@@ -1035,7 +1041,7 @@ mod tests {
         // because 0.5 *is* a fraction: what excludes it is the stability of the arithmetic
         // rather than the meaning of the setting, and it is the value somebody would
         // actually write.
-        let corruptions: [(&str, Corruption); 22] = [
+        let corruptions: [(&str, Corruption); 23] = [
             ("world.width", |raw| raw.world.width = 0.0),
             ("world.height", |raw| raw.world.height = 0.0),
             ("world.years_per_tick", |raw| raw.world.years_per_tick = 0.0),
@@ -1073,6 +1079,9 @@ mod tests {
             }),
             ("mutation.insertion_rate", |raw| {
                 raw.mutation.insertion_rate = 1.5;
+            }),
+            ("mutation.reorder_rate", |raw| {
+                raw.mutation.reorder_rate = 1.5;
             }),
             ("mutation.genome_duplication_rate", |raw| {
                 raw.mutation.genome_duplication_rate = 1.5;
