@@ -12,8 +12,8 @@
 | | |
 | --- | --- |
 | **Phase 7** | in progress |
-| **Current group** | A — telling one lineage from another |
-| **Suite** | green — 207 tests, ~115s |
+| **Current group** | B — names (A is done) |
+| **Suite** | green — **218 tests, 120s** |
 
 ---
 
@@ -62,26 +62,189 @@ is cheap and is the only thing that stops the register drifting as copy is added
 
 ## Step ledger
 
-### Group A — telling one lineage from another
+### Group A — telling one lineage from another — **done**
 
-- [ ] **A1. `two_genomes_have_a_distance`** — SPEC section 11: a normalised alignment cost
-  over the gene lists; matched genes contribute their scaled numeric difference, unmatched
-  genes a fixed penalty. ⚠️ `Organism::genome_hash` is **no use here** — it jumps rather than
-  drifts, which is precisely why Phase 5 stopped using it for hue.
-- [ ] **A2. `distance_is_a_metric`** *(property test)* — zero to itself, symmetric, and the
-  triangle inequality. Clustering rests on all three and none of them is obvious for an
-  alignment cost.
-- [ ] **A3. `the_living_population_clusters_by_distance`** — every 500 ticks, per SPEC.
-- [ ] **A4. `a_cluster_that_persists_is_promoted_to_a_species`** — 20 consecutive samples.
-  ⚠️ This needs a **second periodic observer** beside `Series`, with its own memory of
-  cluster identity across samples.
-- [ ] **A5. `an_organism_knows_its_species`** — organisms carry a drifting `marker` and no
-  cluster id, so nothing can count members or say when a lineage ended.
-- [ ] **A6. `clustering_does_not_change_what_the_world_does`** — ⚠️ Phase 5's golden vector
-  exists for exactly this. An observer that draws one random number, or reorders one arena,
-  makes a run deterministic and *different*.
+- [x] **A1. `two_genomes_have_a_distance`** — `Genome::distance_from`, in `genome.rs`.
+  Positional alignment; each of a gene's sixteen fields scaled onto nought-to-one and
+  averaged; an unmatched position costs `UNMATCHED = 1.0`; the whole divided by the longer
+  gene list. The three things SPEC leaves open are decided in the table below.
+- [x] **A2. `distance_is_a_metric`** *(property test)* — **it is a true metric, triangle
+  inequality included.** Written up below, because that was not a foregone conclusion.
+- [x] **A3. `the_living_population_clusters_by_distance`** — `species.rs`, every 500 ticks on
+  the world's own tick grid.
+- [x] **A4. `a_cluster_that_persists_is_promoted_to_a_species`** — 20 consecutive samples.
+  `Taxonomy` is the second periodic observer, beside `Series`, and identity is carried by a
+  **representative genome that moves to its nearest living member**. Also
+  `a_species_survives_drift_and_splits_only_when_the_population_does`, which is the anti-churn
+  claim stated as a test.
+- [x] **A5. `an_organism_knows_its_species`** — `Taxonomy::species_of(slot, serial)`. The
+  answer is kept on the **observer**, not on the organism, so the simulation's state is
+  exactly what it was.
+- [x] **A6. `clustering_does_not_change_what_the_world_does`** — two worlds ticked side by
+  side, compared tile for tile and cell for cell. **`a_run_produces_what_it_produced_before_group_a`
+  passes untouched**, with the observer in the loop. And, from the cost measurement below, a
+  third piece of evidence nobody asked for: the 200,000-tick run before Group A and the same
+  run with the clustering in it print **the same forty-six lines** — every population, every
+  account, every mean, at every reported tick — differing only by the one new line at the end.
+- [x] **`Sample.species`**, carried in from Phase 6, is filled. The record grew from 64 bytes
+  to **72** — see the note in `series.rs` about the four bytes of tail padding Phase 8 must
+  write as zeroes.
+
+#### ⭐ There were already two measures of "how far apart", and only one of them is SPEC's
+
+Phase 5 Group D built **`Genome::divergence_from`** for the hue drift: the share of gene
+positions at which two genomes disagree at all. SPEC section 11 asks for something finer, and
+two independent notions of distance would have been a genuine bug — the colours on screen
+saying one thing about a split and the species panel another, with nothing to say which was
+right.
+
+They are **not** two measures. `divergence_from` is now literally `distance_from` with the
+per-gene cost replaced by *"any difference at all"*: one private `Genome::aligned` walks the
+two gene lists and both public methods hand it a cost function. So they use one matching rule,
+one normalisation and one range by construction, they are nought together and one together,
+and the fine one is never larger than the coarse one. `divergence_from`'s value is unchanged
+to the bit — the sum of exact `1.0`s is the integer count it used to compute — so the marker
+drift, and every golden vector downstream of it, is untouched.
+
+`Organism::genome_hash` was not a candidate for either: it jumps rather than drifts, which is
+what `docs/PHASE5.md` records as the reason it stopped being used for hue.
+
+#### What Group A decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **⭐ Genes are matched by position, not by a sequence alignment with gaps** | `genome.rs` | Two reasons and both are load-bearing. SPEC section 7's development takes the **first** gene whose trigger matches, so a gene inserted at the front is read before everything behind it and shifts the whole reading frame — an alignment that slid the lists back into register would report that nothing much happened at the one moment when a great deal might have. And a gapped alignment costs the product of the lengths, 16,384 dynamic-programming cells per pair at SPEC's cap, where this costs the shorter list. It is also the rule `divergence_from` already used, which is what keeps the hue and the species list one opinion. |
+| **⭐ Sixteen fields, equally weighted, each scaled onto nought-to-one** | `genome.rs` | Eight discrete fields are nought-or-one (a myocyte is not a third of the way to a sclerocyte, and a state is a *name*); six numbers are the gap over the width of the range a gene is drawn from, truncated at one; **the two angles are angles**, compared the short way round the circle. Equal weights because `mutation.rs` picks the field a point mutation changes by drawing uniformly from the same constant — the measure privileges no field because the operator that creates the differences privileges none. `FIELDS_IN_A_GENE` moved to `genome.rs` so there is one sixteen rather than two. |
+| **`min_step` and `max_step` are scaled over the byte, not over `max_dev_steps`** | `genome.rs` | Scaling over the run's development budget would make the distance between two fixed genomes depend on the configuration they were compared under — the same pair one species in a sixteen-step world and two in a four-step one, and an archived genome not comparable with a living one without carrying the settings it grew under. The cost, stated rather than buried: at SPEC's budget a re-drawn step moves the distance by about a fiftieth of a field, so timing barely reaches the species boundary. |
+| **⭐ The unmatched penalty is exactly a whole gene** | `genome.rs` | It is the honest reading — there is nothing there to be like — and it is what keeps the triangle inequality. See below. |
+| **⭐ The threshold is `0.5` — *"one species if they agree about at least half of themselves"*** | `species.rs` | The number that decides what a species is, and SPEC gives none. **A quarter was tried first and is wrong**; the measurement that settled it is below. On the three-gene genomes a settled run carries, a point mutation on a discrete field is about 0.02, one gene gained or lost is 0.25 to 0.33, and a wholly different program is 1.0 — so at a half **one indel does not split a lineage and two do**, and point mutations accumulate for a very long time before they split anything. A species is a group that has stopped running the same program, not one that has stopped being identical. |
+| **⚠️ A neutral duplication is not neutral to the distance** | `species.rs` | SPEC section 7's whole-genome duplication grows exactly the body that grew before, and position by position it shares half its positions with nothing — so the measure calls it half a genome away. Recorded rather than fixed: the distance is over the **program**, not the body, and the alternative is a gapped alignment, which the first row of this table rejects for a stronger reason. The hue says the same thing, so at least the screen and the list agree. |
+| **⭐ Cluster identity is carried by a representative genome that moves** | `species.rs` | The four rules that stop species churning, in the order they matter: **nearest wins, not first** (arena order is a consequence of who happened to die, so first-match would trade members between neighbouring lineages on every birth); **the representative moves to its nearest living member and no further** (left where it started, a lineage that merely drifts is recorded as an endless procession of species arriving and going extinct with nothing having split — measured, by pinning it: the drift test then reports a new species at step 5); **a cluster is removed only when genuinely empty**, so a dip to one member keeps its run of samples; and **promotion is what turns all of that into a name** — a cluster minted by one outlier that leaves no descendants is gone by the next sample having never been anything. |
+| **Two clusters that meet do not need a merge rule** | `species.rs` | Ties in "nearest" go to the earlier entry, the list is in ascending order of identifier, so a younger cluster whose representative drifted onto an older one's loses every member and is removed. A merge resolved toward the identity that has been there longer, out of the rules rather than a rule of its own. |
+| **A species is looked up by slot *and serial*** | `species.rs` | A slot is a place and is handed to whoever is born there next. Five hundred ticks is long enough for most organisms to die, so a note filed under a slot alone would hand a newborn the species of the stranger who used to live there — not an edge case but a large fraction of the population at every sample. |
+| **The observer lives in `coacervate-sim`, unlike `Series`** | `species.rs` | `Series` is in `coacervate-render` because a sample is *made of* a `Census` and the panel that draws it is there. Clustering is made of genomes and a distance, which are the simulation's, and `clippy.toml`'s ban on `HashMap` and `HashSet` — SPEC section 2's *"no map iteration may affect simulation state"* — is exactly the discipline the bookkeeping wanted. Dense arrays by slot, and a vector kept in ascending order of identifier that is binary-searched rather than walked. |
+| **A headless run says what it found** | `main.rs` | One line of the closing report: how many groups the last clustering found and how many had been there long enough to be species. Without it the phase does all of its work and a run with no window reports none of it. Phrased to `docs/PHASE7.md`'s register — what was there, and nothing about whether that is many or few. |
+
+#### ⭐ The distance **is** a metric — including the triangle inequality
+
+Worth writing out, because it was the open question of the group and because the answer turns
+on a decision that looks like a detail.
+
+The unnormalised cost is a sum over positions of a per-position cost, where a position past the
+end of the shorter genome costs `UNMATCHED`. Each field's own measure is a metric bounded by
+one — the discrete metric on the eight choices, the truncated ratio on the six numbers, the
+short way round the circle on the two angles — and a mean of metrics is a metric, so the sum is
+an ℓ¹ metric on genomes padded with "nothing".
+
+**The division by the longer gene list is where an alignment cost usually stops being a
+metric**, because the three sides of a triangle are divided by three different numbers. It
+survives here, and the condition is that a gene facing empty space costs at least *half* what
+the worst matched pair costs. Writing `p` for the penalty and `m` for the longer of two gene
+lists: when the third genome is no longer than `m`, every divisor is at most `m` and the ℓ¹
+inequality carries straight through; when it is longer, by `t − m`, it pays the penalty twice
+over — once against each of the other two — and `(t − m)(2pm − D) / tm ≥ 0` holds for every
+`D ≤ m` exactly when `p ≥ ½`.
+
+At `p = 1` there is room to spare. **At `p = 0.4` it is not a metric**, and that is measured
+rather than argued: `[x]` against `[y]` for two maximally different genes costs 1, and going by
+way of `[x, x]` costs 0.9. `distance_is_a_metric` carries that attack as a fixed family added
+to every case — a family of *mutated* genomes never finds it, because two random genes still
+agree about half their discrete fields by chance and are never a whole gene apart.
+
+The property test's tolerance is `1e-6` and it is there for one reason: the inequality is exact
+in the reals, and what is compared is a 32-bit sum of up to 128 terms divided by a gene count.
+
+#### ⭐⭐ The threshold was measured, and the first answer was wrong
+
+A quarter was picked from first principles — just below where one gene gained or lost lands on a
+short genome — and the shipped world was then run for 200,000 ticks to see what it produced.
+**485 groups, 315 of them promoted to species.** That is not a finding about the world; it is a
+resolution failure. SPEC section 11 exists so that *"lineages are things you can refer to rather
+than coloured dots"*, and a list of three hundred names is a list nobody reads. Group B would
+have generated three hundred binomials for it. It is also expensive: a pass is
+`population × clusters`, so it cost **7% of the tick rate** where the shipped threshold costs
+0.85%.
+
+So the groups a living population actually falls into were counted at a range of thresholds, at
+four points in one run of the shipped `config/default.toml`, seed 42:
+
+| Tick | Population | Mean genome | at 0.25 | at 0.35 | at 0.40 | **at 0.50** | at 0.60 | at 0.70 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 50,000 | 2,038 | 2.0 genes | 107 | 46 | 28 | **15** | 9 | 6 |
+| 100,000 | 2,208 | 2.6 genes | 277 | 108 | 65 | **20** | 8 | 6 |
+| 200,000 | 2,142 | 3.2 genes | 477 | 225 | 133 | **34** | 13 | 6 |
+| 400,000 | 820 | 7.3 genes | 236 | 153 | 112 | **37** | 12 | 4 |
+
+At a half the run reads as **fifteen to forty lineages, rising slowly as the world diversifies**,
+which is the shape worth having: a number a person can hold, that means more when it goes up. At
+six tenths and above it collapses under a dozen and stops moving — a measure that has stopped
+resolving anything. The half also sits just under the *median* distance between two organisms
+taken at random, which runs from 0.53 early to 0.69 late: **a species is a group closer together
+than two organisms of this world usually are.**
+
+⚠️ Those counts are a *from-scratch* clustering of one moment, and the observer that actually
+runs is incremental: a group survives while anybody is near it, so a real run carries a few more
+than the table says. Measured, at 200,000 ticks: the table says 34 and the run reports **60
+groups, 55 of them species**. Still a list a person can read, and the difference is the identity
+being carried rather than recomputed — which is the point of carrying it.
+
+⚠️ Worth noticing in that table quite apart from the threshold: at 400,000 ticks the population
+has fallen to 820 and the mean genome has more than doubled to 7.3 genes. Nothing in this group
+explains that and nothing in this group should — it is recorded because it is the first time
+anybody has looked at this run past 200,000 ticks.
+
+#### ⭐ What it costs, measured
+
+Two hundred thousand ticks of the shipped `config/default.toml`, seed 42, headless, on the same
+machine, with the same live simulation running alongside every time. The world reaches a
+population of about 2,200:
+
+| | Ticks per second | 200,000 ticks in | Groups at the end |
+| --- | --- | --- | --- |
+| Before Group A | **748.6** | 267.1 s | — |
+| Clustering in the loop, at the threshold as shipped | **742.3** | 269.4 s | 60, of which 55 species |
+| *(the same, at the quarter that was tried first)* | *696.1* | *287.3 s* | *485, of which 315 species* |
+
+**0.85% of the tick rate**, which is 2.3 seconds over 200,000 ticks, or about **5.7 ms per
+clustering pass** at 2,200 organisms in 60 groups. The middle row is worth keeping because it
+shows what the threshold does to the cost as well as to the reading: eight times the groups is
+eight times the arithmetic, and a quarter cost 7%.
+
+And the pass timed directly rather than by difference
+(`clustering_costs_little_beside_the_ticks_it_sits_between`, ignored in debug and run by the
+release pass): **2,816 organisms in 4 groups, one clustering pass 210 µs against 1.28 s for the
+500 ticks it sits between — 0.02%.**
+
+⚠️ **The naive shape the phase warned about — 4,000 organisms compared pairwise, eight million
+distances a sample — is not what happens, and nothing is sampled to avoid it.** Clustering is
+**leader-style**: each organism is compared against the *representatives*, of which there are a
+few dozen, so a pass is `population × clusters` rather than `population²`. The whole living
+population is examined at every sample.
+
+The worst case is still `population²`, and it is reached only by a world in which every organism
+is more than a threshold from every other — a world in which the word "species" has nothing to
+describe. It is worth knowing that the threshold is what stands between the measured cost and
+that case: at a quarter the cost was already eight times what it is, on the same world.
+
+#### ⚠️ Two things Group A did **not** do
+
+**No early exit on the distance, and no length pre-filter.** Both are cheap and exact — a pair
+whose gene counts differ by more than `threshold × longer` cannot be within the threshold — and
+at 0.85% of the tick rate neither is worth the code today. Written down so that whoever looks at
+this cost next knows the obvious optimisation is available rather than tried and rejected. It is
+the thing to reach for if the group count ever climbs into the hundreds on a long run.
+
+**No sorting, no random numbers, no map iteration**, which is A6 stated as three prohibitions
+rather than as a test.
 
 ### Group B — names
+
+⚠️ **What Group A leaves on the doorstep.** A settled run of the shipped configuration carries
+**about sixty groups, fifty-five of them species**, and the count rises slowly as the world
+diversifies. That is the size of list B has to name and B4 has to keep unique. `Cluster::id` is
+minted once and never reused, which is the hook — a name attaches to an identifier that has one
+meaning for the life of the run. `Cluster::representative` is the genome to name *from*, if a
+name is to be generated from anything but the identifier.
 
 - [ ] **B1. `a_species_gets_a_binomial_name`** — generated from Latin-ish syllables.
 - [ ] **B2. `a_new_species_inherits_its_genus_and_gets_a_new_epithet`**
@@ -149,7 +312,20 @@ The highest-value item in the phase. Append-only, human-readable, in a naturalis
 
 `Sample.species` was **deliberately omitted** from the time-series record: Phase 7 is what
 makes a species exist, and it lands before Phase 8 writes anything to disk, so the field can
-be added by the phase that has something to put in it. **Add it here.**
+be added by the phase that has something to put in it. **Added in Group A**, filled from
+`Taxonomy::species_count`.
+
+⚠️ **The record grew from 64 bytes to 72**, and four of those are tail padding: eight for the
+tick plus fifteen four-byte scalars is 68, which the tick's eight-byte alignment rounds up.
+Phase 8 writes these as a flat array and **must write those four bytes as zeroes**, or two runs
+that did the same thing produce files that differ. The whole series is now 288 KiB rather than
+256 KiB, which changes nothing about the bound.
+
+The count moves on the clustering's 500-tick grid rather than the chart's 100-tick one, so five
+consecutive records carry the same figure — a reading of the last sample, not an interpolation.
+It is nought for the first ten thousand ticks of every run, because that is how long twenty
+consecutive samples takes; `the_series_records_how_many_species_there_are` is ignored in the
+debug suite for exactly that reason and run by the release pass.
 
 ## Open questions carried forward
 

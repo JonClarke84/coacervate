@@ -42,6 +42,7 @@ use args::{Arguments, Settings};
 // thing `census.rs`'s own opening paragraph argues against. Nothing about the numbers changed.
 use coacervate_render::census::{Census, millions_of_years};
 use coacervate_sim::config::RunConfig;
+use coacervate_sim::species::Taxonomy;
 use coacervate_sim::world::World;
 use run::{Interrupt, Run, Stop};
 use std::path::{Path, PathBuf};
@@ -272,7 +273,8 @@ fn main() -> ExitCode {
         heading();
     }
     report(run.world());
-    println!("\n{}", ending(why));
+    println!("\n{}", lineages(run.taxonomy()));
+    println!("{}", ending(why));
 
     let Some(path) = &arguments.dump_frame else {
         return ExitCode::SUCCESS;
@@ -456,6 +458,30 @@ fn report(world: &World) {
         census.mean_genes,
         census.gene_spread,
     );
+}
+
+/// ⭐ **Phase 7, `A3`.** What the last clustering of the population found, as one line of the
+/// closing report.
+///
+/// SPEC section 11's clustering happens every five hundred ticks whether anybody is watching or
+/// not, and until this line existed a headless run did all of it and said nothing about any of
+/// it. This is the one place a run with no window reports what was in the water.
+///
+/// ⚠️ **The register is `docs/PHASE7.md`'s and it is load-bearing**, which is why the wording is
+/// worth reading rather than skimming: it says *what was there*, and nothing about whether that is
+/// many or few, better or worse, or where it was heading. A run that ends with one group is not a
+/// run that failed at anything.
+fn lineages(taxonomy: &Taxonomy) -> String {
+    let Some(tick) = taxonomy.sampled_at() else {
+        return "The run was too short for the population to be clustered.".to_owned();
+    };
+
+    format!(
+        "At tick {tick} the population fell into {} groups by genetic distance, {} of which had \
+         been there long enough to be counted as species.",
+        taxonomy.clusters().len(),
+        taxonomy.species_count(),
+    )
 }
 
 /// What to say about a run that has stopped.

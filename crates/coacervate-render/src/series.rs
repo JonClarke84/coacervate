@@ -41,10 +41,10 @@
 //!
 //! | | |
 //! | --- | --- |
-//! | One record | **64 bytes** - asserted below, not hoped for |
+//! | One record | **72 bytes** - asserted below, not hoped for |
 //! | [`CAPACITY`] | 4,096 records |
-//! | The whole series | **256 KiB**, for ever, whatever the run does |
-//! | Against CLAUDE.md's 2 GB resident target | 0.0125% |
+//! | The whole series | **288 KiB**, for ever, whatever the run does |
+//! | Against CLAUDE.md's 2 GB resident target | 0.014% |
 //!
 //! And what it would have been without a bound. A headless run manages about 1,300 ticks a second
 //! on this machine (Phase 5 Group C measured a *watched* run at about 650, and Q23 records that
@@ -87,21 +87,22 @@
 //! does not balance - and a chart drawn from those is a picture of a world that did not happen.
 //! Every point on every chart in this program is a reading the world actually gave.
 //!
-//! # ⚠️ SPEC's `species counts` field is deliberately **not** here
+//! # SPEC's `species counts` field, added by the phase that could fill it
 //!
-//! SPEC section 13 lists it, and Phase 7 is what makes a species exist - clustering every 500
-//! ticks, promotion after twenty consecutive samples, binomial naming. Phase 7 comes *before*
-//! Phase 8, so the field can be added by the phase that has something to put in it, and nothing
-//! will have been written to disk in the meantime for it to be incompatible with.
+//! Phase 6 left [`Sample::species`] out, and wrote down why: SPEC section 13 lists it, but a
+//! species did not exist yet, so the field could only have been a `u32` that is nought on every
+//! record of every run - a column of zeroes on a chart, and a number in a file that reads as
+//! *"this world has no species"*, which is false and is worse than an absent field because an
+//! absent field cannot be believed.
 //!
-//! The alternative was a `species: u32` that is nought on every record of every run. That is a
-//! column of zeroes on a chart, a flat line at the bottom of a box, and a number in a file that
-//! reads as *"this world has no species"* - which is false, and is worse than an absent field
-//! because an absent field cannot be believed. CLAUDE.md: *"Don't over-build. No speculative
-//! abstractions."*
+//! Phase 7 is what makes a species exist, and it lands before Phase 8 writes anything to disk, so
+//! the field arrives with something in it and nothing has been recorded in the meantime for it to
+//! be incompatible with. The count comes from `coacervate_sim::species::Taxonomy`, which is the
+//! *other* periodic observer of a run - see [`Series::observe`], which is handed one.
 
 use crate::census::Census;
 use coacervate_sim::cell::CellKind;
+use coacervate_sim::species::Taxonomy;
 use coacervate_sim::world::World;
 
 /// How many ticks pass between two records, at full resolution.
@@ -151,6 +152,20 @@ pub struct Sample {
     /// How many organisms were alive. [`Census::population`].
     pub population: u32,
 
+    /// ⭐ **Phase 7.** How many species there were: `Taxonomy::species_count`.
+    ///
+    /// SPEC section 13's *species counts*, added by the phase that made a species exist. It is
+    /// the number of clusters that had persisted through SPEC section 11's twenty consecutive
+    /// samples at the moment this record was taken, so it is **nought for the first ten thousand
+    /// ticks of every run** - not because nothing is being counted but because nothing has been
+    /// there long enough to count.
+    ///
+    /// ⚠️ It moves on the clustering's five-hundred-tick grid rather than on this record's
+    /// hundred-tick one, so five consecutive records carry the same figure. That is a reading of
+    /// the last sample and not an interpolation: every point on every chart in this program is a
+    /// number the world actually gave.
+    pub species: u32,
+
     /// The mean number of cells in a body. [`Census::mean_cells`].
     pub mean_cells: f32,
 
@@ -183,15 +198,21 @@ pub struct Sample {
     pub influx: f32,
 }
 
-/// ⚠️ The record is sixty-four bytes, checked at compile time.
+/// ⚠️ The record is seventy-two bytes, checked at compile time.
 ///
 /// This is the whole of what *"small and fixed-size"* means for [`CAPACITY`]'s arithmetic, and it
 /// is the sort of thing a field added in the wrong place breaks silently - a `vec3`-shaped
-/// mistake, and `camera.rs` carries the same note about the same class of fault. Sixty-four bytes
-/// is also no padding at all: eight for the tick, then fourteen four-byte scalars.
+/// mistake, and `camera.rs` carries the same note about the same class of fault.
+///
+/// It was sixty-four until Phase 7 added [`Sample::species`]: eight for the tick and fifteen
+/// four-byte scalars is sixty-eight, which the eight-byte alignment the tick needs rounds up to
+/// seventy-two. ⚠️ **The last four bytes are therefore padding**, which matters to exactly one
+/// thing: Phase 8 writes these records to disk as a flat array and must write those four bytes as
+/// zeroes rather than as whatever the stack held, or two runs that did the same thing would
+/// produce files that differ.
 const _: () = assert!(
-    size_of::<Sample>() == 64,
-    "a stats record is 64 bytes; see series.rs's CAPACITY arithmetic"
+    size_of::<Sample>() == 72,
+    "a stats record is 72 bytes; see series.rs's CAPACITY arithmetic"
 );
 
 impl Sample {
@@ -202,7 +223,7 @@ impl Sample {
     /// would be a second implementation of six numbers, and the day it disagreed with the panel
     /// above it is the day somebody spends an hour believing the wrong one.
     #[must_use]
-    pub fn of(world: &World) -> Self {
+    pub fn of(world: &World, taxonomy: &Taxonomy) -> Self {
         let census = Census::of(world);
         let ledger = world.ledger();
 
@@ -210,6 +231,7 @@ impl Sample {
             tick: world.ticks(),
             population: u32::try_from(census.population)
                 .expect("a population is bounded by the organism arena"),
+            species: taxonomy.species_count(),
             mean_cells: narrowed(census.mean_cells),
             mean_genes: narrowed(census.mean_genes),
             biomass_of: biomass_by_kind(world),
@@ -273,7 +295,7 @@ impl Series {
     /// window records the same ticks as the same run headless, and a run resumed from a snapshot
     /// (Phase 8) lands on the same grid as the run it was taken from. A counter that started at
     /// nought whenever this was constructed would have none of those properties.
-    pub fn observe(&mut self, world: &World) {
+    pub fn observe(&mut self, world: &World, taxonomy: &Taxonomy) {
         if !world.ticks().is_multiple_of(self.stride) {
             return;
         }
@@ -289,7 +311,7 @@ impl Series {
             return;
         }
 
-        self.record(Sample::of(world));
+        self.record(Sample::of(world, taxonomy));
     }
 
     /// Put a reading in, thinning the series first if it is full.
@@ -424,6 +446,7 @@ pub(crate) mod testing {
     use coacervate_sim::cell::{CellKind, Vec2};
     use coacervate_sim::config::spec_defaults;
     use coacervate_sim::genome::{Action, Gene, Genome, SensorTarget, State};
+    use coacervate_sim::species::Taxonomy;
     use coacervate_sim::world::World;
 
     /// How long the light is left to fall before anything is put in the water.
@@ -475,13 +498,19 @@ pub(crate) mod testing {
     }
 
     /// The same, ticked on, with the series recorded as it ran.
+    ///
+    /// The taxonomy is observed beside the series exactly as `run.rs` does it, so what these
+    /// tests are handed is what a real run produces rather than a series recorded without the
+    /// other observer that fills part of it.
     pub(crate) fn living(ticks: u64) -> (World, Series) {
         let mut world = seeded();
         let mut series = Series::new();
+        let mut taxonomy = Taxonomy::new(world.config());
 
         for _ in 0..ticks {
             world.tick();
-            series.observe(&world);
+            taxonomy.observe(&world);
+            series.observe(&world, &taxonomy);
         }
 
         (world, series)
@@ -520,6 +549,7 @@ pub(crate) mod testing {
 mod tests {
     use super::{CAPACITY, EVERY, KINDS, Sample, Series};
     use crate::census::Census;
+    use coacervate_sim::species::{self, Taxonomy};
 
     /// A reading of nothing in particular, at this tick, whose population says which one it is.
     fn marked(tick: u64, population: u32) -> Sample {
@@ -542,11 +572,13 @@ mod tests {
     fn a_time_series_is_recorded_as_the_run_goes() {
         let mut world = super::testing::seeded();
         let mut series = Series::new();
+        let mut taxonomy = Taxonomy::new(world.config());
         let mut expected = Vec::new();
 
         for _ in 0..250 {
             world.tick();
-            series.observe(&world);
+            taxonomy.observe(&world);
+            series.observe(&world, &taxonomy);
 
             if world.ticks().is_multiple_of(EVERY) {
                 expected.push((world.ticks(), Census::of(&world), world.ledger().biomass()));
@@ -615,6 +647,71 @@ mod tests {
             "the population is one kind of cell, so SPEC section 13's per-kind biomass cannot be \
              told from its total: {:?} over {KINDS} kinds",
             last.biomass_of
+        );
+    }
+
+    /// ⭐ **Phase 7, A4's other end.** A record carries how many species there were, and the
+    /// figure is the taxonomy's own.
+    ///
+    /// SPEC section 13 lists *species counts* among the things `stats.bin` records, and Phase 6
+    /// deliberately left the field out because nothing could fill it: a species did not exist yet,
+    /// and a column of zeroes in a file reads as *"this world has no species"*, which is false and
+    /// is worse than an absent field because an absent field cannot be believed. This is the phase
+    /// that has something to put in it.
+    ///
+    /// # ⚠️ Why this one is ignored by the debug suite
+    ///
+    /// SPEC section 11 promotes a cluster after **twenty consecutive samples** five hundred ticks
+    /// apart, so the earliest a species can exist is ten thousand ticks into a run. There is no
+    /// way to assert that the field carries a real count without running a world that far, and a
+    /// run that far in a debug build is most of a minute. `scripts/check.ps1`'s release pass runs
+    /// it with `--include-ignored`, so the claim is still proved on every check.
+    ///
+    /// A test that only asserted the field *existed* would pass against a `species: u32` that was
+    /// nought on every record of every run, which is precisely the thing Phase 6 refused to add.
+    #[test]
+    #[ignore = "ten thousand ticks: a species cannot exist before twenty samples have passed"]
+    fn the_series_records_how_many_species_there_are() {
+        let mut world = super::testing::seeded();
+        let mut series = Series::new();
+        let mut taxonomy = Taxonomy::new(world.config());
+
+        // Two samples past the earliest a species could be promoted.
+        let until = world.ticks() + species::EVERY * (u64::from(species::PERSISTENCE) + 2);
+        while world.ticks() < until {
+            world.tick();
+            taxonomy.observe(&world);
+            series.observe(&world, &taxonomy);
+        }
+
+        assert!(
+            taxonomy.species_count() > 0,
+            "a world ticked past {} samples has no species in it, so this test is comparing \
+             nought with nought",
+            species::PERSISTENCE
+        );
+
+        let last = series.samples().last().expect("there are records");
+        assert_eq!(
+            last.species,
+            taxonomy.species_count(),
+            "the last record says {} species and the taxonomy says {}, so the chart and the \
+             species list are two opinions about one number",
+            last.species,
+            taxonomy.species_count()
+        );
+
+        // ⚠️ And the run really did start with none and gain some, rather than the field being
+        // filled with a constant. A species that existed from the first record would mean the
+        // twenty-sample rule was not being applied at all.
+        let first = series.samples().first().expect("there are records");
+        assert_eq!(
+            first.species,
+            0,
+            "the first record of the run already had {} species in it, and the earliest one can \
+             exist is {} samples in",
+            first.species,
+            species::PERSISTENCE
         );
     }
 

@@ -39,6 +39,10 @@
 //!   earned enough, and has grown the tissue to do it with, copies its genome imperfectly and
 //!   puts a child down beside itself out of its own energy. Until this existed a population
 //!   could only fall, so nothing a mutation happened to make better could ever become common.
+//! - [`species`] — telling one lineage from another: how far apart two growth programs are,
+//!   which of the living population are near enough to one another to be one group, and which
+//!   of those groups has been there long enough to be worth a name. It reads a world and
+//!   changes nothing in it.
 //! - [`world`] — all of the above owned in one place, and the tick that moves it: the light
 //!   falling, the energy spreading, the tiles shedding what they cannot hold, the bodies
 //!   being fed and pushed about, the dead being taken away and the living having offspring —
@@ -59,6 +63,7 @@ pub mod organism;
 pub mod physics;
 pub mod reproduction;
 pub mod rng;
+pub mod species;
 pub mod world;
 
 #[cfg(test)]

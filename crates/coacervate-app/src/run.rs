@@ -73,6 +73,7 @@
 
 use coacervate_render::series::Series;
 use coacervate_sim::config::{Config, RunConfig};
+use coacervate_sim::species::Taxonomy;
 use coacervate_sim::world::World;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -171,6 +172,20 @@ pub struct Run {
     /// `coacervate-sim` still knows nothing about it. See `coacervate_render::series`, which
     /// explains why the type lives over there beside the census it is made of.
     series: Series,
+
+    /// ⭐ **Phase 7, `A3` and `A4`.** Which lineages there are, every five hundred ticks.
+    ///
+    /// The second periodic observer of a run, and it is here for exactly the reason the series is:
+    /// SPEC section 11's clustering is on a grid of the world's own ticks, and [`Run::step`] is
+    /// the one place in this program a tick happens. An observer driven from a window would
+    /// sample different ticks in the windowed build from the headless one, and a species is
+    /// *defined* by having been there for twenty consecutive samples - so the two builds would
+    /// disagree about what lives in the world rather than only about what is drawn.
+    ///
+    /// ⚠️ **It reads the world and changes nothing in it.** See `coacervate_sim::species`, and
+    /// `a_run_produces_what_it_produced_before_group_a` below, which is what actually holds it to
+    /// that.
+    taxonomy: Taxonomy,
 }
 
 impl Run {
@@ -181,6 +196,7 @@ impl Run {
     #[must_use]
     pub fn new(world: World, bounds: &RunConfig, interrupt: &Interrupt) -> Self {
         let now = Instant::now();
+        let taxonomy = Taxonomy::new(world.config());
 
         Self {
             world,
@@ -195,6 +211,7 @@ impl Run {
             interrupt: interrupt.clone(),
             stopped: None,
             series: Series::new(),
+            taxonomy,
         }
     }
 
@@ -237,10 +254,16 @@ impl Run {
         self.wait();
         self.world.tick();
 
-        // ⭐ **Phase 6, `C1`.** The one line that records the run, on the one path a tick is
-        // taken by. Most calls do nothing: `Series::observe` reads the world only when its own
-        // tick count lands on SPEC section 13's hundred-tick grid.
-        self.series.observe(&self.world);
+        // ⭐ **Phase 6's `C1` and Phase 7's `A3`.** The two lines that record the run, on the one
+        // path a tick is taken by. Most calls do nothing at all: each observer reads the world
+        // only when its own tick count lands on its grid - a hundred ticks for the chart, five
+        // hundred for the clustering.
+        //
+        // ⚠️ **The clustering goes first**, so a record taken at a tick that is on both grids
+        // carries the count of species as of that tick rather than as of five hundred ticks ago.
+        // Every five-hundredth tick is on both.
+        self.taxonomy.observe(&self.world);
+        self.series.observe(&self.world, &self.taxonomy);
 
         None
     }
@@ -359,6 +382,12 @@ impl Run {
         &self.series
     }
 
+    /// ⭐ **Phase 7, `A3`.** Which lineages are in the world, to read.
+    #[must_use]
+    pub const fn taxonomy(&self) -> &Taxonomy {
+        &self.taxonomy
+    }
+
     /// ⭐ **Phase 6, `B1` and `B4`.** Go on under these conditions from here.
     ///
     /// SPEC section 3 divides its table into what locks at run start and what does not, and *"the
@@ -412,6 +441,7 @@ mod tests {
     // ⚠️ `census` was this crate's own module until Phase 6. See `main.rs` for why it moved.
     use coacervate_render::census::Census;
     use coacervate_sim::config::{Config, RawConfig, RunConfig, spec_defaults};
+    use coacervate_sim::species::{self, Taxonomy};
     use std::time::Instant;
 
     /// SPEC's default configuration with some of it changed, checked and ready to build a
@@ -795,6 +825,161 @@ mod tests {
             before,
             "a run that was already over took a tick anyway, so a bound is being examined \
              inside a tick rather than between two"
+        );
+    }
+
+    /// ⭐ **Phase 7, `A3` at the runner's end.** The one loop that takes a tick is also what
+    /// drives the clustering, and it drives it on SPEC section 11's grid.
+    ///
+    /// [`Run::step`] is the only place in this program a tick happens, which is what makes both
+    /// periodic observers reproducible: a run watched through a window samples the same ticks as
+    /// the same run headless, because neither of them is counting frames. This is that claim for
+    /// the second observer, and it is worth its own test because the failure would be silent -
+    /// a taxonomy that was never handed the world would simply report no species, for ever, in a
+    /// world full of them.
+    ///
+    /// The last assertion is the seam between the two observers: the chart's record of how many
+    /// species there are and the taxonomy's own count have to be one number. See `Run::step` for
+    /// why the clustering is offered the world first.
+    #[test]
+    fn a_run_clusters_the_population_as_it_goes() {
+        let world = a_small_living_world(|_| {});
+        let founded = world.ticks();
+        let mut run = Run::new(
+            world,
+            &bounds(|run| run.max_ticks = Some(founded + species::EVERY * 2 + 1)),
+            &Interrupt::new(),
+        );
+
+        assert_eq!(
+            run.taxonomy().sampled_at(),
+            None,
+            "a run that has not taken a tick has already clustered something"
+        );
+        assert_eq!(run.go(|_| {}), Stop::TicksDone);
+
+        let sampled = run
+            .taxonomy()
+            .sampled_at()
+            .expect("a run of more than five hundred ticks has been clustered");
+        assert!(
+            sampled.is_multiple_of(species::EVERY),
+            "the population was clustered at tick {sampled}, which is not on SPEC section 11's \
+             {}-tick grid",
+            species::EVERY
+        );
+        assert!(
+            !run.taxonomy().clusters().is_empty(),
+            "a run with a living population in it came out with no clusters at all"
+        );
+
+        assert_eq!(
+            run.series()
+                .samples()
+                .last()
+                .expect("a run of two thousand ticks has records")
+                .species,
+            run.taxonomy().species_count(),
+            "the chart and the species list disagree about how many species there are"
+        );
+    }
+
+    /// ⭐ **Phase 7, the cost of `A3`.** One clustering pass over a realistic population costs a
+    /// small fraction of the five hundred ticks it sits between.
+    ///
+    /// SPEC section 11 asks for the living population to be clustered every 500 ticks, and
+    /// CLAUDE.md allows up to 4,000 organisms. Compared pairwise that would be eight million
+    /// distances a sample, each over two gene lists - which on this machine is seconds, at a
+    /// cadence of well under a second. **A clustering pass that halved the tick rate would be a
+    /// real regression on a live run**, so what it actually costs is measured rather than assumed.
+    ///
+    /// # What is compared, and why it is a ratio rather than a number
+    ///
+    /// The five hundred ticks between two samples, timed, against one sample taken over the same
+    /// population. A wall-clock figure would be a number about the machine it was measured on and
+    /// would fail on a slower one; the ratio is the thing that matters and is the thing a person
+    /// running the simulation would notice.
+    ///
+    /// The bound is deliberately loose - a sample must cost less than the ticks it sits between,
+    /// which is a hundred per cent of overhead - because the assertion is a guard against the
+    /// *shape* of the cost changing, not a benchmark. `docs/PHASE7.md` records what it measured.
+    ///
+    /// ⚠️ Ignored in the debug suite. Reaching a realistic population means several thousand ticks
+    /// of a full world, and a debug tick is roughly ten times a release one; the release pass runs
+    /// this with `--include-ignored`.
+    #[test]
+    #[ignore = "several thousand ticks of a full world to reach a realistic population"]
+    fn clustering_costs_little_beside_the_ticks_it_sits_between() {
+        /// The population this is measured at. SPEC section 3's shipped world settles near 2,200.
+        const REALISTIC: usize = 2_000;
+
+        // ⚠️ **The shipped world's size, and not `a_small_living_world`'s.** Everything about the
+        // cost of a clustering pass is a fact about how many organisms there are, and the small
+        // world every other test in this file uses is a sixteenth of the area - it settles two
+        // orders of magnitude short of the population this is about.
+        //
+        // The light is the one thing raised: `config/default.toml`'s own note records that at
+        // 0.012 the population fills `limits.max_organisms` in twenty thousand ticks where the
+        // shipped 0.001 takes ten times as long to settle. The population is the shipped one;
+        // only the time taken to get there is not.
+        let mut world = World::new(&config(|raw| raw.light.influx = 0.012));
+        genesis(&mut world, 8);
+        let mut taxonomy = Taxonomy::new(world.config());
+
+        while Census::of(&world).population < REALISTIC {
+            world.tick();
+            assert!(
+                world.ticks() < 60_000,
+                "the world did not reach a population of {REALISTIC} in sixty thousand ticks, so \
+                 this is not measuring what it says it is"
+            );
+        }
+
+        // ⚠️ On the grid before anything is timed, or both samples below do nothing at all and
+        // the measurement is of a function that returned immediately. Five hundred ticks from a
+        // multiple of five hundred is another one.
+        while !world.ticks().is_multiple_of(species::EVERY) {
+            world.tick();
+        }
+
+        // Warm: the first sample mints every cluster there is, and it is the steady state this is
+        // about rather than the first one.
+        taxonomy.observe(&world);
+        assert!(
+            !taxonomy.clusters().is_empty(),
+            "the warming sample found nothing, so what is timed below is a function that \
+             returned without doing anything"
+        );
+
+        let ticking = Instant::now();
+        for _ in 0..species::EVERY {
+            world.tick();
+        }
+        let ticking = ticking.elapsed();
+
+        let clustering = Instant::now();
+        taxonomy.observe(&world);
+        let clustering = clustering.elapsed();
+
+        let census = Census::of(&world);
+        println!(
+            "population {}, mean genome {:.2} genes, {} clusters, {} species\n{} ticks took \
+             {ticking:?}, one clustering pass took {clustering:?} - {:.2}% of the ticks it sits \
+             between",
+            census.population,
+            census.mean_genes,
+            taxonomy.clusters().len(),
+            taxonomy.species_count(),
+            species::EVERY,
+            clustering.as_secs_f64() / ticking.as_secs_f64() * 100.0
+        );
+
+        assert!(
+            clustering < ticking,
+            "one clustering pass over {} organisms took {clustering:?} and the {} ticks it sits \
+             between took {ticking:?}, so watching the run is costing more than the run",
+            census.population,
+            species::EVERY
         );
     }
 

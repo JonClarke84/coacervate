@@ -298,6 +298,33 @@ pub const MAX_OSC_FREQ: f32 = 5.0;
 /// [`Gene::sensor_gain`].
 pub const MAX_SENSOR_GAIN: f32 = 1.0;
 
+/// How many fields a gene has, and so how many different things one point mutation might be.
+///
+/// SPEC section 7's `Gene` has sixteen, and `a_gene_has_the_fields_spec_section_7_gives_it` is
+/// what keeps that true. A seventeenth field added there without a match arm being added in
+/// `mutation.rs` would be a field that never mutates - a part of the genome frozen for the life
+/// of the project, and nothing else in the simulation would report it.
+///
+/// **Two things count on this being one number rather than two.** `mutation.rs` picks the field
+/// a point mutation changes by drawing from it, and [`Genome::distance_from`] divides a gene's
+/// total disagreement by it. That is what makes the distance weight the fields exactly as the
+/// operator that creates differences does: no field privileged, because the mutation that
+/// produces one does not privilege any either.
+pub(crate) const FIELDS_IN_A_GENE: u32 = 16;
+
+/// What a gene with nothing opposite it contributes: SPEC section 11's *"fixed penalty"*.
+///
+/// A whole gene, because the most two matched genes can disagree by is also a whole gene, and a
+/// gene facing empty space has nothing at all in common with what is not there. Anything smaller
+/// would say that appending a gene to a genome is a smaller change than rewriting one, which is
+/// false of a growth program whose development reads the first gene that matches.
+///
+/// ⚠️ **It also has to be this to keep [`Genome::distance_from`] a metric.** See
+/// `distance_is_a_metric`: the triangle inequality survives the division by the longer gene
+/// list only while the penalty is at least half of what a matched pair can cost, and one is the
+/// value that also makes the two measures in this module agree at the ends.
+pub const UNMATCHED: f32 = 1.0;
+
 impl Gene {
     /// A gene with every field drawn at random.
     ///
@@ -525,25 +552,205 @@ impl Genome {
     /// further when more of the program is different.
     #[must_use]
     pub fn divergence_from(&self, other: &Self) -> f32 {
+        self.aligned(
+            other,
+            |mine, theirs| {
+                if mine == theirs { 0.0 } else { UNMATCHED }
+            },
+        )
+    }
+
+    /// ⭐ **SPEC section 11's genetic distance**: how far apart two growth programs are, between
+    /// nothing at all and everything.
+    ///
+    /// > *"Genetic distance between two genomes is a normalised alignment cost over their gene
+    /// > lists: matched genes contribute their scaled numeric difference, unmatched genes
+    /// > contribute a fixed penalty."*
+    ///
+    /// **This is what decides where one species stops and the next begins**, so the three things
+    /// that sentence leaves open are decided here, in the open, with the reasoning attached.
+    ///
+    /// # ⚠️ It is the same alignment [`Genome::divergence_from`] uses, and that is deliberate
+    ///
+    /// Both walk the two gene lists **position by position** - gene *i* against gene *i*, every
+    /// position past the end of the shorter list unmatched - and the only difference between them
+    /// is what a mismatched pair costs. `divergence_from` charges a whole gene for any difference
+    /// at all; this charges what the difference actually is. Literally the same code does the
+    /// walking, which is why the two can never come to disagree.
+    ///
+    /// That matters more than it sounds. `organism.rs` drifts a lineage's marker by
+    /// `divergence_from`, and the marker is what a viewer sees as colour; this is what the species
+    /// list is built from. **Two independent notions of "far apart" would be a run in which the
+    /// colours on the screen and the panel beside them tell different stories about the same
+    /// split**, with nothing anywhere to say which was right.
+    ///
+    /// Position, rather than a sequence alignment with gaps, for two reasons. SPEC section 7's
+    /// development takes the **first** gene whose trigger matches, so a gene inserted at the front
+    /// is read before everything behind it and shifts the whole reading frame of the program - an
+    /// alignment that slid the two lists back into register would report that nothing much had
+    /// happened at the one moment when a great deal might have. And an alignment with gaps costs
+    /// the product of the two lengths - 16,384 cells of dynamic programming for a pair of genomes
+    /// at SPEC's cap - where this costs the shorter of them. `species.rs` runs this over a live
+    /// population every 500 ticks; the difference is between a reading and a stall.
+    ///
+    /// # Every field is scaled onto nought-to-one, and the sixteen are averaged
+    ///
+    /// - **The eight discrete fields** - both cell kinds, all three states, the action, the
+    ///   adhesion flag and the sensor target - are nought if they agree and one if they do not.
+    ///   There is no sense in which a myocyte is a third of the way to a sclerocyte, and a state
+    ///   is a *name* for which genes answer to a cell rather than a quantity: state 5 and state 6
+    ///   have nothing to do with one another, which is exactly why `mutation.rs` re-draws them
+    ///   uniformly instead of nudging them.
+    /// - **The six linear numbers** are the gap between the two values over the width of the
+    ///   range a gene is drawn from, so half a range is half a field, and a value walked past the
+    ///   end of its range - which nothing forbids - does not go on counting past one.
+    /// - **The two angles are angles.** `angle` and `osc_phase` are measured round a circle, so
+    ///   they are compared the short way round: a daughter budded half a turn to the left and one
+    ///   budded half a turn to the right are the same daughter, and a subtraction would have
+    ///   called them as different as the field can express.
+    ///
+    /// The sixteen are weighted equally because [`FIELDS_IN_A_GENE`] is also what `mutation.rs`
+    /// draws from when it decides which field a point mutation changes. The measure therefore
+    /// privileges no field, because the operator that creates the differences privileges none.
+    ///
+    /// What that produces in practice is worth stating plainly: a point mutation on a discrete
+    /// field moves this by a sixteenth of a gene, and a point mutation on a numeric field moves
+    /// it by far less, because `point_sigma` is a small fraction of every range it is added to. A
+    /// lineage that has re-drawn a cell kind has changed what its body is made of; a lineage that
+    /// has nudged a spring's stiffness by a hundredth of its range has not. **The distance says
+    /// so, and that is the point of scaling rather than counting.**
+    ///
+    /// # The steps are scaled over the byte, not over the run's budget
+    ///
+    /// `min_step` and `max_step` could be scaled over `max_dev_steps`, which is the part of their
+    /// range a run actually reaches. They are not, because that would make the distance between
+    /// two fixed genomes depend on the configuration they were being compared under - the same
+    /// pair of lineages would be one species in a sixteen-step world and two in a four-step one,
+    /// and an archived genome could not be compared with a living one without carrying the
+    /// settings it was grown under. A genome is a fact about itself; so is the distance between
+    /// two of them.
+    ///
+    /// The consequence, stated rather than buried: at SPEC's sixteen-step budget a re-drawn step
+    /// moves this by about a fiftieth of a field, so the step window contributes almost nothing to
+    /// where a species boundary falls. It is the *timing* of a gene rather than what it does, and
+    /// the timing is bounded by the run while the byte is not.
+    #[must_use]
+    pub fn distance_from(&self, other: &Self) -> f32 {
+        self.aligned(other, gene_distance)
+    }
+
+    /// The two gene lists walked position by position, at whatever a mismatched pair costs,
+    /// divided by the longer of them.
+    ///
+    /// **One walk, two costs.** See [`Genome::distance_from`] for why the two measures in this
+    /// module share it rather than each having their own.
+    ///
+    /// A position past the end of the shorter list contributes [`UNMATCHED`], and there is no
+    /// sliding: a gene inserted at the *front* of a genome is compared with the gene that used to
+    /// be there, and so is every gene behind it. Under the coarse cost that comes out as a
+    /// difference of one, and under the fine one as whatever those shifted pairs actually
+    /// disagree about. Both are saying the same thing, which is that development reads the first
+    /// gene that matches and a gene put in at the front is read before all of them.
+    fn aligned(&self, other: &Self, cost: impl Fn(&Gene, &Gene) -> f32) -> f32 {
         let longer = self.genes.len().max(other.genes.len());
         if longer == 0 {
             return 0.0;
         }
 
         let shared = self.genes.len().min(other.genes.len());
-        let changed = (0..shared)
-            .filter(|&at| self.genes[at] != other.genes[at])
-            .count()
-            + (longer - shared);
+        let mut total = 0.0;
+        for at in 0..shared {
+            total += cost(&self.genes[at], &other.genes[at]);
+        }
 
         // Both are gene counts, which `Genome::new` caps at `limits.max_genes` - 128 in SPEC
         // section 3's defaults and never more than a `u16` could hold, so both conversions are
         // exact and the division is a single rounding.
-        let changed = f32::from(u16::try_from(changed).expect("a genome is capped at 128 genes"));
+        let unmatched =
+            f32::from(u16::try_from(longer - shared).expect("a genome is capped at 128 genes"));
         let longer = f32::from(u16::try_from(longer).expect("a genome is capped at 128 genes"));
 
-        changed / longer
+        unmatched.mul_add(UNMATCHED, total) / longer
     }
+}
+
+/// How far apart two genes are, between nothing at all and everything: the mean of their sixteen
+/// fields, each scaled onto nought-to-one.
+///
+/// See [`Genome::distance_from`] for what each field is scaled by and why. Every one of the three
+/// helpers below answers between nought and one and is a genuine distance in its own right -
+/// symmetric, nought only between equals, and obeying the triangle inequality - which is what
+/// makes their mean one too. `distance_is_a_metric` is where that is checked rather than assumed.
+fn gene_distance(mine: &Gene, theirs: &Gene) -> f32 {
+    let apart = differ(mine.trigger_state, theirs.trigger_state)
+        + spread(f32::from(mine.min_step), f32::from(theirs.min_step), STEPS)
+        + spread(f32::from(mine.max_step), f32::from(theirs.max_step), STEPS)
+        + differ(mine.action, theirs.action)
+        + round_the_circle(mine.angle, theirs.angle)
+        + differ(mine.adhere, theirs.adhere)
+        + differ(mine.child_state, theirs.child_state)
+        + differ(mine.child_kind, theirs.child_kind)
+        + spread(mine.rest_length, theirs.rest_length, MAX_REST_LENGTH)
+        + spread(mine.stiffness, theirs.stiffness, MAX_STIFFNESS)
+        + differ(mine.new_kind, theirs.new_kind)
+        + differ(mine.new_state, theirs.new_state)
+        + spread(mine.osc_freq, theirs.osc_freq, MAX_OSC_FREQ)
+        + round_the_circle(mine.osc_phase, theirs.osc_phase)
+        + spread(mine.sensor_gain, theirs.sensor_gain, 2.0 * MAX_SENSOR_GAIN)
+        + differ(mine.sensor_target, theirs.sensor_target);
+
+    apart / f32::from(u16::try_from(FIELDS_IN_A_GENE).expect("a gene has sixteen fields"))
+}
+
+/// The width of the range a step number is scaled over: the whole byte, which is 255.
+///
+/// See [`Genome::distance_from`] for why this is the type's range and not the run's development
+/// budget. Written as a literal because a `const` cannot convert one, and `u8::MAX as f32` is
+/// exactly the lossy cast this project denies.
+const STEPS: f32 = 255.0;
+
+/// Two fields that are either the same thing or a different thing: nought or one.
+///
+/// The discrete metric, which is what a field with no order in it has. See
+/// [`Genome::distance_from`].
+///
+/// It is written as [`UNMATCHED`] rather than as its own `1.0`, and that is deliberate: the two
+/// have to move together. The triangle inequality survives the division by the longer gene list
+/// only while the penalty for a gene facing empty space is at least half of what the worst matched
+/// pair can cost, and tying the two to one constant is what makes that true whatever the constant
+/// is changed to. See `distance_is_a_metric`.
+fn differ<T: PartialEq>(mine: T, theirs: T) -> f32 {
+    if mine == theirs { 0.0 } else { UNMATCHED }
+}
+
+/// How far apart two numbers are as a share of the range they are drawn from, and never more
+/// than the whole of it.
+///
+/// The truncation at one is what keeps this bounded when a gene holds a value outside the range
+/// `Gene::random` draws from. This module is explicit that those bounds are the bounds of the
+/// *draw* rather than invariants of the type, and `mutation.rs` holds a drifting gene inside them.
+/// A genome assembled by hand, or read back from an archive written under other bounds, is under
+/// no such obligation, and one such field must not be able to outweigh every real difference in a
+/// genome.
+fn spread(mine: f32, theirs: f32, over: f32) -> f32 {
+    ((mine - theirs).abs() / over).min(1.0)
+}
+
+/// How far apart two directions are, measured the short way round, as a share of the half-turn
+/// that is the furthest apart two directions can be.
+///
+/// `angle` and `osc_phase` are both positions on a circle of a whole turn - the first the
+/// direction a daughter is budded in, the second where a myocyte is in its cycle - and the
+/// distance between two points on a circle is not the difference of the numbers naming them. A
+/// bud at `+π` and a bud at `-π` point the same way.
+///
+/// The remainder is taken before the short way round is chosen so that a gene holding an angle
+/// outside the turn `Gene::random` draws from is still measured on the circle rather than off the
+/// end of it.
+fn round_the_circle(mine: f32, theirs: f32) -> f32 {
+    let apart = (mine - theirs).abs().rem_euclid(TAU);
+
+    apart.min(TAU - apart) / PI
 }
 
 /// FNV-1a, hand-rolled, so that the numbers it produces are the same numbers for ever.
@@ -637,7 +844,7 @@ impl Digest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::spec_defaults;
+    use crate::config::{MutationConfig, spec_defaults};
     use proptest::prelude::*;
     use rand::SeedableRng;
 
@@ -653,6 +860,19 @@ mod tests {
         raw.validate()
             .expect("this test's configuration must be one the program will accept")
             .limits
+    }
+
+    /// SPEC's mutation rates with some of them changed, through the same gate.
+    ///
+    /// `distance_is_a_metric` is the only caller and it turns every operator up at once, which
+    /// is the opposite of what `mutation.rs`'s own tests do: they isolate one operator, and this
+    /// wants a family of genomes that differ in as many ways as descent can make them differ.
+    fn mutation_with(change: impl FnOnce(&mut crate::config::RawMutation)) -> MutationConfig {
+        let mut raw = spec_defaults();
+        change(&mut raw.mutation);
+        raw.validate()
+            .expect("this test's configuration must be one the program will accept")
+            .mutation
     }
 
     /// A gene is what SPEC section 7 says it is, field for field.
@@ -1174,12 +1394,470 @@ mod tests {
         );
     }
 
+    /// ⭐ **A1.** Two genomes have a distance: SPEC section 11's normalised alignment cost.
+    ///
+    /// > *"Genetic distance between two genomes is a normalised alignment cost over their gene
+    /// > lists: matched genes contribute their scaled numeric difference, unmatched genes
+    /// > contribute a fixed penalty."*
+    ///
+    /// SPEC leaves three things open and this test is where the answers are pinned, because they
+    /// are the numbers that decide what counts as a species.
+    ///
+    /// # 1. Genes are matched **by position**, which is `divergence_from`'s rule
+    ///
+    /// See [`Genome::distance_from`] for the argument. What matters here is that there is only
+    /// one matching rule in the project: the hue's measure and the species list's measure walk
+    /// the gene lists the same way and differ only in what a mismatched pair *costs*. Two rules
+    /// would be two opinions about how far apart two lineages are, and a run where the colours
+    /// said one thing and the species panel said another.
+    ///
+    /// # 2. Every field is scaled onto nought-to-one, and the sixteen are averaged
+    ///
+    /// A discrete field - a cell kind, a state, an action - is nought or one; there is no sense
+    /// in which one cell kind is a third of the way to another. A numeric field is the gap
+    /// between the two values over the width of the range a gene may hold, so half a range is
+    /// half a unit, and a value walked past the end of its range does not keep counting.
+    ///
+    /// The two angles are **angles**: `angle` and `osc_phase` are measured round the circle, so
+    /// a bud half a turn to the left and a bud half a turn to the right are the same bud and
+    /// nought apart. A subtraction would have called them the whole width of the field apart,
+    /// which is the largest disagreement the field can express, for two genes that grow
+    /// identical bodies.
+    ///
+    /// # 3. An unmatched gene costs [`UNMATCHED`], which is a whole gene
+    ///
+    /// The most a matched pair can cost is one, so a gene with nothing opposite it costs exactly
+    /// as much as a gene that agrees about nothing. That is the honest reading - there is
+    /// nothing there to be like - and it is also what keeps the triangle inequality; see
+    /// `distance_is_a_metric`.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "every figure here is a sixteenth, a quarter or a half of one of those, which \
+                  are all exact in binary, and the point of the test is the exact scaling. A \
+                  tolerance would wave through a field weighted twice, which is precisely the \
+                  kind of mistake that would move where one species stops and the next begins"
+    )]
+    fn two_genomes_have_a_distance() {
+        let limits = limits_with(|limits| limits.max_genes = 8);
+        let gene = |n: u8| Gene {
+            trigger_state: State::new(n),
+            ..a_terminating_gene()
+        };
+
+        // One of a gene's sixteen fields, in a comparison of two genomes of one gene each.
+        let a_field = 1.0 / f32::from(u16::try_from(FIELDS_IN_A_GENE).expect("sixteen is small"));
+
+        let empty = Genome::new(Vec::new(), &limits);
+        let one = Genome::new(vec![gene(1)], &limits);
+        let four = Genome::new(vec![gene(1), gene(2), gene(3), gene(4)], &limits);
+
+        // --- nought to itself, and no division by nothing ---
+        assert_eq!(
+            four.distance_from(&four.clone()),
+            0.0,
+            "a genome is some distance from an exact copy of itself, so two clones would be \
+             filed as two species"
+        );
+        assert_eq!(
+            empty.distance_from(&empty),
+            0.0,
+            "two genomes with no genes in them are some distance apart, which is a division by \
+             nothing waiting to happen"
+        );
+
+        // --- an unmatched gene costs a whole gene ---
+        assert_eq!(
+            one.distance_from(&empty),
+            UNMATCHED,
+            "a gene with nothing opposite it did not cost the fixed penalty SPEC section 11 \
+             asks for"
+        );
+
+        // --- a discrete field is a sixteenth of a gene, whichever field it is ---
+        let kinded = Genome::new(
+            vec![Gene {
+                child_kind: CellKind::Myocyte,
+                ..gene(1)
+            }],
+            &limits,
+        );
+        assert_eq!(
+            one.distance_from(&kinded),
+            a_field,
+            "changing one of a gene's sixteen fields is not a sixteenth of that gene"
+        );
+
+        // --- ⭐ and a numeric field is *scaled*, which is the whole of what makes this finer
+        //     than the measure the hue drifts by ---
+        let numeric = |rest_length| {
+            Genome::new(
+                vec![Gene {
+                    rest_length,
+                    ..gene(1)
+                }],
+                &limits,
+            )
+        };
+        assert_eq!(
+            one.distance_from(&numeric(MAX_REST_LENGTH / 2.0)),
+            a_field / 2.0,
+            "a numeric field half way across its range did not count as half a field, so \
+             'scaled numeric difference' is being read as 'different or not'"
+        );
+        assert_eq!(
+            one.distance_from(&numeric(MAX_REST_LENGTH)),
+            a_field,
+            "a numeric field the full width of its range is a whole field's worth of \
+             difference and no more"
+        );
+        assert_eq!(
+            one.distance_from(&numeric(MAX_REST_LENGTH * 10.0)),
+            a_field,
+            "a gene holding a value past the end of the range `Gene::random` draws from - \
+             which nothing forbids - counted for more than a whole field, so one such gene \
+             could outweigh every real difference in a genome"
+        );
+
+        // --- ⭐ the two angles are angles ---
+        let angled = |angle| Genome::new(vec![Gene { angle, ..gene(1) }], &limits);
+        assert_eq!(
+            angled(PI).distance_from(&angled(-PI)),
+            0.0,
+            "a daughter budded half a turn to the left and one budded half a turn to the right \
+             are the same daughter, and this called them the width of the field apart"
+        );
+        let phased = |osc_phase| {
+            Genome::new(
+                vec![Gene {
+                    osc_phase,
+                    ..gene(1)
+                }],
+                &limits,
+            )
+        };
+        assert_eq!(
+            phased(0.0).distance_from(&phased(TAU)),
+            0.0,
+            "a myocyte at the start of its cycle and one a whole cycle on are in the same \
+             place"
+        );
+
+        // --- normalised over the longer of the two gene lists ---
+        let one_of_four = Genome::new(
+            vec![
+                gene(1),
+                Gene {
+                    child_kind: CellKind::Myocyte,
+                    ..gene(2)
+                },
+                gene(3),
+                gene(4),
+            ],
+            &limits,
+        );
+        assert_eq!(
+            four.distance_from(&one_of_four),
+            a_field / 4.0,
+            "one field of one gene of four is not a sixteenth of a quarter"
+        );
+
+        let longer = Genome::new(vec![gene(1), gene(2), gene(3), gene(4), gene(5)], &limits);
+        assert_eq!(
+            four.distance_from(&longer),
+            0.2,
+            "a fifth gene appended to four is one unmatched position of five"
+        );
+
+        // --- symmetric, exactly ---
+        assert_eq!(
+            longer.distance_from(&four),
+            four.distance_from(&longer),
+            "a genome is a different distance from another than that one is from it"
+        );
+
+        // --- ⚠️ and it agrees with the measure the hue drifts by, everywhere it can ---
+        //
+        // `divergence_from` is this same alignment with the per-gene cost replaced by "any
+        // difference at all", so the two are nought together, one together, and the finer one
+        // is never the larger. If that stopped being true, the colours on the screen and the
+        // species list would be two opinions about how far apart two lineages are.
+        assert_eq!(
+            four.divergence_from(&one_of_four),
+            0.25,
+            "the coarse measure counts a changed gene as a whole gene"
+        );
+        assert!(
+            four.distance_from(&one_of_four) < four.divergence_from(&one_of_four),
+            "a one-field change came out as far as the coarse measure puts it, so nothing was \
+             gained by scaling"
+        );
+        assert_eq!(
+            one.distance_from(&empty),
+            one.divergence_from(&empty),
+            "the two measures disagree about a genome with nothing opposite it, which is the \
+             one case they must agree about"
+        );
+    }
+
     // ---------------------------------------------------------------------------------
     // Properties
     // ---------------------------------------------------------------------------------
 
+    /// A genome and five relatives of it: what a real population looks like from the inside.
+    ///
+    /// ⚠️ **Three genomes drawn independently at random would make `distance_is_a_metric` prove
+    /// nothing.** Sixteen fields agreeing by chance is rare, so unrelated genomes all sit at very
+    /// nearly the greatest distance there is, and a triangle whose three sides are all within a
+    /// hair of one another satisfies the inequality by an enormous margin however the measure is
+    /// written. The case that could break it is *near* genomes of *different lengths*, which is
+    /// exactly what descent produces and what the clustering will actually be handed.
+    ///
+    /// So the family is a lineage: a base genome, a mutated child of it, a mutated child of that,
+    /// and so on down. Every operator SPEC section 7 has is turned up, so the family varies in
+    /// length as well as in content - which is the half of the alignment the division by the
+    /// longer gene list acts on.
+    fn a_lineage(seed: u64, limits: &LimitsConfig, rates: &MutationConfig) -> Vec<Genome> {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let base = Genome::new(
+            (0..rng.random_range(0..=6))
+                .map(|_| Gene::random(&mut rng, limits))
+                .collect(),
+            limits,
+        );
+
+        let mut family = vec![base];
+        for _ in 0..5 {
+            let parent = family
+                .last()
+                .expect("the family starts with a genome in it");
+            family.push(crate::mutation::mutate(parent, rates, limits, &mut rng));
+        }
+
+        family.extend(the_adversarial_case(limits));
+        family
+    }
+
+    /// ⭐ The genomes that decide what [`UNMATCHED`] has to be, added to every case of
+    /// `distance_is_a_metric`.
+    ///
+    /// A lineage does not produce them, and that is exactly why they are written by hand. The
+    /// triangle inequality survives the division by the longer gene list only while a gene facing
+    /// empty space costs at least half of what the worst matched pair costs, and the case that
+    /// finds the boundary needs two genomes that are **maximally** apart at every position -
+    /// which a mutated family never is, because two random genes still agree about half their
+    /// discrete fields by chance.
+    ///
+    /// The attack, written out, with `x` and `y` two genes that disagree about all sixteen fields
+    /// and `p` the penalty: `[x]` against `[y]` costs one, and going by way of `[x, x]` costs
+    /// `p/2 + (1 + p)/2`. At `p = 1` that is `1.5` and the inequality holds with room to spare; at
+    /// `p = 0.4` it is `0.9` and the measure is not a metric. **`a_gene_is_as_far_from_another_as_a_gene_can_be`
+    /// is what keeps `x` and `y` genuinely maximal**, since a field quietly left out of
+    /// `gene_distance` would make them less than a whole gene apart and this attack would stop
+    /// finding anything.
+    fn the_adversarial_case(limits: &LimitsConfig) -> Vec<Genome> {
+        let (x, y) = the_two_furthest_apart_genes();
+
+        [
+            vec![],
+            vec![x],
+            vec![y],
+            vec![x, x],
+            vec![y, y],
+            vec![x, y],
+            vec![y, x],
+            vec![x, x, x],
+            vec![y, y, y],
+        ]
+        .into_iter()
+        .map(|genes| Genome::new(genes, limits))
+        .collect()
+    }
+
+    /// Two genes with every one of their sixteen fields at opposite ends of its range.
+    ///
+    /// The two angles are half a turn apart rather than a whole one, because half a turn is as
+    /// far as two directions on a circle can be; a whole turn is no distance at all. That is the
+    /// same claim `two_genomes_have_a_distance` makes from the other side.
+    fn the_two_furthest_apart_genes() -> (Gene, Gene) {
+        let here = Gene {
+            trigger_state: State::ZERO,
+            min_step: 0,
+            max_step: 0,
+            action: Action::Divide,
+            angle: 0.0,
+            adhere: false,
+            child_state: State::ZERO,
+            child_kind: CellKind::Photocyte,
+            rest_length: 0.0,
+            stiffness: 0.0,
+            new_kind: CellKind::Photocyte,
+            new_state: State::ZERO,
+            osc_freq: 0.0,
+            osc_phase: 0.0,
+            sensor_gain: -MAX_SENSOR_GAIN,
+            sensor_target: SensorTarget::Light,
+        };
+        let far = Gene {
+            trigger_state: State::new(1),
+            min_step: u8::MAX,
+            max_step: u8::MAX,
+            action: Action::Differentiate,
+            angle: PI,
+            adhere: true,
+            child_state: State::new(1),
+            child_kind: CellKind::Devorocyte,
+            rest_length: MAX_REST_LENGTH,
+            stiffness: MAX_STIFFNESS,
+            new_kind: CellKind::Devorocyte,
+            new_state: State::new(1),
+            osc_freq: MAX_OSC_FREQ,
+            osc_phase: PI,
+            sensor_gain: MAX_SENSOR_GAIN,
+            sensor_target: SensorTarget::Detritus,
+        };
+
+        (here, far)
+    }
+
+    /// The two genes above really are a whole gene apart, which is what makes
+    /// `distance_is_a_metric`'s adversarial case adversarial.
+    ///
+    /// It is also the check that every one of a gene's sixteen fields reaches the distance at
+    /// all. A field left out of `gene_distance` would be a direction a lineage could drift in
+    /// for ever without the species clustering noticing - the same failure
+    /// `a_genomes_hash_is_stable_and_ordered_and_length_prefixed` guards against for the
+    /// fingerprint, and rather more consequential here, because this is what decides whether two
+    /// lineages are one species.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "a whole gene is exactly one, and a measure that came back at 0.9375 would be a \
+                  measure with one of the sixteen fields missing from it - which is precisely \
+                  what this exists to catch"
+    )]
+    fn a_gene_is_as_far_from_another_as_a_gene_can_be() {
+        let limits = limits_with(|limits| limits.max_genes = 4);
+        let (here, far) = the_two_furthest_apart_genes();
+
+        assert_eq!(
+            Genome::new(vec![here], &limits).distance_from(&Genome::new(vec![far], &limits)),
+            1.0,
+            "the two most different genes that can be written are less than a whole gene apart, \
+             so at least one of a gene's sixteen fields is not reaching the distance"
+        );
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
+
+        /// ⭐ **A2.** The distance is a **metric**: nought to itself and to nothing else,
+        /// symmetric, and obeying the triangle inequality.
+        ///
+        /// All three are what clustering rests on, and none of them is obvious for an alignment
+        /// cost divided by a length that changes with the pair being measured.
+        ///
+        /// # Why each one matters to what is built on top of it
+        ///
+        /// **Nought to itself, and to nothing else.** Two clones must be the same species, and two
+        /// genomes that differ must be some distance apart or a lineage could drift arbitrarily far
+        /// while every reading said it had not moved.
+        ///
+        /// **Symmetry.** `species.rs` compares each organism against a cluster's representative
+        /// and never the other way round. If the two directions could disagree, which of two
+        /// lineages was written down first would decide whether they were one species or two.
+        ///
+        /// **The triangle inequality.** This is the one that is genuinely in doubt, and it is what
+        /// makes a *cluster* mean anything: an organism within the threshold of a representative
+        /// is within twice the threshold of every other member, so a cluster is a bounded region
+        /// of genome space rather than a chain that can wander arbitrarily far from where it
+        /// started. Without it "these organisms are one species" would be a statement about the
+        /// order they were examined in.
+        ///
+        /// It holds here, and the two decisions that make it hold are worth naming because both
+        /// look like details:
+        ///
+        /// - **Every field's own measure is a metric bounded by one** - the discrete metric on the
+        ///   eight choices, the truncated ratio on the six numbers, the short way round the circle
+        ///   on the two angles - and a mean of metrics is a metric.
+        /// - **[`UNMATCHED`] is not less than half of what a matched pair can cost.** The
+        ///   normalisation is by the *longer* of the two gene lists, so the three sides of a
+        ///   triangle are divided by three different numbers, and that is where an alignment cost
+        ///   usually stops being a metric. It survives here because a genome longer than both of
+        ///   the others pays the penalty twice - once against each - and at a penalty of one that
+        ///   is always at least what the larger divisor took away.
+        ///
+        /// # The tolerance is the last bits of an `f32`, and nothing else
+        ///
+        /// The inequality is exact in the reals. What is compared here is a sum of up to 128 terms
+        /// in 32-bit arithmetic divided by a gene count, so the two sides can differ in their last
+        /// place; a triangle that missed by more than a millionth would be a different measure
+        /// rather than a rounding.
+        #[test]
+        fn distance_is_a_metric(seed: u64, sigma in 0.01f32..=1.0) {
+            let limits = limits_with(|limits| limits.max_genes = 12);
+            let rates = mutation_with(|rates| {
+                // Every operator well up, so the family varies in length as well as in content.
+                rates.point_rate = 0.3;
+                rates.point_sigma = f64::from(sigma);
+                rates.duplication_rate = 0.3;
+                rates.deletion_rate = 0.3;
+                rates.insertion_rate = 0.3;
+                rates.reorder_rate = 0.3;
+                rates.genome_duplication_rate = 0.1;
+            });
+            let family = a_lineage(seed, &limits, &rates);
+
+            // ⚠️ Compared as bit patterns rather than as numbers, because `float_cmp` is denied
+            // in this project and because nought is the one value a distance has to hit exactly.
+            let nought = 0.0_f32.to_bits();
+
+            for one in &family {
+                prop_assert_eq!(
+                    one.distance_from(one).to_bits(),
+                    nought,
+                    "a genome is not nought from itself"
+                );
+
+                for other in &family {
+                    let there = one.distance_from(other);
+                    let back = other.distance_from(one);
+
+                    prop_assert_eq!(
+                        there.to_bits(),
+                        back.to_bits(),
+                        "{} one way and {} the other, so which genome was asked decides how far \
+                         apart two lineages are",
+                        there,
+                        back
+                    );
+                    prop_assert!(
+                        (0.0..=1.0).contains(&there),
+                        "a distance of {} is outside nought-to-one, and a threshold on it would \
+                         mean nothing",
+                        there
+                    );
+                    prop_assert_eq!(
+                        there.to_bits() == nought,
+                        one == other,
+                        "two genomes are nought apart and are not the same genome, or are the \
+                         same genome and are not nought apart"
+                    );
+
+                    // ⭐ The triangle inequality, over every third member of the family.
+                    for between in &family {
+                        let through = one.distance_from(between) + between.distance_from(other);
+
+                        prop_assert!(
+                            there <= through + 1e-6,
+                            "the distance from one genome to another is {there} directly and \
+                             {through} by way of a third, so the measure is not a metric and a \
+                             cluster is not a bounded region of anything"
+                        );
+                    }
+                }
+            }
+        }
 
         /// Whatever seed it is drawn from, and whatever step budget the run has, a random
         /// gene is a usable gene.

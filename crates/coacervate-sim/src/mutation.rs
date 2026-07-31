@@ -115,23 +115,14 @@
 use crate::cell::CellKind;
 use crate::config::{LimitsConfig, MutationConfig};
 use crate::genome::{
-    Action, Gene, Genome, MAX_OSC_FREQ, MAX_REST_LENGTH, MAX_SENSOR_GAIN, MAX_STIFFNESS,
-    SensorTarget, State,
+    Action, FIELDS_IN_A_GENE, Gene, Genome, MAX_OSC_FREQ, MAX_REST_LENGTH, MAX_SENSOR_GAIN,
+    MAX_STIFFNESS, SensorTarget, State,
 };
 // `RngExt` is what supplies `random`, `random_range` and `random_bool`; `rand`'s `Rng` is
 // the narrower trait beneath it and brings none of them.
 use rand::RngExt;
 use rand::rngs::ChaCha8Rng;
 use std::f32::consts::{PI, TAU};
-
-/// How many fields a gene has, and so how many different things one point mutation might be.
-///
-/// SPEC section 7's `Gene` has sixteen, and `genome.rs`'s
-/// `a_gene_has_the_fields_spec_section_7_gives_it` is what keeps that true. A seventeenth
-/// field added there without a match arm being added below would be a field that never
-/// mutates - a part of the genome frozen for the life of the project, and nothing else in
-/// the simulation would report it.
-const FIELDS_IN_A_GENE: u32 = 16;
 
 /// Copy a genome, imperfectly. SPEC section 7's six operators, in SPEC section 7's order.
 ///
