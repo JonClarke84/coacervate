@@ -12,8 +12,8 @@
 | | |
 | --- | --- |
 | **Phase 5** | in progress |
-| **Current group** | C — the window |
-| **Suite** | green — 156 tests, 107s |
+| **Current group** | D — what makes it worth looking at |
+| **Suite** | green — 170 tests, 108s |
 
 ---
 
@@ -228,18 +228,133 @@ with substance. `D1`'s HDR target and bloom are what that is waiting for.
   body once. Nothing in the frame contradicts `docs/PHASE4.md`; it is simply the first time
   it has been possible to *see* that the world is entirely made of one shape.
 
-### Group C — the window
+### Group C — the window — **done**
 
-- [ ] **C1. `the_window_opens_and_shows_the_world`** — `winit`, resizable, well-behaved at
-  any aspect ratio, **never steals focus**.
-- [ ] **C2. `the_camera_pans_and_zooms_and_only_when_asked`** — ⚠️ CLAUDE.md's second-screen
-  constraint: *it must never move on its own*.
-- [ ] **C3. `f12_dumps_the_current_frame`** — to `runs/<id>/frames/`.
-- [ ] **C4. `the_simulation_and_the_display_run_at_their_own_speeds`** — the tick rate is
-  decoupled from the frame rate; `max_ticks_per_second` still governs the former.
-- [ ] **C5. `closing_the_window_stops_the_run_gracefully`** — Phase 4 left `Interrupt` as the
-  seam for exactly this.
-- [ ] **C6. Look at a frame from the window.**
+`winit` **0.30.13**, added to `coacervate-render` with default features off and `rwh_06` alone —
+the defaults are Wayland, X11 and Android, a dozen crates this Windows-only executable can never
+call. The window is **opt-in**: `--window`. Everything the group added is reachable from the
+headless path, which is what let the one real bug in it be found.
+
+- [x] **C1. The window opens and shows the world.** Opens at 1280 × 720, resizable, minimum
+  320 × 180, `with_active(false)`. **Verified on the machine**: the window opens on the 4070 Ti,
+  draws, and closes by itself when the run ends. The focus claim was measured rather than
+  asserted — `GetForegroundWindow` before and during: unchanged.
+- [x] **C2. `the_camera_pans_and_zooms_and_only_when_asked`**, plus
+  `panning_past_the_seam_comes_back_round`, `zooming_is_anchored_on_the_pointer`,
+  `the_camera_stays_where_there_is_a_world_to_see`,
+  `a_window_of_any_shape_shows_the_world_unstretched`, and - on the card -
+  `the_camera_can_be_dragged_across_the_seam`. Drag to pan, wheel to zoom.
+- [x] **C3. `f12_asks_for_a_frame_once_per_press`** — to `runs/<id>/frames/tick-<n>.png`,
+  through `Renderer::render_through`, which is `--dump-frame`'s own code with the window's
+  camera handed to it. **Verified end to end** by driving the real window: `tick-0000014392.png`.
+- [x] **C4. `the_simulation_and_the_display_run_at_their_own_speeds`** — `advance` takes as many
+  ticks as fit in 8 ms of each frame, none at all if `max_ticks_per_second` says the next one is
+  not due, and stops the moment the run ends. `a_run_says_whether_a_tick_is_due_and_why_it_stopped`
+  is the other half, in `run.rs`.
+- [x] **C5. `closing_the_window_stops_the_run_gracefully`** — the close button sets Phase 4's
+  `Interrupt` and nothing else. The tick in progress finishes, `Run::step` answers `Asked`, the
+  loop stops, the final report is printed. **Q17 is answered for the window** and still open for
+  `Ctrl-C`.
+- [x] **C6. Looked at.** `docs/frames/phase5-groupc.png`, from the windowed path's own camera.
+  Written up below.
+
+#### What Group C decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **⚠️ `winit` went into `coacervate-render`, and CLAUDE.md's architecture sketch says `coacervate-app`** | `window.rs` | Recorded as a deviation rather than done quietly. The window, the surface, the camera and the event mapping are all *drawing*, and a surface is built from the window handle - splitting them would put `winit` in both crates. What crosses the gap instead is a four-method trait, `Watched`: is a tick due, take one, read the world, ask it to stop. `coacervate-app` still owns the loop, the bounds and the clock, and `coacervate-sim` still has never heard of either. The one rule CLAUDE.md is emphatic about - the simulation crate must not learn that rendering exists - is untouched. |
+| **⭐⭐ A resized window keeps the piece of world on the screen, not the magnification** | `camera.rs` | The other rule was written first and is what most map views do. What it does on Windows is this: a window asked for at 1280 × 720 is created and winit reports **`Resized(2858, 1481)` and then `Resized(1280, 720)`**, a frame apart, before anybody has touched anything. Keeping the magnification meant the wide one clamped the scale and the narrow one kept it, so **every window opened showing 917 units of a 2048-unit world** and said nothing. See the mutation checks. |
+| **The window is opt-in** | `args.rs` | A run is twelve hours long by default and is started by a scheduled task as often as by a person. A window that opened by itself would cost a display's worth of drawing for nobody and would fail outright on a machine with no graphics card that is otherwise perfectly able to run the simulation. |
+| **⭐ There is no easing, and that is the design rather than a shortcut** | `camera.rs` | SPEC section 12 says the camera *"must never move on its own"*, and an eased camera by definition carries on moving after the input that started it has stopped. So a wheel notch moves the view by a tenth **and then it is still**. The smoothness comes from the step being small. `the_camera_pans_and_zooms_and_only_when_asked` draws a thousand frames from an untouched lens and compares them all. |
+| **Zooming out stops at the world's width** | `camera.rs` | `cells.wgsl` draws each cell exactly twice - itself and its copy across the seam - and that covers any view up to one world wide and no more. A view wider than the world would need a third copy, which would cost 50% more vertices on every cell in the world for a view of empty margins. Fully zoomed out is therefore `Lens::at_rest`, which is where a window opens and what `--dump-frame` draws. |
+| **The camera's left edge is *wrapped*, and the value exactly at the width is caught** | `camera.rs` | `f32::rem_euclid` of a value a hair below nought returns the modulus itself once the subtraction rounds. Group A measured exactly such a value - `x = -2.8e-16` out of `body_centre` without its wrap - and an origin of exactly 2048 in a 2048-wide world is the position this codebase is written on the assumption that nothing can hold. |
+| **The pointer only moves the camera while a button is held** | `controls.rs` | The way "user-driven only" actually gets violated is not an animation somebody added on purpose - it is a window that pans whenever the pointer crosses it, so reaching across the screen for something else drags the view. A pointer that *leaves* the window while held is treated as having let go, for the same reason: otherwise the view jumps by however far the pointer travelled while it was away. |
+| **⭐ The simulation gets 8 ms of each frame, and a watched run is therefore slower** | `window.rs` | Measured: 30,000 ticks headless is about 23 s and through a window about 45 s. Stated rather than hidden, because the alternative arrangements are worse - giving the simulation the whole frame makes the window answer a drag a quarter of a second late, and giving it a thread of its own means a mutex around the world and a snapshot copy per frame, which is Group D's problem if it ever becomes one. `--dump-frame` exists so that looking at what a run produced does not require watching it happen. |
+| **⚠️ The event loop asks `Run::due()` instead of sleeping** | `run.rs` | `Run::wait` holds a capped run back by sleeping, which is right for a headless run with nothing else to do and wrong for a windowed one: at `max_ticks_per_second = 10` the event loop would be asleep for a tenth of a second at a time and the window would not answer the mouse. `due` reports the answer `wait` would have waited for, so the pacing is still decided in exactly one place. |
+| **Present mode is `Fifo`** | `window.rs` | Two reasons and both are CLAUDE.md's *"visually calm"*. An unsynchronised present tears, and a tear is a line that flickers across the picture and pulls the eye; and without it the program would draw four hundred frames a second nobody sees, which on a second screen is a fan that never stops. |
+| **The surface is asked for `Rgba8UnormSrgb` rather than for what it prefers** | `window.rs` | One pipeline, one format, one `cells.wgsl`. The alternative is a second pipeline built for the surface's format and kept in step with the first for ever, in exchange for nothing: `F12` has to read back exactly what was presented. If a machine ever refuses the format the window says so and the headless path is untouched. |
+| **⭐ `--window --dump-frame` writes the frame the window was showing** | `main.rs`, `window.rs` | Not a picture of the whole world drawn afterwards - the view the window was left at, at the size it was left at, through the same call `F12` makes. This is the whole reason the resize bug above was found rather than shipped: it made the windowed path's own camera checkable from a session with no screen in it, and comparing that frame against the same tick dumped headlessly is what showed a quarter of the world where the whole of it should have been. |
+| **The title bar is the only interface, and it reads in millions of years** | `window.rs` | CLAUDE.md's deep time: *"tick counts are displayed as millions of years"*. `Coacervate - 30.0 Ma, 1713 alive`, written only when the words change - a title rewritten sixty times a second is a taskbar entry that flickers. Everything else a person might want on the screen is Phase 6's, and this group deliberately binds one key so that Phase 6 has all the others. |
+| **A windowed run prints the same closing report a headless one does** | `main.rs` | A window that closed leaving nothing behind but a PNG would be the one way of running this program that produced no record of what happened. |
+| **`runs/<seconds-since-1970>-<seed>/frames/`, and nothing is created until `F12` is pressed** | `main.rs` | SPEC section 13 wants a readable timestamp and turning an instant into a date is civil-calendar arithmetic or a dependency. Phase 8 owns the run directory because it is the phase that has to write a replay log into it; the number sorts correctly in the meantime, which is the one property a directory listing needs. A run nobody photographs leaves nothing behind. |
+| **⚠️ Screensaver mode is deferred, and the reason is that there is nothing to hide** | — | CLAUDE.md lists it under *Character of the thing* and the phase table puts it in Phase 10. A toggle added now would hide the window's entire interface, which is a title bar. The thing it exists to hide is Phase 6's panels. Carried below as **Q24**. |
+| **⚠️ Opening a window is not tested, and no test pretends to** | `window.rs` | `EventLoop::new` wants a display and `run_app` does not return until the window closes, so a test that opened one would either hang the suite or put a window on somebody's screen in the middle of a check run. What is tested instead is everything either side of it: the camera arithmetic, the event mapping against winit's own `WindowEvent`s, and the tick loop against a stand-in. The window itself was checked by running the program and reading what it printed. |
+| **A keyboard event cannot be built outside winit, so the key mapping is split** | `controls.rs` | `KeyEvent` carries a private platform-specific field. `gesture` handles mouse events - which *can* be built, and are, in the tests - and hands keys to `key(physical, state, repeat)`, which is fully reachable. What is left untested is one line that takes three fields out of a struct. |
+
+##### ⭐ What the mutation checks found
+
+Four, and the fourth was not a mutation at all - it was a real defect, found by the one check
+this phase exists to make possible.
+
+**`Lens::settle` was written without the wrap first, deliberately**, in the same spirit as A4's
+naive mean. `panning_past_the_seam_comes_back_round` failed on the sentence that names the
+fault: *"dragging the camera the whole width of the world did not bring it back to where it
+started, so the seam is a wall"* — **left: -1501.7, right: 546.3**. A camera at x = -1501 in a
+2048-wide world is not at a place.
+
+**The zoom was then anchored on the middle of the frame instead of the pointer.** One test
+failed, `zooming_is_anchored_on_the_pointer`: *"zooming in moved the world sideways under the
+pointer: measured 1241.1 against 1313.0"* — 72 world units, about forty pixels, of the thing
+being looked at sliding away per notch. The anchor in that test is deliberately **not** the
+middle of the frame, because a camera zooming about its own centre keeps the centre fixed and
+would have passed.
+
+**`Controls::apply` was written panning on every pointer movement**, with no button state at
+all. `moving_the_pointer_without_holding_anything_moves_nothing` failed on the first movement
+it was given: *"the pointer moving to (0, 0) with no button held moved the camera"*. Nothing
+else in the suite noticed, which is why that test is separate from the one that checks a drag
+works.
+
+**⭐⭐ And the one that was real.** The first frame ever dumped from the window was compared
+against the same tick dumped headlessly - the same seed, the same tick, the same ledger to the
+last digit - and they were different pictures. The headless frame had `founding.rs`'s eight
+colonies in a four-by-two grid; the windowed one had two of them, half as far apart again and
+twice the size. The cause was the resize rule in the decision table above, and the sequence that
+triggers it is one Windows produces every single time a window is created. It had no symptom
+anybody could have noticed from inside the program: the window drew a perfectly plausible
+picture of a quarter of a world. `a_window_of_any_shape_shows_the_world_unstretched` now feeds
+`Resized(2858, 1481)` and `Resized(1280, 720)` in that order and requires the view to come back
+to the one it opened with; under the old rule it fails with *"resizing the window changed how
+much world is on the screen: measured 1907.5 against 1271.6"*.
+
+That is what *"a UI change is not complete until a frame has been dumped and looked at"* is
+worth, stated as a number: without the dump, Group D would have been tuned against a camera that
+was silently 2.25× too close.
+
+#### ⭐ C6 — what a frame from the window looks like
+
+`docs/frames/phase5-groupc.png` — 1280 × 720, world tick 30,000, seed 42, 1,713 organisms,
+written by `--window --dump-frame` through the window's own camera at the size the window was.
+
+**It is the same world Group B looked at, and that is the finding.** Sampled on a 64 × 36 grid
+against the headless dump of the same tick, the two agree on **2,304 of 2,304 samples**. The
+eight colonies are where `founding.rs` put them, the band of empty water between the shallow row
+and the deep row is the full width of the world, the shallow colonies are several times the area
+of the deep ones, and the hue is still confetti (**Q20**). Everything in B6's write-up holds and
+none of it is repeated here.
+
+What is *new* to say about it is about the window rather than the world.
+
+- **The frame is smaller and nothing else changed.** At 1280 × 720 a world unit is 0.625 of a
+  pixel against Group B's 0.94, so a two-celled body is about eight pixels across rather than
+  twelve. Bodies are still legible as shapes, colonies still read as colonies, and the merging
+  still works — but this is close to the floor. Below about 1000 pixels across, an organism is a
+  coloured smudge, which is worth knowing before Group D tunes a bloom radius in pixels.
+- **The interiors are still flat**, exactly as B6 said, and at this size it is *less* obvious
+  rather than more, because a body is small enough to read as a dot. `D1`'s HDR target and bloom
+  are still what that is waiting for.
+- **A frame taken mid-run looks like a frame taken at the end**, which is the point. An actual
+  `F12` press into an actual window produced `runs/<id>/frames/tick-0000014392.png` — not kept,
+  because `/runs/` is ignored, which is the arrangement SPEC section 13 and `.gitignore` already
+  agreed on. It shows the same eight colonies at a quarter of the population: the four shallow
+  ones already several times the area of the four deep ones at tick 14,392, fifteen thousand
+  ticks before the frame above. The depth gradient's dominance is visible almost from the
+  beginning.
+- **Watching it, the honest report is that very little happens.** At 60 frames a second and about
+  650 ticks a second, a body crosses its own width in a few seconds and a colony changes shape
+  over minutes. That is correct for what this is - CLAUDE.md's *"you come back hours later and
+  read what happened"* - and it is also the strongest argument for `D2`'s motion trails, which
+  are the one thing in Group D that would make the *movement* legible rather than the shapes.
 
 ### Group D — what makes it worth looking at
 
@@ -272,6 +387,24 @@ with substance. `D1`'s HDR target and bloom are what that is waiting for.
 ---
 
 ## Open questions carried forward
+
+**Q23** (new, Group C) — **a watched run is about half the speed of a headless one.** The event
+loop gives the simulation 8 ms of each 16.7 ms frame and the display takes the rest, so 30,000
+ticks costs about 45 s through a window against about 23 s headless. Nothing is wrong with that
+for a program meant to be left running for twelve hours, and it is the reason `--dump-frame`
+exists. The arrangement that would remove it is a simulation thread with the world behind a lock
+and a `Scene` copied out of it once a frame - which is a copy per living cell per frame, a lock a
+tick has to take, and a second answer to *"what tick is on the screen?"*. Not worth it until
+something needs it. If Group D's motion trails make the frame rate matter more than the tick
+rate, the cheaper move is to lower the budget rather than to add a thread.
+
+**Q24** (new, Group C) — **screensaver mode was deferred and there is nothing to hide yet.**
+CLAUDE.md lists it under *Character of the thing* and the phase table puts it in Phase 10. Group
+C's entire interface is a title bar; a toggle that hid it would be a toggle for the window
+decorations, which is not what the mode is for. It belongs with Phase 6's panels, which are the
+thing it exists to take away — and Phase 6 should add it at the same time as the panels rather
+than after, because a mode that hides chrome is much easier to keep working if it exists from
+the first piece of chrome onwards.
 
 **Q20** (new, Group B) — **hue from a genome fingerprint does not drift, it jumps.** SPEC section
 12 wants *"hue from species; hue drifts as the lineage drifts genetically"*, and the frame shows
@@ -317,5 +450,7 @@ living cell per tick on every run, watched or not.
 meaning was chosen), **Q8** (trig and log are what IEEE 754 does not pin — `body_centre` is now
 the first thing in the project that depends on it, and it is a reading rather than a cause),
 **Q9**, **Q12**, **Q16** (`reseed_on_extinction` is a config key that deliberately does nothing
-yet), **Q17** (`Ctrl-C` does not stop a run gracefully — `Run::step` is now the seam a window's
-event loop will drive, so Group C is where this gets fixed).
+yet), **Q17** (**half answered**: closing the window now stops a run gracefully, through the same
+`Interrupt` Enter sets. `Ctrl-C` still kills the process where it stands, and still cannot be
+caught without `unsafe` or a new dependency. It stops mattering the moment Phase 8 writes
+anything to disk).

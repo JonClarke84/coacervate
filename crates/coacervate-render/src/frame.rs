@@ -216,24 +216,7 @@ impl Renderer {
         let device = gpu.device();
         let shader = device.create_shader_module(wgpu::include_wgsl!("cells.wgsl"));
 
-        // The offscreen target. `RENDER_ATTACHMENT` to draw into and `COPY_SRC` to read back
-        // out of, and no `TEXTURE_BINDING`: nothing samples this. Group D's bloom is the first
-        // pass that will want to.
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("coacervate frame"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: Self::FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let target = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let (texture, target) = offscreen(gpu, width, height);
 
         let view = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("coacervate view"),
@@ -332,12 +315,7 @@ impl Renderer {
         });
 
         let padded_row = padded(width);
-        let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("coacervate readback"),
-            size: u64::from(padded_row) * u64::from(height),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let readback = readback(gpu, padded_row, height);
 
         Self {
             width,
@@ -364,18 +342,52 @@ impl Renderer {
         self.padded_row
     }
 
-    /// Draw a scene and bring it back.
+    /// Draw frames of a different size from here on.
     ///
-    /// Blocks until the card has finished, which is the only sensible thing for a frame that is
-    /// about to become a file.
+    /// The pipeline is kept and only the textures are made again. That distinction is the whole
+    /// reason this exists rather than a new [`Renderer`]: Windows sends a `Resized` event for
+    /// every pixel of a window edge being dragged, and rebuilding a pipeline means compiling a
+    /// shader, so a renderer made from scratch each time would compile `cells.wgsl` a hundred
+    /// times during one drag and the window would stutter for as long as the hand was moving.
     ///
     /// # Panics
     ///
-    /// If the world holds more than four billion living cells, or if the card fails to hand the
-    /// finished frame back. Both are conditions under which nothing further can be done.
-    #[must_use]
-    pub fn render(&self, gpu: &Gpu, scene: &Scene) -> Frame {
-        let camera = Camera::showing_all_of((scene.width, scene.height), (self.width, self.height));
+    /// If the frame has no width or no height. A minimised window reports nought by nought and
+    /// `window.rs` does not draw one.
+    pub fn resize(&mut self, gpu: &Gpu, width: u32, height: u32) {
+        assert!(
+            width > 0 && height > 0,
+            "a frame cannot be {width} by {height} pixels"
+        );
+
+        let (texture, target) = offscreen(gpu, width, height);
+
+        self.width = width;
+        self.height = height;
+        self.padded_row = padded(width);
+        self.texture = texture;
+        self.target = target;
+        self.readback = readback(gpu, self.padded_row, height);
+    }
+
+    /// Draw a scene into any target, and say how many calls it took.
+    ///
+    /// ⭐ **This is the only place in the project that draws the world**, and it is deliberately
+    /// the only one. The window hands it the texture the compositor is about to show; a frame
+    /// dump hands it the offscreen texture that is about to become a PNG. CLAUDE.md's rule that
+    /// a UI change is not complete until a frame has been looked at is worth nothing if the
+    /// frame looked at came out of a second renderer that only the tests use.
+    ///
+    /// # Panics
+    ///
+    /// If the world holds more than four billion living cells.
+    pub fn draw(
+        &self,
+        gpu: &Gpu,
+        scene: &Scene,
+        camera: &Camera,
+        target: &wgpu::TextureView,
+    ) -> u32 {
         gpu.queue().write_buffer(
             &self.view,
             0,
@@ -411,7 +423,7 @@ impl Renderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("coacervate cells"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.target,
+                    view: target,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -431,6 +443,57 @@ impl Renderer {
             // the host says nothing further until the frame is done.
             pass.draw(0..VERTICES_PER_CELL, 0..drawn);
         }
+
+        gpu.queue().submit([encoder.finish()]);
+
+        1
+    }
+
+    /// Draw a scene as it would be seen from here, and bring it back.
+    ///
+    /// This is `F12`: the window hands over the camera it is currently looking through, so what
+    /// lands on disk is what was on the screen rather than a second opinion about it.
+    ///
+    /// # Panics
+    ///
+    /// If the world holds more than four billion living cells, or if the card fails to hand the
+    /// finished frame back. Both are conditions under which nothing further can be done.
+    #[must_use]
+    pub fn render_through(&self, gpu: &Gpu, scene: &Scene, camera: &Camera) -> Frame {
+        let draws = self.draw(gpu, scene, camera, &self.target);
+        let pixels = self.copy_back(gpu);
+
+        Frame {
+            width: self.width,
+            height: self.height,
+            pixels,
+            draws,
+        }
+    }
+
+    /// Draw a scene showing the whole world, and bring it back.
+    ///
+    /// Blocks until the card has finished, which is the only sensible thing for a frame that is
+    /// about to become a file.
+    ///
+    /// # Panics
+    ///
+    /// If the world holds more than four billion living cells, or if the card fails to hand the
+    /// finished frame back. Both are conditions under which nothing further can be done.
+    #[must_use]
+    pub fn render(&self, gpu: &Gpu, scene: &Scene) -> Frame {
+        let camera = Camera::showing_all_of((scene.width, scene.height), (self.width, self.height));
+
+        self.render_through(gpu, scene, &camera)
+    }
+
+    /// Bring the offscreen texture back into memory, with the row padding taken out.
+    fn copy_back(&self, gpu: &Gpu) -> Vec<u8> {
+        let mut encoder = gpu
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("coacervate readback"),
+            });
 
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
@@ -482,12 +545,7 @@ impl Renderer {
         );
         self.readback.unmap();
 
-        Frame {
-            width: self.width,
-            height: self.height,
-            pixels,
-            draws: 1,
-        }
+        pixels
     }
 
     /// Take the copy's row padding back out, leaving the image.
@@ -503,6 +561,40 @@ impl Renderer {
 
         pixels
     }
+}
+
+/// The texture a frame is drawn into when nobody is looking at it directly.
+///
+/// `RENDER_ATTACHMENT` to draw into and `COPY_SRC` to read back out of, and no
+/// `TEXTURE_BINDING`: nothing samples this. Group D's bloom is the first pass that will want to.
+fn offscreen(gpu: &Gpu, width: u32, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = gpu.device().create_texture(&wgpu::TextureDescriptor {
+        label: Some("coacervate frame"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: Renderer::FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let target = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    (texture, target)
+}
+
+/// The buffer a finished frame is copied into on its way back to memory.
+fn readback(gpu: &Gpu, padded_row: u32, height: u32) -> wgpu::Buffer {
+    gpu.device().create_buffer(&wgpu::BufferDescriptor {
+        label: Some("coacervate readback"),
+        size: u64::from(padded_row) * u64::from(height),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    })
 }
 
 /// How wide a row of `width` pixels has to be in a buffer the card will copy into.
@@ -883,6 +975,68 @@ mod tests {
             "two cells close together do not make a brighter joined region than two far apart \
              do: {joined} against {}",
             added(&apart, 100, row)
+        );
+    }
+
+    /// ⭐⭐ **C2, on the card.** A camera dragged sideways brings the seam into the middle of
+    /// the frame, and a body standing on the seam is whole there.
+    ///
+    /// `panning_past_the_seam_comes_back_round` proves the *camera* comes back round, and
+    /// `the_camera_maps_world_coordinates_to_the_frame` proves the *shader* draws the join at
+    /// the frame's two edges. Neither says anything about the two together, and the two
+    /// together are the thing a person actually does: drag east until the join is in the middle
+    /// of the window and look at what is standing on it.
+    ///
+    /// The measurement is `B4`'s, moved onto the join: two cells the same six units apart, one
+    /// on each side of `x = 0`, with the camera panned so that the join is at the middle of the
+    /// frame. If the wrap were mishandled anywhere between the camera and the vertex stage, the
+    /// pair would come apart into two cells at opposite edges of the frame and the walk between
+    /// them would fall to nothing in the middle.
+    #[test]
+    fn the_camera_can_be_dragged_across_the_seam() {
+        use crate::camera::Lens;
+
+        let Some(gpu) = shared() else {
+            return;
+        };
+
+        let renderer = Renderer::new(gpu, 200, 200);
+        let row = 100;
+
+        // A world 200 across at one unit to the pixel, dragged 100 pixels so the join sits at
+        // the middle of the frame.
+        let mut lens = Lens::at_rest((200.0, 200.0), (200, 200));
+        lens.pan(100.0, 0.0);
+        assert!(
+            (lens.camera().origin()[0] - 100.0).abs() < 0.001,
+            "the drag did not put the join at the middle of the frame: the camera is at {:?}",
+            lens.camera().origin()
+        );
+
+        // One cell three units to the left of the join and one three to the right of it.
+        let straddling = scene(200.0, vec![cell(197.5, 100.5), cell(3.5, 100.5)]);
+        let frame = renderer.render_through(gpu, &straddling, &lens.camera());
+
+        let across = along(&frame, 97, 104, row);
+        let dimmest = across.iter().copied().fold(f32::INFINITY, f32::min);
+        let brightest_across = across.iter().copied().fold(0.0_f32, f32::max);
+
+        assert!(
+            brightest_across > PEAK * 0.5,
+            "a pair of cells standing on the join is not being drawn at all with the camera \
+             looking at the join: {across:?}"
+        );
+        assert!(
+            dimmest > brightest_across * 0.75,
+            "a body standing on the seam comes apart when the camera is dragged onto the seam: \
+             the light between its two cells falls from {brightest_across} to {dimmest} - \
+             {across:?}"
+        );
+        assert!(
+            added(&frame, 0, row) < brightest_across * 0.01
+                && added(&frame, 199, row) < brightest_across * 0.01,
+            "the pair is being drawn at the edges of the frame as well as at the middle, so \
+             the camera and the shader disagree about where the join is"
         );
     }
 

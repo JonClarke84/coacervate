@@ -41,6 +41,7 @@ use census::Census;
 use coacervate_sim::config::RunConfig;
 use coacervate_sim::world::World;
 use run::{Interrupt, Run, Stop};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 /// The configuration the program ships with, built into the executable.
@@ -174,25 +175,64 @@ fn main() -> ExitCode {
             path.display()
         );
     }
-    heading();
 
     let interrupt = Interrupt::new();
     listen(&interrupt);
 
     let years = f64::from(world.config().world.years_per_tick);
     let mut run = Run::new(world, &bounds, &interrupt);
-    let why = run.go(|world| {
-        if world.ticks().is_multiple_of(REPORT_EVERY) {
-            report(world, years);
-        }
-    });
 
+    let why = if arguments.window {
+        // The window's own event loop drives `Run::step` from here on. It does not come back
+        // until the run is over - either because a bound arrived or because somebody closed the
+        // window, which asks for the same graceful stop Enter does.
+        let frames = frames_of(config.world.seed);
+        println!(
+            "F12 writes the frame on the screen to {}.\n",
+            frames.display()
+        );
+
+        match coacervate_render::window::show(&mut run, &frames, arguments.dump_frame.as_deref()) {
+            Ok(()) => run
+                .stopped()
+                .expect("a window stays open until the run it is showing is over"),
+            Err(problem) => {
+                eprintln!("{problem}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        heading();
+
+        run.go(|world| {
+            if world.ticks().is_multiple_of(REPORT_EVERY) {
+                report(world, years);
+            }
+        })
+    };
+
+    // The last line of the report is printed either way, and for the windowed run it is the
+    // only one: where the run got to, and what state it was in when it stopped. A window that
+    // closed leaving nothing behind but a frame would be the one way of running this program
+    // that produced no record of what happened.
+    if arguments.window {
+        heading();
+    }
     report(run.world(), years);
     println!("\n{}", ending(why));
 
     let Some(path) = &arguments.dump_frame else {
         return ExitCode::SUCCESS;
     };
+
+    // ⚠️ A windowed run has already drawn this file, through the view the window was left at
+    // and at the size it was left at. Drawing it again here would overwrite what was on the
+    // screen with a picture of the whole world, which is precisely the thing `--window
+    // --dump-frame` was asked for instead of.
+    if arguments.window {
+        println!("Drew {} as the window last showed it.", path.display());
+        return ExitCode::SUCCESS;
+    }
 
     // The world is drawn as it was left, whatever left it there. A run that went extinct before
     // its bound is drawn extinct: SPEC section 12's frame dump is a picture of what happened
@@ -212,6 +252,56 @@ fn main() -> ExitCode {
             eprintln!("{problem}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Where this run's frames go.
+///
+/// SPEC section 13 gives a run a directory of its own, named for when it started and what seed
+/// it was, and CLAUDE.md puts `F12`'s frames in `runs/<id>/frames/`. This is that path, and
+/// nothing at all is created here - the directory is made by the first frame written into it,
+/// so a run that nobody takes a picture of leaves nothing behind.
+///
+/// ⚠️ **The timestamp is seconds since 1970 rather than a date anybody can read**, and that is
+/// a deliberate deferral rather than a preference. Turning an instant into a year, a month and a
+/// day is civil-calendar arithmetic - leap years, and the leap-year exceptions - or a
+/// dependency, and Phase 8 owns the run directory properly because it is the phase that has to
+/// write a replay log into it. The number sorts correctly in the meantime, which is the one
+/// property the directory listing actually needs.
+fn frames_of(seed: u64) -> PathBuf {
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+
+    Path::new("runs")
+        .join(format!("{started}-{seed}"))
+        .join("frames")
+}
+
+/// What a window is allowed to do to a run.
+///
+/// The whole of the join between the two halves of Group C. `coacervate-render` owns the window
+/// and knows nothing about configurations, bounds or clocks; `run.rs` owns the loop and knows
+/// nothing about windows. Four methods is what has to cross between them, and the important
+/// thing about the list is what is *not* on it: there is no way for a window to reach the world
+/// and change it, and no way for it to take a tick without the bounds being examined first.
+///
+/// `Run::step` is still the only loop. This makes it drivable from inside somebody else's.
+impl coacervate_render::window::Watched for Run {
+    fn due(&self) -> bool {
+        Self::due(self)
+    }
+
+    fn tick(&mut self) -> bool {
+        self.step().is_none()
+    }
+
+    fn world(&self) -> &World {
+        Self::world(self)
+    }
+
+    fn ask_to_stop(&self) {
+        Self::ask_to_stop(self);
     }
 }
 

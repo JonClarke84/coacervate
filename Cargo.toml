@@ -45,6 +45,13 @@ pollster = "1.0.1"
 # pointer cast, and CLAUDE.md forbids `unsafe` outright -- so this crate proves the cast
 # is sound with a derive rather than with a comment.
 bytemuck = { version = "1.25.2", features = ["derive"] }
+# The window, and the events that arrive at it. Group C.
+#
+# Default features OFF for the same reason wgpu's are: they are all Wayland, X11 and
+# Android, which are a dozen crates this Windows-only executable can never call. `rwh_06`
+# is the one that has to be on -- it is what makes a winit window a thing wgpu 30 will
+# take a surface from, and without it `create_surface` does not compile.
+winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
 # Writing the frame out. Chosen over `image`, which pulls in a decoder for every format
 # it knows and a colour-management stack, for the one format this project ever writes.
 png = "0.18.1"

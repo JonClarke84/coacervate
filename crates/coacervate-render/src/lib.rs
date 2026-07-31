@@ -6,35 +6,49 @@
 //! compile. Everything here reads the accessors Group A added - the living cells, whose slot
 //! each belongs to, the world's size - and nothing here is called from a tick.
 //!
-//! # What Group B is, and what it deliberately is not
+//! # What is here, and what deliberately is not
 //!
-//! Group B is *one frame, on disk*: cells, merged into bodies, on plain dark water, seen whole.
+//! Group B was *one frame, on disk*: cells, merged into bodies, on plain dark water, seen whole.
 //! It is the phase's done-criterion because it is what makes every later visual decision
 //! checkable - CLAUDE.md: *"A UI change is not complete until a frame has been dumped and
-//! looked at."*
+//! looked at."* Group C adds the window over the top of it, drawing through exactly the same
+//! pipeline: a window and a frame dump differ in where the pixels go and in nothing else.
 //!
 //! The bloom, the HDR target, the motion trails, the depth gradient, the light shafts and the
 //! marine snow are all Group D and none of them are here. That is not an omission: tuning a
-//! falloff against a background that is about to be replaced would mean tuning it twice.
+//! falloff against a background that is about to be replaced would mean tuning it twice. The
+//! panels, the sliders and the charts are Phase 6's, and this crate has no `egui` in it yet.
 //!
 //! # The pieces
 //!
 //! | Module | What it is |
 //! | --- | --- |
-//! | [`gpu`] | A device, and the two different ways of not having one |
+//! | [`gpu`] | A device, a surface, and the two different ways of not having one |
 //! | [`scene`] | The five things SPEC section 12 says a cell carries |
-//! | [`camera`] | Where the world is on the frame, seam included |
+//! | [`camera`] | Where the world is on the frame, seam included, and the hands on it |
 //! | [`frame`] | The pipeline, the offscreen target, the copy back, and the PNG |
+//! | [`controls`] | What a person did, and what the camera does about it |
+//! | [`window`] | The window, the event loop, `F12`, and a clean way to stop |
 //!
 //! `cells.wgsl` is the shader, and it is where SPEC section 12's *"most of the difference
 //! between 'creature' and 'physics demo'"* actually lives.
 
 #![forbid(unsafe_code)]
+#![allow(
+    clippy::disallowed_types,
+    reason = "Group C's event loop has to decide how much of a frame's time the simulation may \
+              have, and that is a wall-clock question - see window.rs. Written as a crate-root \
+              allow and NOT as a package-level [lints] table, because a package table REPLACES \
+              the workspace one and would silently take the five cast lints with it. clippy.toml \
+              carries the same warning, and main.rs makes the same allowance for the same reason."
+)]
 
 pub mod camera;
+pub mod controls;
 pub mod frame;
 pub mod gpu;
 pub mod scene;
+pub mod window;
 
 use coacervate_sim::world::World;
 use std::path::Path;

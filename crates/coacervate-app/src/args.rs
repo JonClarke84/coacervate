@@ -67,6 +67,15 @@ pub struct Arguments {
     /// Run the world, draw one frame of it here, and stop. See `main.rs`'s `DUMP_TICKS` for
     /// how long it runs first and why.
     pub dump_frame: Option<PathBuf>,
+
+    /// Watch the run in a window instead of reading it as a column of numbers.
+    ///
+    /// ⚠️ **Off unless it is asked for**, and the reason is what the program is for. A run is
+    /// twelve hours long by default and is started by a scheduled task as often as by a person;
+    /// a window that opened by itself would be a window on a machine nobody is sitting at,
+    /// costing a display's worth of drawing for nobody, and it would fail outright on a machine
+    /// with no graphics card that is otherwise perfectly able to run the simulation.
+    pub window: bool,
 }
 
 /// Why a command line could not be understood.
@@ -150,6 +159,13 @@ Usage: coacervate [options]
                        stop. Without --ticks it runs to tick 30000, which at
                        the shipped settings is about twenty thousand ticks of
                        life after the dawn and takes around twenty seconds.
+                       With --window it is the frame the window was showing,
+                       through whatever view it had been left at.
+  --window             Watch the run in a window. Drag to pan, the wheel to
+                       zoom, F12 to write the frame on the screen out to
+                       runs/<id>/frames/. Closing the window finishes the tick
+                       in progress and stops the run. Without this the run is
+                       headless and reports itself as a column of numbers.
   --help               Show this and stop.
 
 With no options at all it runs the settings built into the program until it is
@@ -173,6 +189,10 @@ impl Arguments {
         while let Some(word) = line.next() {
             match word.as_str() {
                 "--help" => parsed.help = true,
+                // Not `once`d, unlike the four that take values. `--window --window` says the
+                // same thing twice and there is no second reading of it to be guessed at,
+                // which is the whole of why the others are refused.
+                "--window" => parsed.window = true,
                 "--config" => {
                     once(&mut parsed.config, "--config")?;
                     parsed.config = Some(PathBuf::from(value(&mut line, "--config")?));
@@ -428,8 +448,8 @@ mod tests {
             .to_string()
     }
 
-    /// ⭐ **A6.** The five flags are read, and a line with nothing on it is a complete
-    /// instruction.
+    /// ⭐ **A6, with Group C's flag added.** Every flag is read, and a line with nothing on it
+    /// is a complete instruction.
     ///
     /// The last part is the one worth stating. This program has a full configuration built into
     /// it and every flag below is a way of departing from it, so `coacervate` with nothing after
@@ -453,14 +473,32 @@ mod tests {
             "12345",
             "--dump-frame",
             "frames/one.png",
+            "--window",
         ]))
-        .expect("a line with all four options on it must be understood");
+        .expect("a line with every option on it must be understood");
 
         assert_eq!(asked.config, Some(PathBuf::from("worlds/dim.toml")));
         assert_eq!(asked.seed, Some(7));
         assert_eq!(asked.ticks, Some(12_345));
         assert_eq!(asked.dump_frame, Some(PathBuf::from("frames/one.png")));
+        assert!(asked.window);
         assert!(!asked.help);
+
+        // ⚠️ And a run is headless unless a window is asked for. A twelve-hour run started by a
+        // scheduled task on a machine nobody is sitting at must not open one, and on a machine
+        // with no graphics card at all it would not be able to.
+        assert!(
+            !Arguments::parse(line(&["--seed", "7"]))
+                .expect("a plain line is a request")
+                .window,
+            "a run opens a window without being asked to"
+        );
+        assert!(
+            Arguments::parse(line(&["--window", "--window"]))
+                .expect("saying the same thing twice is not a contradiction")
+                .window,
+            "--window given twice is refused, and there is no second reading of it to guess at"
+        );
 
         // The order they are given in is not information.
         let backwards = Arguments::parse(line(&["--seed", "7", "--config", "worlds/dim.toml"]))
@@ -747,7 +785,14 @@ mod tests {
     /// who expects an immediate PNG and gets a silence is entitled to have been told.
     #[test]
     fn help_describes_every_flag_and_only_the_flags() {
-        for flag in ["--config", "--seed", "--ticks", "--dump-frame", "--help"] {
+        for flag in [
+            "--config",
+            "--seed",
+            "--ticks",
+            "--dump-frame",
+            "--window",
+            "--help",
+        ] {
             assert!(
                 HELP.contains(flag),
                 "{flag} is an option this program takes and --help does not mention it"
@@ -759,6 +804,15 @@ mod tests {
             "--dump-frame runs the world before it draws anything, and --help does not say how \
              far - so the wait looks like a program that has hung"
         );
+
+        // The window has no menu, no panel and no legend - Phase 6 is where those arrive - so
+        // the help text is the only place its two gestures and its one key are written down.
+        for gesture in ["F12", "wheel", "Drag"] {
+            assert!(
+                HELP.contains(gesture),
+                "the window answers to {gesture} and nothing anywhere says so"
+            );
+        }
 
         // Nothing invented. Every word in the text beginning with two dashes has to be a flag
         // `parse` actually understands, or the help is describing a program that does not

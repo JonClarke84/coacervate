@@ -647,8 +647,21 @@ species.
 
 **Naming.** Binomial, generated from Latin-ish syllables. A new species inherits its genus
 from its parent species and receives a new epithet; a sufficiently large jump mints a new
-genus. Colour derives from a hash of the genome so lineages are visually distinct and
-**drift in hue as they drift genetically** — you can literally watch speciation happen.
+genus. Colour is **inherited, not computed**: an offspring takes its parent's hue and shifts it by
+a small amount, larger when the genome changed more. Lineages are therefore visually
+distinct and **drift in hue as they drift genetically** — you can literally watch speciation
+happen, because a splitting lineage comes apart on screen as a gradient rather than as a
+jump.
+
+⚠️ **An earlier draft said "colour derives from a hash of the genome", and that is
+self-contradictory.** A hash does not drift; it jumps. Any mutation at all reseeds it, so
+every child is a completely unrelated colour from its parent. It was built that way and
+looked at, and the result is confetti: adjacent bodies within one colony come out cyan,
+magenta and orange at random, and colour makes speciation **less** visible than no colour
+would. See `docs/frames/phase5-groupb.png`, which is what that looks like.
+
+The two clauses cannot both hold. "Drifts as they drift" is the one worth keeping, because
+it is the one that does the work the paragraph claims.
 
 **Events.** Append-only, written in a naturalist's register. Detect and record:
 

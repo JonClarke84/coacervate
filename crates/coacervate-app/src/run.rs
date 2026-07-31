@@ -150,6 +150,13 @@ pub struct Run {
 
     /// The flag somebody sets to stop the run.
     interrupt: Interrupt,
+
+    /// Why the run ended, once it has.
+    ///
+    /// Kept because [`Run::step`] can be called by something that is not [`Run::go`] - a
+    /// window's event loop, which cannot be handed a return value from a loop it does not own -
+    /// and the reason a run stopped is news either way. `go` reads it from the same place.
+    stopped: Option<Stop>,
 }
 
 impl Run {
@@ -172,6 +179,7 @@ impl Run {
             }),
             due: now,
             interrupt: interrupt.clone(),
+            stopped: None,
         }
     }
 
@@ -207,6 +215,7 @@ impl Run {
     /// the last thing a stopping run did was finish a tick, books checked and all.
     pub fn step(&mut self) -> Option<Stop> {
         if let Some(why) = self.over() {
+            self.stopped = Some(why);
             return Some(why);
         }
 
@@ -214,6 +223,37 @@ impl Run {
         self.world.tick();
 
         None
+    }
+
+    /// Whether a tick may be taken now, or whether the pacing is holding the run back.
+    ///
+    /// ⚠️ **Here so that a window never has to sleep inside its event loop.** [`Run::wait`]
+    /// holds a run to `max_ticks_per_second` by sleeping, which is exactly right for a headless
+    /// run with nothing else to do and exactly wrong for a windowed one: at a cap of ten ticks
+    /// a second it would freeze the window for a tenth of a second at a time, and a window that
+    /// does not answer the mouse is a window that has hung.
+    ///
+    /// So a caller that has something else to be doing asks this first and goes away and does
+    /// it. The pacing is still decided here and in one place - all this says is *whether the
+    /// next tick is due yet*, which is the same question [`Run::wait`] answers by waiting for
+    /// the answer to become yes.
+    #[must_use]
+    pub fn due(&self) -> bool {
+        self.interval.is_none_or(|_| Instant::now() >= self.due)
+    }
+
+    /// Ask this run to stop at the end of the tick it is in.
+    ///
+    /// The same request pressing Enter makes, made by whatever else has a reason to - a window
+    /// being closed is the one Group C adds. There is no way to un-ask.
+    pub fn ask_to_stop(&self) {
+        self.interrupt.ask();
+    }
+
+    /// Why the run ended, or nothing at all if it has not.
+    #[must_use]
+    pub const fn stopped(&self) -> Option<Stop> {
+        self.stopped
     }
 
     /// Tick until a bound arrives, showing `watch` the world after every tick.
@@ -906,6 +946,80 @@ mod tests {
                 "slowing the run down left {quick} in the {name} account against {held}"
             );
         }
+    }
+
+    /// ⭐ **C4, at the runner's end.** A capped run can be *asked* whether the next tick is due
+    /// instead of being made to wait for it, and it says why it stopped afterwards.
+    ///
+    /// Both of these exist for the window and neither of them changes what a run computes.
+    ///
+    /// `Run::wait` holds a capped run back by sleeping, which is right for a headless run with
+    /// nothing else to do and wrong for a windowed one - a window whose event loop is asleep
+    /// does not answer the mouse, and at a low cap it would be asleep most of the time. So
+    /// `due` lets the caller go and draw a frame instead. The pacing is still decided in one
+    /// place: this only reports the answer `wait` would have waited for.
+    ///
+    /// The second half is smaller and is the same kind of thing. `go` returns why it stopped,
+    /// and a window's event loop has no return value to give back - it is somebody else's loop -
+    /// so the reason is kept where either caller can read it.
+    #[test]
+    fn a_run_says_whether_a_tick_is_due_and_why_it_stopped() {
+        // Uncapped: always due, because there is nothing holding it back. A window watching an
+        // uncapped run therefore ticks for as much of each frame as it is given.
+        let world = a_small_living_world(|_| {});
+        let founded = world.ticks();
+        let mut quick = Run::new(
+            world,
+            &bounds(|run| run.max_ticks = Some(founded + 3)),
+            &Interrupt::new(),
+        );
+
+        assert!(quick.due(), "an uncapped run is waiting for something");
+        assert_eq!(
+            quick.stopped(),
+            None,
+            "a run that has not started has ended"
+        );
+        assert_eq!(quick.step(), None);
+        assert!(
+            quick.due(),
+            "an uncapped run is not due for its next tick immediately after taking one"
+        );
+
+        assert_eq!(quick.go(|_| {}), Stop::TicksDone);
+        assert_eq!(
+            quick.stopped(),
+            Some(Stop::TicksDone),
+            "a run that has stopped does not say why"
+        );
+
+        // Capped at ten a tick a tenth of a second apart: not due again immediately, and due
+        // again after the interval. Ten rather than fifty because the wait either way has to be
+        // comfortably longer than the sixteen milliseconds a Windows timer resolves to.
+        let world = a_small_living_world(|_| {});
+        let mut slow = Run::new(
+            world,
+            &bounds(|run| run.max_ticks_per_second = Some(10)),
+            &Interrupt::new(),
+        );
+
+        assert_eq!(slow.step(), None);
+        assert!(
+            !slow.due(),
+            "a run capped at ten ticks a second was due again the instant after it ticked, so a \
+             window watching it would sleep inside its own event loop"
+        );
+
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(
+            slow.due(),
+            "a run capped at ten ticks a second was still not due a seventh of a second later"
+        );
+
+        // And asking it to stop is the same request Enter makes.
+        slow.ask_to_stop();
+        assert_eq!(slow.step(), Some(Stop::Asked));
+        assert_eq!(slow.stopped(), Some(Stop::Asked));
     }
 
     /// ⭐ **D3.** Energy is conserved across a whole living run, with every account in motion

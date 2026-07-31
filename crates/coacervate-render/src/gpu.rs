@@ -29,8 +29,16 @@ use wgpu::{Device, Queue, RequestAdapterError, RequestDeviceError};
 ///
 /// Held together because nothing can be done with either alone, and because every call in this
 /// crate that touches the card needs both.
+///
+/// ⚠️ **The instance and the adapter are kept too, and Group C is why.** A headless dump needs
+/// neither once the device exists, but a surface is made *from* an instance and asked what it
+/// can do *of* an adapter, and both of those happen after a window exists - which is a long way
+/// after this. Dropping them would mean opening a second device to put a window on, and two
+/// devices is two copies of every buffer.
 #[derive(Debug)]
 pub struct Gpu {
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
     device: Device,
     queue: Queue,
     name: String,
@@ -115,10 +123,34 @@ impl Gpu {
         .map_err(Unavailable::Refused)?;
 
         Ok(Self {
+            instance,
+            adapter,
             device,
             queue,
             name,
         })
+    }
+
+    /// A surface on a window, to draw the world onto.
+    ///
+    /// The window is handed over rather than borrowed - `'window` is whatever the caller keeps
+    /// it in - because a surface that outlived its window would be drawing at a hole in memory,
+    /// and `wgpu` is willing to hold the window itself to make that impossible.
+    ///
+    /// # Errors
+    ///
+    /// If the window will not give out a handle, or the backend cannot make a surface on it.
+    pub fn surface_on<'window>(
+        &self,
+        window: impl Into<wgpu::SurfaceTarget<'window>>,
+    ) -> Result<wgpu::Surface<'window>, wgpu::CreateSurfaceError> {
+        self.instance.create_surface(window)
+    }
+
+    /// What a surface on this machine's adapter can be asked to do.
+    #[must_use]
+    pub fn capabilities(&self, surface: &wgpu::Surface<'_>) -> wgpu::SurfaceCapabilities {
+        surface.get_capabilities(&self.adapter)
     }
 
     /// The device, to build things with.
