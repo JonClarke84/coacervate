@@ -1531,11 +1531,13 @@ mod tests {
                 );
             }
 
+            let serial = u64::try_from(slot).expect("a slot number fits in a serial");
             self.organisms.push(Some(Organism::new(
                 genome,
                 taken,
-                u64::try_from(slot).expect("a slot number fits in a serial"),
+                serial,
                 None,
+                crate::organism::founding_marker(serial),
                 body.len(),
                 0,
             )));
@@ -1635,11 +1637,13 @@ mod tests {
             let springs = organism.springs() + 1;
             let cells = organism.cells();
             let (genome, energy) = (organism.genome().clone(), organism.energy());
+            let serial = u64::try_from(slot).expect("a slot number fits in a serial");
             self.organisms[slot] = Some(Organism::new(
                 genome,
                 energy,
-                u64::try_from(slot).expect("a slot number fits in a serial"),
+                serial,
                 None,
+                crate::organism::founding_marker(serial),
                 cells,
                 springs,
             ));

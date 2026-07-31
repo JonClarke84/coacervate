@@ -41,6 +41,11 @@ struct View {
     glow: f32,
     // How bright the very centre of one cell is, before anything is added to it.
     peak: f32,
+    // How big the frame is, in pixels. Read by `snow.wgsl` and not here.
+    frame: vec2<f32>,
+    // How far the light shafts have drifted. Read by `water.wgsl` and not here.
+    phase: f32,
+    unused: f32,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -62,15 +67,37 @@ struct Lit {
     @location(1) light: vec3<f32>,
 };
 
-// How much a cell's `energy_flow` may brighten or dim it.
+// ⭐ **D6.** How much a cell's `energy_flow` brightens or dims it, and how much more saturated
+// being well fed makes it.
 //
-// Small on purpose, and clamped at both ends. SPEC section 12 wants a well-fed organism to
-// visibly glow and CLAUDE.md wants the screen not to shout; Group D's `D6` is where the two get
-// balanced against a tone-mapped target. Until then this is enough that a feeding cell is
-// distinguishable from a starving one and not enough to pull the eye.
-const FED_REACH: f32 = 8.0;
-const FED_BRIGHTEST: f32 = 0.55;
-const FED_DIMMEST: f32 = -0.35;
+// SPEC section 12: *"saturation and brightness modulated by cell kind and `energy_flow`, so a
+// well-fed organism visibly glows."* Both halves are here, and the *glow* is the part the HDR
+// target made possible: a cell earning well is drawn at nearly twice a resting cell's brightness,
+// which carries the middle of a two-celled body past `water.wgsl`'s tone-map knee and into the
+// range the bloom pass can be seen in. It is not a brighter dot; it is a dot with a halo, which
+// is what "glows" means and what an 8-bit target could not express.
+//
+// `founding.rs` measures a photocyte on full water at about **0.05 a tick** against the 0.009 its
+// body costs, so a reach of sixteen puts a cell in untouched water near the top of the range and
+// leaves the whole of the interesting part of it - a mature world's tiles, drawn down to a
+// fraction of their ceiling - spread over the bottom two-thirds.
+//
+// ⚠️ **The top of the range is the thing to keep an eye on**, and it is chosen for CLAUDE.md
+// rather than for effect. `energy_flow` is what a cell gained on one tick, and a devorocyte that
+// bites something gains a great deal on one tick and nothing on the next; an unclamped mapping
+// would make predation a flash. Clamped just under twice, a mouthful is a body brightening
+// briefly rather than the screen shouting.
+const FED_REACH: f32 = 16.0;
+const FED_BRIGHTEST: f32 = 0.90;
+const FED_DIMMEST: f32 = -0.40;
+
+// How much more saturated a cell that is feeding hard is drawn than one that is not.
+//
+// A starving cell washes out towards the colour of the water and a feeding one is at its own
+// lineage's colour fully. This is the half of D6 that survives being looked at from across a
+// room: brightness alone reads as "there is more of it there", and colour reads as "that one is
+// doing well".
+const FED_SATURATION: f32 = 0.20;
 
 // How saturated each of SPEC section 6's six kinds is drawn, in `scene.rs`'s numbering.
 //
@@ -143,10 +170,13 @@ fn vertex(@builtin(vertex_index) vertex: u32, cell: Cell) -> Lit {
     out.local = corner;
 
     let fed = clamp(cell.energy_flow * FED_REACH, FED_DIMMEST, FED_BRIGHTEST);
+    // Nought for a cell that is losing or breaking even, and one for a cell earning as fast as
+    // this mapping goes. Only gains saturate a cell; a starving one is simply its kind's colour.
+    let well = clamp(fed / FED_BRIGHTEST, 0.0, 1.0);
     let tint = mix(
         vec3<f32>(1.0),
         hue_to_rgb(cell.hue),
-        saturation_of(cell.kind),
+        clamp(saturation_of(cell.kind) + well * FED_SATURATION, 0.0, 1.0),
     );
     out.light = tint * view.peak * (1.0 + fed);
 

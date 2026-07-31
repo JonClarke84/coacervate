@@ -163,6 +163,23 @@ fn main() -> ExitCode {
         config.run.clone()
     };
 
+    // ⭐ The device is opened **before** the run, and for two reasons that are both about a
+    // twenty-three-second wait. A machine with no graphics card now says so in the first second
+    // rather than after the whole simulation has been computed - and, the reason this had to
+    // change at all, a motion trail is a record of several moments and a run has to be *watched*
+    // for one to exist. See `coacervate_render::Dump`.
+    let mut filming = if arguments.dump_frame.is_some() && !arguments.window {
+        match coacervate_render::Dump::open() {
+            Ok(dump) => Some(dump),
+            Err(problem) => {
+                eprintln!("{problem}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
+
     let mut world = World::new(&config);
     let dawn = founding::genesis(&mut world, FOUNDERS);
     println!(
@@ -204,9 +221,26 @@ fn main() -> ExitCode {
     } else {
         heading();
 
+        // Where the closing stretch that becomes the dumped frame's motion trail begins. A run
+        // with no frame to draw never reaches it.
+        let watching_from = bounds
+            .max_ticks
+            .map_or(u64::MAX, coacervate_render::Dump::watching_from);
+
         run.go(|world| {
             if world.ticks().is_multiple_of(REPORT_EVERY) {
                 report(world, years);
+            }
+
+            // ⭐ The last hundred moments of the run, eleven ticks apart, which is what a window
+            // sees in the second or so before somebody presses F12. Without this the dumped
+            // frame would be a single instant and D2 would be the one visual feature of the
+            // renderer that could not be checked by looking at a PNG.
+            if let Some(dump) = filming.as_mut()
+                && world.ticks() >= watching_from
+                && (world.ticks() - watching_from).is_multiple_of(coacervate_render::TRAIL_STRIDE)
+            {
+                dump.watch(world);
             }
         })
     };
@@ -238,7 +272,8 @@ fn main() -> ExitCode {
     // its bound is drawn extinct: SPEC section 12's frame dump is a picture of what happened
     // rather than a picture of what was hoped for, and empty water is a perfectly good answer
     // to what a world looks like when nothing is in it.
-    match coacervate_render::dump_frame(run.world(), path) {
+    let mut dump = filming.expect("a headless run that is drawing a frame opened a device first");
+    match dump.write(run.world(), path) {
         Ok(()) => {
             println!(
                 "Drew {} at {} by {}.",

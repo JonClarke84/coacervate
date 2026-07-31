@@ -11,9 +11,9 @@
 
 | | |
 | --- | --- |
-| **Phase 5** | in progress |
-| **Current group** | D — what makes it worth looking at |
-| **Suite** | green — 170 tests, 108s |
+| **Phase 5** | **done** |
+| **Current group** | — all four groups complete |
+| **Suite** | green — 179 tests, 119s |
 
 ---
 
@@ -356,19 +356,182 @@ What is *new* to say about it is about the window rather than the world.
   read what happened"* - and it is also the strongest argument for `D2`'s motion trails, which
   are the one thing in Group D that would make the *movement* legible rather than the shapes.
 
-### Group D — what makes it worth looking at
+### Group D — what makes it worth looking at ⭐ — **done**
 
-- [ ] **D1. `bodies_render_into_an_hdr_target_and_bloom`** — separable Gaussian, composited
-  with tone mapping.
-- [ ] **D2. `an_accumulation_buffer_leaves_motion_trails`** — which make swimming legible.
-- [ ] **D3. `the_background_is_a_depth_gradient_with_light_shafts`** — bright at the surface,
-  near-black at depth.
-- [ ] **D4. `marine_snow_is_the_actual_detritus`** — not decoration. It is already in the
-  simulation.
-- [ ] **D5. `hue_comes_from_lineage_and_drifts_with_it`** — so speciation is visible as it
-  happens.
-- [ ] **D6. `a_well_fed_cell_visibly_glows`** — saturation and brightness from `energy_flow`.
-- [ ] **D7. Look at the frames, and keep looking until it is worth looking at.**
+The rest of SPEC section 12. One frame is now **five passes**: the cells into a floating-point
+buffer, the motion trail, the two halves of a separable Gaussian, and a tone-mapped composite
+with the marine snow over the top. Four shaders instead of one. `coacervate-sim` gained exactly
+one field — see `D5`, which is the item that mattered.
+
+- [x] **D1. `bodies_render_into_an_hdr_target_and_bloom`** — `Rgba16Float` throughout, a
+  thirteen-tap separable Gaussian at half resolution, composited with a knee'd tone map. Three
+  measurements: the halo exists, the centre did not move, and stacks of two, three, four and five
+  cells are four *different* pictures where an 8-bit target gives one white one.
+- [x] **D2. `an_accumulation_buffer_leaves_motion_trails`** — `max(scene, trail × 0.965)`, in one
+  texture, with no read-modify-write. Four claims, and the two that matter are that the tail
+  reaches **exactly** the water again and that a cell standing still never brightens.
+- [x] **D3. `the_background_is_a_depth_gradient_with_light_shafts`** — and the shafts are driven
+  by the **world's** clock, so a second of watching moves no pixel by more than one byte.
+- [x] **D4. `marine_snow_is_the_actual_detritus`** — one grain per grain of `World::drift`, at its
+  position, holding its energy. A world in which nothing has died has no snow in it.
+- [x] **D5. `hue_comes_from_lineage_and_drifts_with_it`** ⭐⭐ — **the item that was worth the
+  group.** `Q20` is answered; SPEC section 11 was corrected before it was built. See below.
+- [x] **D6. `a_well_fed_cell_visibly_glows`** — brightness *and* saturation from `energy_flow`,
+  and the glow is a halo rather than a brighter dot, which is what needed D1 to exist first.
+- [x] **D7. Looked at.** Four dump-look-adjust rounds. `docs/frames/phase5-final.png`.
+
+#### ⭐⭐ D5 — the hue, and how it was decided not to move a golden vector
+
+**SPEC section 11 was corrected first, then implemented.** *"Colour is inherited, not computed: an
+offspring takes its parent's hue and shifts it by a small amount, larger when the genome changed
+more."* Three parts, each doing one job:
+
+| Part | Where | What it does |
+| --- | --- | --- |
+| the parent's marker | `organism.rs`'s `marker` field | Where the child starts. This is the whole of *inherited*: a lineage is a **region** of the circle rather than a scatter over it |
+| the divergence | `Genome::divergence_from` | How far it moves. Nought for the ~83% of births that copy the genome exactly, so a lineage that is not changing does not change colour |
+| the offspring's fingerprint | `Genome::hash`, already taken | Which way. Without a well-mixed direction every lineage would walk the same way round the circle at a speed set only by its mutation rate, and two unrelated lineages that had mutated equally would arrive at the same colour |
+
+**No golden vector moved, and that was the decision rather than the luck.** The obvious way to
+write the drift is to draw a step from the parent's stream, and it would have shifted every
+mutation after it in that lineage — a run that stayed perfectly deterministic and became
+deterministically *different*, silently orphaning every figure in `docs/PHASE4.md`. So every input
+is a value that already exists at the moment of a birth: the parent's marker, the two genomes, and
+the fingerprint `Organism::new` was about to take anyway. `a_run_produces_what_it_produced_before_group_a`
+passes unaltered, and the shipped 30,000-tick run still reports **1,713 alive, mean genome
+1.70 ± 0.85** — the same figures Group B and Group C measured.
+
+⚠️ The name is deliberate. **`coacervate-sim` has no colour in it**, and the field is not called
+one: it is a *marker a lineage carries and passes on with a small error*, which is a fact about
+descent. `coacervate-render`'s `scene.rs` is the one line in the project that reads it as a place
+on the colour wheel.
+
+##### ⭐ How D5 was stated as a measurement — and it is the measurement that would have caught the confetti
+
+`a_lineage_marker_is_inherited_and_drifts_with_the_genome`, in `world.rs`. Two founders are seeded
+at opposite ends of a world, half the circle apart, and both lineages are followed for three
+thousand ticks with the ancestry **recorded as the run happens** — `Organism::parent` is a serial
+and the organism it names is long dead by the end, which is exactly why `organism.rs` keeps a
+serial there. Then two averages over the living population:
+
+| | mean distance on the circle |
+| --- | --- |
+| two organisms sharing a mother | **0.0189** |
+| two organisms descended from different founders | **0.371** |
+
+A ratio of nearly twenty. The test demands four.
+
+**And the same test was run against Group B's arrangement first**, by writing `drifted_marker` to
+ignore its parent and return the fingerprint — which is what Group B shipped. It fails, and the
+numbers are the finding: **0.102 and 0.146**. Not the 0.25 two random points on a circle average,
+because a hash *does* keep exact clones together and most births are exact clones — but barely a
+difference, and nothing a person looking at a frame could read as "these two are related". Both
+figures are written into the failure message, so the day somebody reverts this the test says what
+the old world looked like.
+
+Nothing in Group B's suite noticed, and it is worth being clear about why: every test written
+about the fingerprint was *true of it*. It was stable, it was order-sensitive, and a genome that
+changed changed it. What was never asserted is the property the whole thing exists for — that
+**relatives look alike** — and that is a claim about two organisms rather than about one.
+
+The end-to-end version is `hue_comes_from_lineage_and_drifts_with_it` in `scene.rs`, and it is the
+claim a person looking at a frame would make: **every body in the world is drawn near the colour
+of the founder it descends from.** Measured on a bred world, the furthest any body strays from its
+founder's hue is **0.087** of the circle and the average is **0.024** — a colony that reads as one
+colour with a gradient across it. The test's bar is 0.15. Under a fingerprint the hues are spread
+evenly over the whole circle, so roughly **two bodies in five** would land outside that bar.
+
+#### What Group D decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **⭐⭐ The hue is a number the *simulation* carries, and it is not called a colour** | `organism.rs` | SPEC section 12's *"hue drifts as the lineage drifts"* cannot be computed from anything a renderer can see: drift is a property of **descent**, and only the simulation knows who came from whom. So a `f32` on `Organism`, inherited and shifted, and the word "colour" does not appear in that crate. The alternative — Phase 7's species clustering, which SPEC's word "species" actually says — makes a body's colour depend on the whole population and does not exist yet. |
+| **⭐⭐ The hue drift is derived from values already drawn, and not from the parent's stream** | `reproduction.rs` | See above. One extra draw per birth is a run that is deterministic and different, and the golden vector exists to catch precisely that. Stated as a rule: **a reading may be added to a birth; a draw may not.** |
+| **A founder's marker comes from its serial, not its genome** | `organism.rs` | `founding.rs` seeds every founder of a run with the *same* genome, so a marker taken from the growth program would open every run with eight bodies of one colour and nothing to tell the eight colonies apart by afterwards. Spaced by the golden-ratio recurrence, in integer arithmetic, so any number of founders are as far apart as that number can be got. |
+| **A gene inserted at the front counts as a divergence of one** | `genome.rs` | Development takes the **first** gene whose trigger matches, so a gene put in at the front is read before everything behind it and can change what the body grows into entirely. An alignment that forgave the shift would report that nothing much happened at the one moment when a great deal might have. |
+| **⭐ The tone map is the *identity* below a knee** | `water.wgsl` | Not Reinhard, not ACES, not a filmic curve — all of which compress everywhere and would have made B4's *"two overlapping cells are exactly twice one"* approximate, forcing a fudge factor into the measurement that matters most. Below 0.75 nothing is touched; above it the curve bends smoothly (value **and slope** continuous, so there is no ring) and approaches one without reaching it. `camera.rs` holds `PEAK * 2.0 <= TONE_KNEE` in a `const` block, so tuning the peak past the point where a two-celled body compresses stops the **build**. |
+| **⭐ `PEAK` came down from a half to a third** | `camera.rs` | The consequence of the knee. At a half, `founding.rs`'s two-celled founder already summed past it. At a third a founder sits just under, and only a genuine crowd goes over — which is where the HDR target earns its keep. Measured on the shipped frame: **4 pixels in 2,073,600 reach 254 in any channel.** Nothing clips; the pale cores of the dense colonies are real brightness. |
+| **⭐ The accumulation buffer is a *maximum*, not a sum** | `post.wgsl` | `trail = scene + trail × fade` converges on `1/(1 - fade)` times whatever is standing there — twenty-eight times, at this fade — so every colony would be a white slab within two seconds. `max(scene, trail × fade)` means a cell can never make the frame brighter than itself. The mutation check below is this decision measured. |
+| **⭐ One texture, two draws, and no read-modify-write** | `post.wgsl`, `frame.rs` | The fade is a draw whose blend state is `source × 0 + destination × constant`, so what the shader returns is thrown away and the whole of the arithmetic is in the blend. That is what lets an accumulation buffer live in one texture instead of a ping-ponged pair, which would have doubled the memory and put a swap into `&mut self`. |
+| **⚠️ A camera that moved throws the trail away** | `frame.rs` | The trail is in *screen* space. A pan or a zoom moves every organism on the frame at once, and a buffer that kept its contents across one would smear the whole picture sideways for as long as the fade lasted — which is exactly CLAUDE.md's *"nothing that pulls the eye"*. Trails are of the world moving, not of the camera moving. |
+| **⭐ The dumped frame is built from a hundred moments, not one** | `lib.rs`, `main.rs` | A trail is a record of several moments and `--dump-frame` renders one, so without this D2 would have been the **one** visual feature that could never be checked by the means CLAUDE.md provides for checking visual work. A headless dump now opens its device *before* the run and watches the closing 1,100 ticks go by, eleven at a time, which is what a window sees in the second before somebody presses `F12`. It also means a machine with no graphics card says so in the first second rather than after twenty-three seconds of simulation. |
+| **⭐ The light shafts are driven by the world's tick count, not by a clock** | `scene.rs` | Three things follow and all three are wanted. The shafts **stop when the simulation stops**, so a paused world is a still picture. They move at the same rate on any machine. And a frame dumped from a given tick is the same picture every time it is dumped, which is what makes a frame comparable against one taken last week. A full turn takes 2,097,152 ticks — about fifty-four minutes of watching. |
+| **The background is computed in the composite rather than drawn first** | `water.wgsl` | So that the bloom has nothing to spread but the organisms. A background drawn into the HDR buffer would be blurred and added back to itself, which brightens the water in proportion to how much water there is. |
+| **The water is not black at depth** | `water.wgsl` | A frame of pure black has no depth in it and nothing for the deep colonies to sit against — and the sea is not black at four hundred metres either. The gradient is steeper than SPEC section 4's `light.gradient` on purpose: what is drawn is the light coming *back*, which has crossed the depth twice. |
+| **⚠️ Marine snow is drawn last, over the finished picture** | `snow.wgsl` | It must not bloom and it must not leave a trail. A halo round a grain would say it was alive; a tail behind one would draw the eye to the only thing in the frame that nothing is happening to. It is a second instanced call, and SPEC section 12's *"one instanced draw call for all cells"* is untouched by it, because it draws no cells. |
+| **A grain has a size in world units and a floor in pixels** | `snow.wgsl` | Otherwise zooming out to the whole world shrinks every grain below one pixel and the snow flickers in and out as the camera moves. |
+| **⚠️ Every measurement now subtracts a second render of the same scene with nothing in it** | `frame.rs` | Group B took one reading of the water at the frame's corner and subtracted it from everything, which worked because the water was one flat colour. It is a gradient with shafts in it now, so one reading cannot stand for all of them. Rendering the same scene twice — with the cells and without — and subtracting pixel for pixel is **exact** below the knee, so the gradient cancels, the shafts cancel, and no tolerance is needed anywhere. A fudge factor is where a real error hides. |
+| **The `View` uniform grew from 32 bytes to 48** | `camera.rs` | The frame's size in pixels, which the snow needs, and the shaft phase. The trailing pad is a named field rather than `repr(C)` tail padding, because `bytemuck::Pod` refuses to derive for a struct with padding — and that refusal is right: padding is bytes nobody wrote being sent to the card. |
+
+##### ⭐ What the mutation checks found
+
+**`drifted_marker` was written Group B's way first, deliberately** — ignoring its parent and
+returning the genome fingerprint. See the table above: **0.102 against 0.146** where the shipped
+version gives 0.0028 against 0.428.
+
+**The trail's blend operation was changed from `Max` to `Add`.** One test failed, and it failed on
+the number that names the fault: *"after 214 frames a cell that never moved is drawn at 0.990383
+against the 0.30521742 it started at, so the accumulation buffer is summing rather than taking the
+brighter of the two — and everything in the world is on its way to white."* 0.99 is white.
+
+**The bloom was composited at nothing** (`BLOOM = 0.0`). Three tests failed. The one that names it
+is D1's: *"the water eleven pixels from a cell — past the 7.7999997 units its own light reaches —
+is no brighter than empty water, so there is no bloom on this frame at all."* The other two are
+D6's *"a fed cell is a brighter dot rather than something glowing"* and the marine snow's, which
+compares a grain's halo against a cell's and needs the cell to have one.
+
+**And the trail was measured at 0.9995 — a fade that barely decays — and dumped.** Not a mutation
+so much as an experiment, and it found something the tests could not have. The frame is
+`docs/PHASE5.md`'s *"smear into mush"* exactly: individual bodies gone, every colony one
+continuous slab. **And most of that fill-in is not swimming.** Over the 3,800 ticks that buffer
+held, several hundred bodies are born and several hundred die in this world, so a long trail draws
+where a colony recently *was* rather than where anything went. That is what set the fade: trails
+are worth having for a body in open water and worth keeping **short** in a crowd. Carried below as
+**Q25**.
+
+#### ⭐⭐ D7 — what the final frame actually looks like
+
+`docs/frames/phase5-final.png` — 1920 × 1080, world tick 30,000, seed 42, 1,713 organisms. The
+same run Group B and Group C looked at, to the last digit of the ledger.
+
+**Four rounds of dump-look-adjust.** What changed between the first and the last:
+
+| Round | What the frame said | What changed |
+| --- | --- | --- |
+| 1 | The hue works — but the water is a broad grey-blue haze across the whole top of the frame and the light shafts are invisible | Surface water down a third, gradient steepened from 2.5 to 3.0, shafts up by half |
+| 2 | Diagnostic: fade at 0.9995 to see how much movement there actually is | Found the mush, and found that most of it is turnover rather than motion. Fade set from the answer |
+| 3 | Good. But is the trail doing anything at all at this scale? | Dumped the same tick with the trail switched off and compared: **18% of pixels changed, 5.7% by more than eight bytes**. It is doing something. But the trailed colonies were visibly *thicker* — the recently dead |
+| 4 | Bodies individually legible again, tails still present | Shipped |
+
+**The honest report.**
+
+- ⭐ **The colour is the difference, and it is not a small one.** Set the final frame beside
+  `phase5-groupb.png` and they are pictures of two different things. Each of the eight colonies is
+  now one colour — magenta, coral, cyan, yellow-green, and so on — **with a gradient across it**.
+  The second colony runs red at its lower edge through orange to pink at its upper; the third runs
+  deep blue at one side to cyan at the other. That is a lineage that has split, drawn as a
+  gradient, which is exactly the sentence SPEC section 11 uses. Occasional single bodies sit well
+  off their colony's colour: a lineage that has drifted a long way, and the first thing in this
+  project that looks like a candidate species.
+- **The bodies read as bodies.** Magnified five times, a two-celled organism is a soft lozenge
+  with a bright core, a slight waist and a halo about its own width. The pale, nearly colourless
+  cells inside some of them are sclerocytes. The interiors are **no longer flat** — Group B's
+  paper cut-out is gone, and the reason is measurable rather than aesthetic: nothing clips.
+- **The deep colonies are the best-looking part of the frame** and that was not predicted. Four
+  small patches of glowing cyan, orange, violet and green against water that is very nearly black,
+  with the bloom doing all of the work. The shallow row, packed and bright, is busier and less
+  striking.
+- **The light shafts are at the edge of visible**, which is what was asked for. On the full frame
+  they are a slight lean in the brightness across the top; magnified three times they are clearly
+  a set of soft diagonal beams. A second of watching moves them by less than one byte.
+- **The marine snow is right.** Faint specks through the lit water, thinning with depth, denser
+  where things have been dying. At a glance it reads as texture; looked at, it is the drift.
+- **The motion trails are the weakest item in the group, honestly.** They are present and
+  measurable, and at this zoom on this world they are a softening rather than a tail. That is not
+  a fault in the buffer; it is what the world is doing. See **Q25**.
+- **It is calm.** Nothing flashes, nothing clips, the brightest thing on the frame is a colony and
+  not the background, and the eye goes to the organisms. Four pixels of 2,073,600 are within two
+  bytes of white.
 
 ---
 
@@ -388,6 +551,37 @@ What is *new* to say about it is about the window rather than the world.
 
 ## Open questions carried forward
 
+**Q26** (new, Group D) — **Phase 6 will want to move some of these numbers, and none of them can
+be moved at run time.** Everything Group D tunes is a constant compiled into a shader or into
+`camera.rs`: the bloom's strength and radius, the trail's fade, the peak brightness, the tone
+map's knee, the water's colour and gradient, the shafts' strength. A panel with a slider on any of
+them needs those values in the `View` uniform instead — which is a straightforward change and
+should be made **once**, for all of them together, rather than one at a time as each slider is
+asked for. Two of them are load-bearing and must keep their guards wherever they end up: `PEAK`
+and `TONE_KNEE` are tied together by a `const` assertion that a two-celled body does not compress,
+and `camera.rs`'s `GLOW` is what makes SPEC section 12's silhouette happen at all.
+
+**Q25** (new, Group D) — **motion trails record turnover as much as motion, and that is what keeps
+them short.** Measured by dumping the shipped frame with the fade at 0.9995 - a buffer that holds
+the union of every position anything occupied over 3,800 ticks. It is a slab: individual bodies
+gone, each colony one continuous patch of colour. **But this world births and kills a third of its
+population inside 1,600 ticks**, so most of that fill-in is not swimming, it is the recently dead
+still being drawn. A longer trail therefore *overstates the population* rather than showing
+movement, and at 0.965 the trail is a softening around each body rather than a tail behind it.
+Two things could change the answer and neither is Group D's: a lineage that evolves myocytes and
+actually swims would leave a real tail at this fade, and a camera zoomed in covers the same
+movement in far more pixels. If Phase 6 puts the fade on a slider, this is the note that says what
+the two ends of it look like.
+
+**Q20** (Group B) — **answered.** SPEC section 11 was corrected before anything was built - colour
+is *inherited, not computed* - and the first of the two ways out that question named is what
+shipped: a value on the organism that mutates by a small step, inherited from the parent alongside
+the genome. It needed one `f32` on `Organism` and no draw from any stream, so no golden vector
+moved. The second way out - a hue derived from Phase 7's species clustering, which is what SPEC's
+word "species" literally says - is **not** foreclosed by this and would sit on top of it rather
+than replacing it: a cluster could take its name and its label colour from the mean marker of its
+members, and every body would keep the marker it inherited. See D5 above for the measurements.
+
 **Q23** (new, Group C) — **a watched run is about half the speed of a headless one.** The event
 loop gives the simulation 8 ms of each 16.7 ms frame and the display takes the rest, so 30,000
 ticks costs about 45 s through a window against about 23 s headless. Nothing is wrong with that
@@ -406,23 +600,19 @@ thing it exists to take away — and Phase 6 should add it at the same time as t
 than after, because a mode that hides chrome is much easier to keep working if it exists from
 the first piece of chrome onwards.
 
-**Q20** (new, Group B) — **hue from a genome fingerprint does not drift, it jumps.** SPEC section
-12 wants *"hue from species; hue drifts as the lineage drifts genetically"*, and the frame shows
-what a hash gives instead: neighbouring bodies inside one colony are unrelated colours, because
-any mutation at all rerolls sixteen bits. The effect is that colour currently *hides* speciation
-rather than showing it. Two ways out and both are `D5`'s: a hue carried as a **value that mutates
-by a small step**, inherited from the parent alongside the genome — which drifts by construction
-and needs a field on `Organism` — or a hue derived from Phase 7's species clustering, which does
-not exist yet and would make the colour of a body depend on the whole population. The first is
-cheap and honest; the second is what SPEC's word *"species"* actually says. Do not decide it here.
-
-**Q21** (new, Group B) — **the merging works so well that a crowd is one animal.** B4's whole
-point is that neighbouring cells fuse, and in the frame four organisms of similar hue pressed
-together are indistinguishable from one larger organism. That is correct for a *body* and wrong
-for a *population*, and there is no information in the frame that separates them. Group D's bloom
-will make it more pronounced, not less. Whether anything should — a faint rim, a slightly
-different falloff at the boundary between two organisms, or simply leaving it to Phase 7's
-inspector — is undecided. It may be that nothing should: a coral reef looks like this too.
+**Q21** (Group B, **updated by Group D**) — **the merging works so well that a crowd is one
+animal**, and the bloom did make it slightly worse, as predicted. Measured: two cells twenty units
+apart — two and a half body widths — used to have under 1% of their peaks between them and now
+have **3.5%**, because a Gaussian reaching twelve pixels reaches across that gap. It is still a
+valley by any reading and `neighbouring_cells_merge_into_one_silhouette` holds it to a sixteenth.
+What Group D adds to the question is that **colour now separates a crowd where geometry does
+not**: in the final frame the bodies inside one colony are visibly a *gradient* of related hues
+rather than one wash, so two neighbouring lineages are distinguishable even where their
+silhouettes are not. That is most of what the question was actually asking for, and it arrived
+from `D5` rather than from anything about the falloff. Whether anything further should be
+done — a faint rim, a different falloff at an organism boundary, or leaving it to Phase 7's
+inspector — is still undecided, and it may be that nothing should: a coral reef looks like this
+too.
 
 **Q22** (new, Group B) — **a test that skips because there is no graphics card says so where
 nobody looks.** Rust has no notion of a skipped test and cargo captures the output of a test that

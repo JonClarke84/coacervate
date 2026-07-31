@@ -392,7 +392,7 @@ impl<W: Watched> Watcher<'_, W> {
     /// dragged and zoomed to. CLAUDE.md asks for `F12` and `--dump-frame` both, and a second
     /// renderer behind one of them would make every frame either of them produced evidence
     /// about the other and nothing more.
-    fn dump(&self) {
+    fn dump(&mut self) {
         // The world's own tick count names the file, so a directory of them sorts into the
         // order the run took them in and two dumps of the same moment are the same file.
         let path = self
@@ -403,8 +403,8 @@ impl<W: Watched> Watcher<'_, W> {
     }
 
     /// Draw what the window is showing, and write it out.
-    fn write_frame(&self, path: &Path) {
-        let Some(open) = &self.open else {
+    fn write_frame(&mut self, path: &Path) {
+        let Some(open) = &mut self.open else {
             return;
         };
 

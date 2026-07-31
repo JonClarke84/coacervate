@@ -638,11 +638,13 @@ mod tests {
                 .as_ref()
                 .expect("the slot the body just went into holds it");
             let (energy, cells) = (organism.energy(), organism.cells());
+            let serial = u64::try_from(slot).expect("a slot number fits in a serial");
             self.organisms[slot] = Some(Organism::new(
                 Genome::new(vec![blank; genes], &self.config.limits),
                 energy,
-                u64::try_from(slot).expect("a slot number fits in a serial"),
+                serial,
                 None,
+                crate::organism::founding_marker(serial),
                 cells,
                 0,
             ));
@@ -680,11 +682,13 @@ mod tests {
                 "this scene's whole field holds {taken} and the body was asked for {energy}"
             );
 
+            let serial = u64::try_from(slot).expect("a slot number fits in a serial");
             self.organisms[slot] = Some(Organism::new(
                 Genome::new(Vec::new(), &self.config.limits),
                 taken,
-                u64::try_from(slot).expect("a slot number fits in a serial"),
+                serial,
                 None,
+                crate::organism::founding_marker(serial),
                 body.len(),
                 0,
             ));

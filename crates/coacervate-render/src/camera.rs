@@ -62,10 +62,15 @@ pub const GLOW: f32 = 2.6;
 /// would clip to white and a body would be a flat blob with no interior at all - the sum would
 /// be there and nothing would be able to show it.
 ///
-/// Group D owns brightness properly - `D1`'s HDR target and tone mapping are what make this a
-/// choice rather than a ceiling. Until then this is a plain 8-bit target and half is what
-/// leaves room for the additions to be visible.
-pub const PEAK: f32 = 0.5;
+/// ⭐ **Group D lowered this from a half to a third, and the reason is the tone map's knee.**
+/// `water.wgsl` is the identity below `KNEE` and compresses smoothly above it, so a pair of cells
+/// whose light sums to under the knee comes out of the composite at exactly twice one cell - the
+/// property `neighbouring_cells_merge_into_one_silhouette` measures off the finished PNG. At a
+/// half, `founding.rs`'s two-celled founder already summed past the knee and the measurement
+/// would have had to accept a fudge factor; at a third, a founder sits just under it and only a
+/// genuine crowd goes over. What is above the knee is where the HDR target earns its keep: four
+/// bodies pressed together are no longer four bodies clipped to white.
+pub const PEAK: f32 = 0.34;
 
 /// What the shader is told: where the world is, and how to draw light in it.
 ///
@@ -88,6 +93,25 @@ pub struct View {
 
     /// [`PEAK`], handed on.
     pub peak: f32,
+
+    /// How big the frame is, in pixels.
+    ///
+    /// `snow.wgsl` is what wants it: a grain of detritus has a size in world units and a floor in
+    /// *pixels*, so that zooming out to the whole world does not shrink the snow below one pixel
+    /// and make it flicker as the camera moves.
+    pub frame: [f32; 2],
+
+    /// How far the light shafts have drifted, as a fraction of one full turn. See
+    /// [`crate::scene::shaft_phase`].
+    pub phase: f32,
+
+    /// Nothing at all.
+    ///
+    /// A uniform buffer's contents have to be a whole number of sixteen-byte blocks, and the
+    /// eight fields above are forty-four bytes. Named rather than left to `repr(C)`'s tail
+    /// padding, because `bytemuck::Pod` will not derive for a struct with padding in it - and
+    /// that refusal is the right one: padding is bytes nobody wrote being sent to the card.
+    pub unused: f32,
 }
 
 /// How much closer one notch of the wheel brings the world.
@@ -136,15 +160,18 @@ impl Camera {
         Lens::at_rest(world, frame).camera()
     }
 
-    /// What the shader needs, for a world of this size.
+    /// What the shaders need, for a world of this size drawn on a frame of this size.
     #[must_use]
-    pub const fn view(&self, world: (f32, f32)) -> View {
+    pub const fn view(&self, world: (f32, f32), frame: (f32, f32), phase: f32) -> View {
         View {
             world: [world.0, world.1],
             origin: self.origin,
             span: self.span,
             glow: GLOW,
             peak: PEAK,
+            frame: [frame.0, frame.1],
+            phase,
+            unused: 0.0,
         }
     }
 
@@ -769,19 +796,22 @@ mod tests {
         );
 
         assert_eq!(
-            camera.view((2048.0, 1152.0)),
+            camera.view((2048.0, 1152.0), (1920.0, 1080.0), 0.25),
             View {
                 world: [2048.0, 1152.0],
                 origin: [0.0, 0.0],
                 span: [2048.0, 1152.0],
                 glow: GLOW,
                 peak: PEAK,
+                frame: [1920.0, 1080.0],
+                phase: 0.25,
+                unused: 0.0,
             }
         );
 
-        // `cells.wgsl` declares this struct too, and a uniform buffer has to be a whole
-        // number of sixteen-byte blocks.
-        assert_eq!(size_of::<View>(), 32);
+        // `cells.wgsl`, `water.wgsl` and `snow.wgsl` all declare this struct, and a uniform
+        // buffer has to be a whole number of sixteen-byte blocks.
+        assert_eq!(size_of::<View>(), 48);
     }
 
     /// ⭐ The glow reaches beyond the cell, and one cell alone does not fill the range.
@@ -803,14 +833,16 @@ mod tests {
              {founder_spring} apart, so the plainest body in the world is drawn as two beads"
         );
 
-        // In a const block, so that a peak edited past a half stops the build rather than one
-        // test. Everything the renderer draws is added to something, and there is nowhere
-        // above one for the additions to go.
+        // In a const block, so that a peak edited past the tone map's knee stops the build
+        // rather than one test. `water.wgsl` is the identity below the knee, which is what makes
+        // "two cells are twice one" true of the finished picture and not only of a buffer; two
+        // cells at a peak above half the knee sum past it and the claim becomes approximate.
         const {
             assert!(
-                PEAK > 0.0 && PEAK <= 0.5,
-                "a peak of nought or of more than a half leaves no room for two cells to add \
-                 up to something brighter, which is the whole of SPEC section 12's technique"
+                PEAK > 0.0 && PEAK * 2.0 <= crate::frame::TONE_KNEE,
+                "a peak of nought, or of more than half the tone map's knee, leaves no room for \
+                 two cells to add up to exactly twice one - which is the whole of SPEC section \
+                 12's additive technique and the thing B4 measures off the frame"
             );
         }
     }

@@ -153,12 +153,39 @@ pub struct Organism {
     /// alternative is walking up to 128 genes of sixteen fields apiece for every organism on
     /// every frame.
     ///
-    /// It is what SPEC section 12's *"hue drifts as the lineage drifts genetically"* is
-    /// computed from. Note what that asks for and what it does not: a hue from the **genome**
-    /// rather than from the lineage's founder means two lineages that converge on the same
-    /// genome look alike and one lineage that splits comes apart on screen, which is the
-    /// behaviour that makes speciation visible.
+    /// ⚠️ **It is not what a lineage is identified by from a distance**, and Group B found out
+    /// why by drawing a frame that way. A fingerprint does not drift; it jumps. Any mutation at
+    /// all - a change to one gene's angle in the fourth decimal - rerolls every bit of it, so a
+    /// parent and its child were as far apart as two strangers. See [`marker`](Organism::marker),
+    /// which is what carries a lineage's identity instead, and `docs/frames/phase5-groupb.png`,
+    /// which is what a renderer reading this one produced.
+    ///
+    /// What it *is* good for is the two things a fingerprint is right for: telling whether a
+    /// genome is still the one it came from, and being the well-mixed number that decides which
+    /// way a newborn's marker moves.
     genome_hash: u64,
+
+    /// ⭐ Where this lineage stands on a circle it walks slowly round.
+    ///
+    /// A number between nought and one, wrapping at both ends. **It is inherited rather than
+    /// computed**: an offspring takes its parent's and shifts it by a small amount, larger when
+    /// the genome changed more - see [`drifted_marker`]. A founder is given one by
+    /// [`founding_marker`] and nothing else ever puts one here.
+    ///
+    /// SPEC section 11 spells out the property this exists for and the reason the obvious
+    /// alternative fails: *"**inherited, not computed**… Lineages drift as they drift genetically
+    /// — you can literally watch speciation happen, because a splitting lineage comes apart as a
+    /// gradient rather than as a jump."*
+    ///
+    /// # ⚠️ This is a fact about descent and it is deliberately nothing else
+    ///
+    /// CLAUDE.md: *"The simulation crate must not know that rendering exists."* So it is named
+    /// for what it is - **a marker a lineage carries and passes on with a small error** - and not
+    /// for what SPEC section 11 happens to use it as. The same number would serve a lineage tree,
+    /// a species clustering, or a printed report on a machine with no screen in it. What a
+    /// renderer does with it is the renderer's business, and `coacervate-render`'s `scene.rs` is
+    /// the one file in the project that knows.
+    marker: f32,
 
     /// How far into its own sequence of random numbers this organism has got.
     ///
@@ -201,6 +228,7 @@ impl Organism {
         energy: f64,
         serial: u64,
         parent: Option<u64>,
+        marker: f32,
         cells: usize,
         springs: usize,
     ) -> Self {
@@ -211,6 +239,7 @@ impl Organism {
             age: 0,
             serial,
             parent,
+            marker,
             word_position: 0,
             cells,
             springs,
@@ -251,6 +280,12 @@ impl Organism {
     #[must_use]
     pub fn genome_hash(&self) -> u64 {
         self.genome_hash
+    }
+
+    /// Where its lineage stands on the circle it walks slowly round. See [`Organism::marker`].
+    #[must_use]
+    pub fn marker(&self) -> f32 {
+        self.marker
     }
 
     /// How many cells of its slot its body uses.
@@ -326,6 +361,112 @@ impl Organism {
     pub fn remember(&mut self, stream: &ChaCha8Rng) {
         self.word_position = stream.get_word_pos();
     }
+}
+
+/// How far round the circle a lineage moves when its whole growth program has changed.
+///
+/// ⭐ **The number that decides whether speciation can be seen**, and both directions of getting
+/// it wrong are easy to picture. Too large and a parent and its child land as far apart as two
+/// strangers, which is Group B's fingerprint arrived at by a longer route. Too small and a
+/// lineage that has been diverging for twenty thousand ticks is still exactly where it was
+/// seeded, so a population that has split into two is one point.
+///
+/// A twelfth of the circle, and it is the *most* a single birth can move - the step is this
+/// multiplied by how much of the genome actually changed and by a direction between minus one
+/// and one, so the average birth that mutates at all moves about a twentieth of the way round
+/// and the great majority of births, which copy the genome exactly, move nothing.
+///
+/// Measured against a real run rather than chosen: at SPEC section 3's shipped mutation rates
+/// about a sixth of births change the genome, so a lineage twenty thousand ticks old has taken a
+/// few dozen steps of a random walk and its descendants occupy roughly a tenth of the circle -
+/// a tight cluster with a gradient across it, well clear of the next lineage's.
+pub const MARKER_DRIFT: f32 = 0.083;
+
+/// The 64-bit golden-ratio step: 2^64 divided by φ, rounded to an odd number.
+///
+/// Multiplying a counter by this and reading the top of the product walks round the circle in
+/// steps of 0.618, which is the additive recurrence that spreads a sequence of whole numbers as
+/// evenly as anything can. [`founding_marker`] uses it so that the founders of a run are put
+/// round the circle as far from one another as they can be got, for any number of them.
+const GOLDEN_STEP: u64 = 0x9e37_79b9_7f4a_7c15;
+
+/// A place on the circle, from the top sixteen bits of a number.
+///
+/// The *top*, because both callers are handed a number whose low bits are the least mixed:
+/// FNV-1a's avalanche is weakest there, and an additive recurrence's bottom bits simply count.
+fn on_the_wheel(bits: u64) -> f32 {
+    let top = u16::try_from(bits >> 48).expect("the top sixteen bits of a u64 are a u16");
+
+    f32::from(top) / (f32::from(u16::MAX) + 1.0)
+}
+
+/// A position brought back onto a circle of circumference one.
+///
+/// ⚠️ The second line is the same guard `camera.rs`'s `wrapped` carries and it is not tidying:
+/// `f32::rem_euclid` of a value a hair below nought returns the modulus itself once the
+/// subtraction rounds, and a marker of exactly one is a place off the end of the wheel.
+fn round_the_wheel(place: f32) -> f32 {
+    let inside = place.rem_euclid(1.0);
+
+    if inside >= 1.0 { 0.0 } else { inside }
+}
+
+/// The marker a founder is seeded with.
+///
+/// From the serial rather than from the genome, and that is not a detail: `founding.rs` seeds
+/// every founder of a run with **the same genome**, so a marker taken from the growth program
+/// would put all eight of them on one point and leave nothing to tell the eight colonies they
+/// grow into apart by afterwards.
+///
+/// The golden-ratio recurrence spaces them: two founders come out half the circle apart, three a
+/// third, and any number of them are as far from one another as that number can be got. Nothing
+/// after this ever consults a serial again - descent is what moves a marker from here on.
+#[must_use]
+pub fn founding_marker(serial: u64) -> f32 {
+    on_the_wheel(serial.wrapping_mul(GOLDEN_STEP))
+}
+
+/// The marker an offspring carries: its parent's, moved a little.
+///
+/// ⭐ **SPEC section 11's sentence, and the correction it carries.** *"Colour is inherited, not
+/// computed: an offspring takes its parent's hue and shifts it by a small amount, larger when the
+/// genome changed more."* And, in as many words, why the obvious alternative is wrong: *"A hash
+/// does not drift; it jumps. Any mutation at all reseeds it, so every child is a completely
+/// unrelated colour from its parent. It was built that way and looked at, and the result is
+/// confetti."*
+///
+/// So there are three parts, and each does one job:
+///
+/// - **The parent's marker** is where the child starts. This is the whole of "inherited": a
+///   child of a child of a founder is somewhere near that founder, however far the genome has
+///   travelled in between, and a lineage is therefore a *region* of the circle rather than a
+///   scatter over it.
+/// - **The divergence** is how far it moves - [`Genome::divergence_from`], which is nought for
+///   the great majority of births, since most copies come out identical. A lineage that is not
+///   changing does not move at all.
+/// - **The offspring's fingerprint** is which way. It has to be *some* well-mixed number or every
+///   lineage in the world would walk the same way round the circle at a speed set only by how
+///   fast it was mutating, and two unrelated lineages that had mutated equally would arrive at
+///   the same place. The fingerprint of the genome the child is actually running is the one
+///   number to hand that is different for every child and costs nothing to get.
+///
+/// # ⚠️ Nothing here draws a random number, and that is the point
+///
+/// Every input is a value that already exists at the moment a birth happens: the parent's marker,
+/// the two genomes, and the fingerprint [`Organism::new`] is about to take anyway. **Drawing a
+/// step from the parent's stream would have been the obvious way to write this and it would have
+/// moved every golden vector in the project** - one extra draw per birth shifts every mutation
+/// after it in that lineage, so a run would stay perfectly deterministic and become
+/// deterministically different, and `docs/PHASE4.md`'s figures would silently stop describing the
+/// program that produced them. `a_run_produces_what_it_produced_before_group_a` is the test that
+/// exists to catch exactly that, and it passes across this change unaltered.
+#[must_use]
+pub fn drifted_marker(parent: f32, divergence: f32, offspring_hash: u64) -> f32 {
+    // Between minus one and just under one, so a lineage's marker takes a walk rather than a
+    // march: successive generations are as likely to move back as on.
+    let direction = on_the_wheel(offspring_hash).mul_add(2.0, -1.0);
+
+    round_the_wheel(divergence.mul_add(MARKER_DRIFT * direction, parent))
 }
 
 /// How many cells one organism's slot holds, whether or not its body uses them all.
@@ -723,7 +864,15 @@ mod tests {
             .validate()
             .expect("SPEC's own defaults must be a configuration the program accepts")
             .limits;
-        let mut organism = Organism::new(Genome::new(Vec::new(), &limits), 0.0, 7, None, 1, 0);
+        let mut organism = Organism::new(
+            Genome::new(Vec::new(), &limits),
+            0.0,
+            7,
+            None,
+            founding_marker(7),
+            1,
+            0,
+        );
 
         // A life, in three sittings, with the position put back after each.
         let mut lived = Vec::new();

@@ -145,7 +145,7 @@ use crate::grid::Grid;
 use crate::ledger::Ledger;
 use crate::metabolism::{Metabolism, Mortal};
 use crate::organism::{
-    Organism, cell_slot, cells_per_slot, lay_out, spring_slot, springs_per_slot,
+    Organism, cell_slot, cells_per_slot, founding_marker, lay_out, spring_slot, springs_per_slot,
 };
 use crate::physics::{Physics, Spring, cell_capacity};
 use crate::reproduction::{Fertile, Reproduction};
@@ -587,6 +587,10 @@ impl World {
             // world a body coming through it could be the child of. See `organism.rs` for why
             // that is nothing at all rather than a zero.
             None,
+            // And nothing to inherit a lineage marker from either, so it is spaced round the
+            // circle by serial - `founding.rs` seeds every founder of a run with the same
+            // genome, and a marker taken from that would give all of them the same one.
+            founding_marker(self.next_serial),
             body.cells.len(),
             body.springs.len(),
         ));
@@ -2267,6 +2271,231 @@ mod tests {
             mutated > 0,
             "not one of the {children} descendants differs from the founder genetically, so \
              the half of this test that is about drift never ran"
+        );
+    }
+
+    /// How far apart two markers are, going whichever way round the circle is shorter.
+    ///
+    /// Never more than a half, which is what two markers on opposite sides of the circle are.
+    fn apart_on_the_circle(one: f32, other: f32) -> f32 {
+        let apart = (one - other).abs();
+
+        apart.min(1.0 - apart)
+    }
+
+    /// The mean of a set of distances, or nothing at all if there were none.
+    fn mean(distances: &[f32]) -> f32 {
+        let count = f32::from(u16::try_from(distances.len()).expect("fewer than 65,536 pairs"));
+
+        distances.iter().sum::<f32>() / count
+    }
+
+    /// ⭐⭐ **D5, and it is stated as a measurement because a measurement is what would have
+    /// caught the thing that went wrong.** Two organisms of one lineage are closer on the marker
+    /// circle than two organisms of different lineages.
+    ///
+    /// # What this test is a reaction to
+    ///
+    /// Group B built colour from the genome fingerprint, dumped a frame, and looked at it. SPEC
+    /// section 11 now carries the correction in as many words: *"A hash does not drift; it jumps.
+    /// Any mutation at all reseeds it, so every child is a completely unrelated colour from its
+    /// parent. It was built that way and looked at, and the result is confetti: adjacent bodies
+    /// within one colony come out cyan, magenta and orange at random, and colour makes speciation
+    /// **less** visible than no colour would."* `docs/frames/phase5-groupb.png` is that frame.
+    ///
+    /// Nothing in the suite noticed, because every test written about the fingerprint was true of
+    /// it: it was stable, it was order-sensitive, and a genome that changed changed it. What was
+    /// never asserted is the property the whole thing exists for, which is that **relatives look
+    /// alike** - a claim about two organisms rather than about one, and that is why no test of a
+    /// single hue could have made it.
+    ///
+    /// # The three claims
+    ///
+    /// **One - siblings are close and strangers are not.** Two founders are seeded at opposite
+    /// ends of a world, both lineages are followed for three thousand ticks, and two averages are
+    /// taken: over pairs of living organisms sharing a parent, and over pairs descended from
+    /// different founders. The first has to be several times smaller than the second. **Measured
+    /// on Group B's arrangement, they come out at 0.102 and 0.146** - barely a difference, and
+    /// the only reason it is not none at all is that a hash does keep exact clones together.
+    ///
+    /// **Two - a copy that changed nothing stands exactly where its parent did.** A child whose
+    /// genome came out identical to its parent's carries its parent's marker to the last bit. At
+    /// SPEC section 3's rates the great majority of births copy the genome unchanged, so this is
+    /// what makes a whole colony sit in one small stretch of the circle.
+    ///
+    /// **Three - and one that changed did move.** Otherwise a marker that was simply inherited
+    /// unaltered for ever would pass the first two claims and carry no information at all - every
+    /// descendant of a founder would sit exactly where the founder did, and a lineage that split
+    /// into two would still be one point.
+    ///
+    /// The ancestry has to be recorded as the run happens rather than walked at the end, because
+    /// `Organism::parent` is a serial and the organism it names is long dead: a slot is handed on
+    /// and a serial is not, which is exactly why `organism.rs` keeps a serial there.
+    #[test]
+    fn a_lineage_marker_is_inherited_and_drifts_with_the_genome() {
+        // A `BTreeMap` rather than a `HashMap`, which `clippy.toml` disallows in this crate for
+        // SPEC section 2's reason: nothing whose iteration order is unspecified may touch a
+        // simulation. Nothing here iterates one - but a rule that has exceptions is a rule
+        // nobody can check.
+        use std::collections::BTreeMap;
+
+        // `a_bright_world`'s water, with the mutation turned up. At SPEC section 3's shipped
+        // rates only about a sixth of births change anything at all, so in a world this small a
+        // few thousand ticks produce a population of near-identical clones - and a fingerprint
+        // would then look *almost* inherited, for the wrong reason. Turning the rates up makes
+        // every lineage here genuinely diverge, which is the case the two arrangements differ
+        // in. Nothing about the marker depends on the rates; what depends on them is whether
+        // this test has anything to measure.
+        let mut world = World::new(&config(|raw| {
+            raw.world.seed = 42;
+            raw.world.width = 256.0;
+            raw.world.height = 144.0;
+            raw.world.grid_cols = 32;
+            raw.world.grid_rows = 18;
+            raw.light.cap = 80.0;
+            raw.light.influx = 0.4;
+            raw.limits.max_organisms = 128;
+            raw.limits.max_cells_per_organism = 4;
+            raw.mutation.point_rate = 0.30;
+            raw.mutation.duplication_rate = 0.05;
+            raw.mutation.deletion_rate = 0.05;
+        }));
+        let limits = world.config().limits.clone();
+
+        for _ in 0..300 {
+            world.tick();
+        }
+
+        // Two founders, at opposite ends of the world so that neither lineage is fed out of the
+        // other's water and both have room to grow into.
+        let mut founders = Vec::new();
+        for at in [Vec2::new(64.0, 72.0), Vec2::new(192.0, 72.0)] {
+            let slot = world
+                .seed(
+                    a_breeder(1, &limits),
+                    at,
+                    the_bar_for(&[CellKind::Photocyte.upkeep(), CellKind::Gonocyte.upkeep()]) * 0.9,
+                )
+                .expect("a bright world has room and water for two founders");
+            founders.push(
+                world.organisms()[slot]
+                    .as_ref()
+                    .expect("the organism just seeded is in its slot")
+                    .serial(),
+            );
+        }
+
+        let spacing =
+            apart_on_the_circle(founding_marker(founders[0]), founding_marker(founders[1]));
+        assert!(
+            spacing > 0.3,
+            "the two founders of this run were seeded {spacing} apart on the circle, so there is \
+             hardly anything for the two lineages below to be told apart by"
+        );
+
+        // Which founder each organism ever born descends from, recorded as the run happens.
+        let mut lineage: BTreeMap<u64, u64> = founders.iter().map(|&at| (at, at)).collect();
+        for _ in 0..3_000 {
+            world.tick();
+
+            for organism in world.organisms().iter().flatten() {
+                if lineage.contains_key(&organism.serial()) {
+                    continue;
+                }
+
+                let root = organism
+                    .parent()
+                    .and_then(|parent| lineage.get(&parent).copied());
+                if let Some(root) = root {
+                    lineage.insert(organism.serial(), root);
+                }
+            }
+        }
+
+        let living: Vec<&Organism> = world.organisms().iter().flatten().collect();
+        assert!(
+            living.len() > 20,
+            "only {} organisms are alive, so there is not enough of a population here to say \
+             anything about how the marker is spread over it",
+            living.len()
+        );
+
+        // --- one: siblings against strangers ---
+        let mut siblings = Vec::new();
+        let mut strangers = Vec::new();
+        for (at, one) in living.iter().enumerate() {
+            for other in &living[at + 1..] {
+                let apart = apart_on_the_circle(one.marker(), other.marker());
+
+                match (one.parent(), other.parent()) {
+                    (Some(mother), Some(father)) if mother == father => siblings.push(apart),
+                    _ => {}
+                }
+
+                if let (Some(&here), Some(&there)) =
+                    (lineage.get(&one.serial()), lineage.get(&other.serial()))
+                    && here != there
+                {
+                    strangers.push(apart);
+                }
+            }
+        }
+
+        assert!(
+            siblings.len() > 20 && strangers.len() > 200,
+            "this world produced {} pairs of siblings and {} pairs of strangers, which is not \
+             enough of either to average",
+            siblings.len(),
+            strangers.len()
+        );
+
+        let (close, far) = (mean(&siblings), mean(&strangers));
+        assert!(
+            close * 4.0 < far,
+            "two organisms with the same mother are {close} apart on the circle on average and \
+             two from different founders are {far} apart, which is barely a difference: the \
+             marker is carrying almost nothing about descent, and anything reading it would show \
+             two lineages as one. Measured on Group B's arrangement - a marker taken from the \
+             genome fingerprint - those two come out at 0.102 and 0.146, because a hash jumps \
+             the moment anything mutates and the only relatives it keeps together are the ones \
+             that are still exact clones. docs/frames/phase5-groupb.png is what that looked like"
+        );
+
+        // --- two and three: a copy that changed nothing, and one that did ---
+        let by_serial: BTreeMap<u64, &Organism> =
+            living.iter().map(|&who| (who.serial(), who)).collect();
+        let (mut unchanged, mut moved) = (0, 0);
+        for child in &living {
+            let Some(mother) = child.parent().and_then(|parent| by_serial.get(&parent)) else {
+                continue;
+            };
+
+            if child.genome() == mother.genome() {
+                unchanged += 1;
+                assert!(
+                    child.marker().to_bits() == mother.marker().to_bits(),
+                    "serial {} copied its mother's genome exactly and came out at {} on the \
+                     circle against her {}, so a lineage that is not changing is drifting anyway",
+                    child.serial(),
+                    child.marker(),
+                    mother.marker()
+                );
+            } else if child.marker().to_bits() != mother.marker().to_bits() {
+                moved += 1;
+            }
+        }
+
+        assert!(
+            unchanged > 0,
+            "not one living organism here is running its own mother's genome unaltered, so the \
+             claim that an unchanged copy stands exactly where its mother did was never tested"
+        );
+        assert!(
+            moved > 0,
+            "{unchanged} children carry their mother's genome and not one child whose genome \
+             differs from its mother's has moved on the circle, so the marker is inherited and \
+             never drifts - every descendant of a founder would sit exactly where the founder \
+             does for ever, and a lineage splitting would still be one point"
         );
     }
 

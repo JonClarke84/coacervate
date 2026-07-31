@@ -413,21 +413,33 @@ impl Genome {
 
     /// A fingerprint of this growth program: the same number for the same genes, for ever.
     ///
-    /// SPEC section 12 wants an organism's hue to come from its lineage and to **drift as the
-    /// lineage drifts genetically**, so that speciation is something a person watching can see
-    /// happening rather than something a panel reports afterwards. Two genomes that differ
-    /// anywhere have to come out as two numbers, and two genomes that are the same have to come
-    /// out as one - and, crucially, they have to come out as the *same* one next year.
+    /// Two genomes that differ anywhere have to come out as two numbers, two genomes that are the
+    /// same have to come out as one, and - crucially - they have to come out as the *same* one
+    /// next year.
+    ///
+    /// # ⚠️ What this is not
+    ///
+    /// **It is not what identifies a lineage.** Group B built SPEC section 12's per-lineage
+    /// identity out of this, drew a frame, and looked at it; SPEC section 11 now records the
+    /// result in as many words: *"A hash does not drift; it jumps. Any mutation at all reseeds
+    /// it, so every child is completely unrelated to its parent… the result is confetti."* What
+    /// identifies a lineage is `organism.rs`'s `marker`, which is **inherited** and shifted by a
+    /// small amount rather than computed.
+    ///
+    /// What this *is* for is telling whether a genome is still the one it came from - and, at a
+    /// birth, being the well-mixed number that decides **which way** round the circle the
+    /// offspring's marker moves. Both want exactly the property a hash has and a marker must not:
+    /// that any difference at all shows up.
     ///
     /// # ⚠️ Why this is written out rather than borrowed from `std`
     ///
     /// Because the standard library's `DefaultHasher` says in its own documentation that its
-    /// algorithm is not specified and may change between Rust releases. A hue computed from it
-    /// would quietly shift the colour of every lineage in the project the next time `rustup
-    /// update` was run, and every frame dumped, every screenshot kept and - once Phase 8's
-    /// replay log exists - every archived run would stop matching the world it came from, with
-    /// nothing anywhere to say why. `grid.rs` writes out its own mixer for the same reason: a
-    /// number that has to mean one thing for ever is one this project writes down.
+    /// algorithm is not specified and may change between Rust releases. The direction every
+    /// lineage in a run drifted would then come out differently the next time `rustup update` was
+    /// run, and every frame dumped, every screenshot kept and - once Phase 8's replay log
+    /// exists - every archived run would stop matching the world it came from, with nothing
+    /// anywhere to say why. `grid.rs` writes out its own mixer for the same reason: a number that
+    /// has to mean one thing for ever is one this project writes down.
     ///
     /// This is FNV-1a, which is short enough to read, fast enough not to matter, and specified
     /// by two constants that are in the source below. The value it produces for a fixed genome
@@ -480,6 +492,57 @@ impl Genome {
         }
 
         digest.finish()
+    }
+
+    /// How much of this genome is not the other one, between nothing at all and all of it.
+    ///
+    /// ⭐ **This is what makes an offspring's lineage marker move by a *small* amount rather
+    /// than by a fixed one.** SPEC section 11: *"an offspring takes its parent's hue and shifts
+    /// it by a small amount, **larger when the genome changed more**"*. Something has to say how
+    /// much more, and this is that number: the share of the longer genome's gene positions at
+    /// which the two disagree.
+    ///
+    /// Nought means the copy came out identical - which is what most births produce, since SPEC
+    /// section 3's operators fire on well under a fifth of them - and a lineage that is not
+    /// changing therefore does not move either. One means nothing survived in place.
+    ///
+    /// # Position by position, and an insertion at the front counts as everything
+    ///
+    /// A gene is compared with the gene at the same index, and genes past the end of the shorter
+    /// genome all count as changed. So a gene inserted at the front comes out as a divergence of
+    /// one, because every gene after it has moved.
+    ///
+    /// That looks harsh for one operator and it is the honest answer for this genome. SPEC
+    /// section 7's development takes the **first** gene whose trigger matches, so a gene put in
+    /// at the front is read before everything behind it and can change what the body grows into
+    /// entirely. An alignment that quietly forgave the shift would be reporting that nothing much
+    /// happened at the one moment when a great deal might have.
+    ///
+    /// SPEC section 11 describes a finer measure for Phase 7's clustering - matched genes
+    /// contributing their *scaled numeric difference* rather than a whole unit - and this is
+    /// deliberately not that. A marker that drifts is a rough record of how far a lineage has
+    /// travelled; it does not have to tell a small point mutation from a large one, only to move
+    /// further when more of the program is different.
+    #[must_use]
+    pub fn divergence_from(&self, other: &Self) -> f32 {
+        let longer = self.genes.len().max(other.genes.len());
+        if longer == 0 {
+            return 0.0;
+        }
+
+        let shared = self.genes.len().min(other.genes.len());
+        let changed = (0..shared)
+            .filter(|&at| self.genes[at] != other.genes[at])
+            .count()
+            + (longer - shared);
+
+        // Both are gene counts, which `Genome::new` caps at `limits.max_genes` - 128 in SPEC
+        // section 3's defaults and never more than a `u16` could hold, so both conversions are
+        // exact and the division is a single rounding.
+        let changed = f32::from(u16::try_from(changed).expect("a genome is capped at 128 genes"));
+        let longer = f32::from(u16::try_from(longer).expect("a genome is capped at 128 genes"));
+
+        changed / longer
     }
 }
 
@@ -1027,6 +1090,87 @@ mod tests {
             "the fingerprint of a fixed pair of genes has moved, so every lineage in the \
              project has changed colour and no frame dumped before today matches the world \
              it was taken from"
+        );
+    }
+
+    /// ⭐ **D5's other half.** How much of one genome is not another one, as a fraction.
+    ///
+    /// The fingerprint above answers *whether* a genome changed and can say nothing about how
+    /// much - that is the whole of what makes it the wrong thing to identify a lineage by. SPEC
+    /// section 11 asks for an offspring's marker to shift *"by a small amount, larger when the
+    /// genome changed more"*, so something has to be able to say **more**, and this is it.
+    ///
+    /// The last claim is the one worth writing down: a gene inserted at the front comes out as a
+    /// divergence of one, because every gene behind it has moved and SPEC section 7's
+    /// development reads the first gene that matches. It is not an oversight in an alignment; it
+    /// is what shifting the whole reading frame of a growth program actually costs.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "every figure here is a small whole number of genes divided by another, which \
+                  is exact in binary at these sizes - a quarter, a fifth, one and nought - and a \
+                  tolerance would wave through a divergence measure that counted the wrong genes"
+    )]
+    fn a_genome_can_say_how_much_of_another_one_it_is_not() {
+        let limits = limits_with(|limits| limits.max_genes = 8);
+        let gene = |n: u8| Gene {
+            trigger_state: State::new(n),
+            ..a_terminating_gene()
+        };
+
+        let four = Genome::new(vec![gene(1), gene(2), gene(3), gene(4)], &limits);
+
+        // Nothing changed. This is what most births produce, and it is what keeps a whole
+        // colony's markers in one small stretch of the circle.
+        assert_eq!(
+            four.divergence_from(&four.clone()),
+            0.0,
+            "a genome differs from an exact copy of itself"
+        );
+        assert_eq!(
+            Genome::new(Vec::new(), &limits).divergence_from(&Genome::new(Vec::new(), &limits)),
+            0.0,
+            "two genomes with no genes in them differ, which is a division by nothing waiting \
+             to happen"
+        );
+
+        // One gene of four, changed in place.
+        let one_of_four = Genome::new(vec![gene(1), gene(9), gene(3), gene(4)], &limits);
+        assert_eq!(
+            four.divergence_from(&one_of_four),
+            0.25,
+            "a point mutation on one gene of four is not a quarter of the genome"
+        );
+
+        // The same mutation on a genome of one is the whole of it, which is the property that
+        // makes an elaborate lineage's marker steadier than a plain one's.
+        let single = Genome::new(vec![gene(1)], &limits);
+        assert_eq!(
+            single.divergence_from(&Genome::new(vec![gene(9)], &limits)),
+            1.0
+        );
+
+        // A gene added at the end is one position of five.
+        let longer = Genome::new(vec![gene(1), gene(2), gene(3), gene(4), gene(5)], &limits);
+        assert_eq!(
+            four.divergence_from(&longer),
+            0.2,
+            "appending a fifth gene to four is not one position of five"
+        );
+        assert_eq!(
+            longer.divergence_from(&four),
+            four.divergence_from(&longer),
+            "a genome is a different distance from another than that one is from it"
+        );
+
+        // ⚠️ And one inserted at the *front* moves everything behind it.
+        let shifted = Genome::new(vec![gene(9), gene(1), gene(2), gene(3), gene(4)], &limits);
+        assert_eq!(
+            four.divergence_from(&shifted),
+            1.0,
+            "a gene inserted at the front of a genome left most of it reading as unchanged, \
+             which is a claim that the growth program is mostly the same one - and development \
+             takes the first gene that matches, so it may not be"
         );
     }
 

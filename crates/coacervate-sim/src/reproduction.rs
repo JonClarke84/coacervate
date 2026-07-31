@@ -97,7 +97,7 @@ use crate::development::develop;
 use crate::ledger::Ledger;
 use crate::metabolism::construction_energy;
 use crate::mutation::mutate;
-use crate::organism::{Organism, cell_slot, lay_out};
+use crate::organism::{Organism, cell_slot, drifted_marker, lay_out};
 use crate::physics::Spring;
 use crate::rng::WorldRng;
 use rand::RngExt;
@@ -242,14 +242,24 @@ impl Reproduction {
 
             // Both draws come out of the parent's own sequence, which is what makes a lineage
             // replay identically whatever else is happening in the world.
-            // Read before the parent's slot is borrowed again below. SPEC section 12 wants hue
-            // from lineage, and a lineage is this number recorded on the child.
+            // Read before the parent's slot is borrowed again below. A lineage is this number
+            // recorded on the child, and the marker below is what walks along it.
             let lineage = parent.serial();
             let mut stream = parent.stream(rng);
             let genome = mutate(parent.genome(), &self.mutation, &self.limits, &mut stream);
             let grown = develop(&genome, &self.limits);
             let at = beside(gonocyte, grown.cells[0].kind, &mut stream);
             let inheritance = self.share * parent.energy();
+
+            // ⭐ The child's lineage marker: its parent's, moved a little. Every input already
+            // exists - the parent's marker, the two genomes, and the fingerprint `Organism::new`
+            // is about to take - so a birth still draws exactly the two random numbers it drew
+            // before this existed. See `organism.rs`.
+            let marker = drifted_marker(
+                parent.marker(),
+                parent.genome().divergence_from(&genome),
+                genome.hash(),
+            );
 
             lay_out(nest, &grown, at, &self.world, &self.limits, cells, springs);
 
@@ -259,6 +269,7 @@ impl Reproduction {
                 inheritance,
                 *next_serial,
                 Some(lineage),
+                marker,
                 grown.cells.len(),
                 grown.springs.len(),
             ));
