@@ -32,6 +32,13 @@
 )]
 
 mod args;
+// ⭐⭐ **Phase 7's Group L.** The competition assay: what a configuration is worth, measured in
+// forty minutes instead of a day. It is `#[cfg(test)]` because it is an instrument a person runs
+// deliberately - `cargo test --release -- --ignored --nocapture assay` - rather than something a
+// run does, and because everything in it is the public API of `coacervate-sim`, so it belongs
+// beside the founding it borrows rather than inside the simulation it must not disturb.
+#[cfg(test)]
+mod assay;
 mod founding;
 mod run;
 
@@ -1000,6 +1007,79 @@ mod tests {
             "the dense profile changes something besides how much water there is and how bright \
              it is, so a run of it is an experiment with more than one variable in it"
         );
+    }
+
+    /// ⭐⭐ **Phase 7's Group L.** The shipped documents carry a season, both keys are required,
+    /// and the season **ships inert**.
+    ///
+    /// Three claims, and the third is the one that took the discipline.
+    ///
+    /// **The keys are required.** Neither has a `serde(default)`, which is this file's own rule
+    /// applied to the newest setting: a configuration that leaves something out is a
+    /// configuration whose author did not decide that value. A season that silently defaulted to
+    /// absent would also be a run whose replay log did not describe it, and SPEC section 13 wants
+    /// a recording to carry the settings that produced it.
+    ///
+    /// **`config/seasonal.toml` is `config/default.toml` with one number changed.** Written as an
+    /// equality between the two documents rather than as a list, so a profile that quietly also
+    /// moved the mutation rates would be an experiment with two variables in it and no way to
+    /// tell which had done the work — the same claim `the_dense_profile_is_the_shipped_world…`
+    /// makes about its own.
+    ///
+    /// **And the shipped default is nought.** Group H shipped a sevenfold change to every muscle
+    /// in the world and could not afterwards separate *did I break anything* from *the world is
+    /// now different*. Shipping the mechanism switched off means `config/default.toml` is
+    /// bit-for-bit the world every figure in `docs/PHASE7.md` was measured on, six golden vectors
+    /// do not have to be re-recorded, and the owner's varying world is one profile away.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the two documents' numbers are pinned against each other; an approximate \
+                  match would let a profile drift away from the one it is a variation on"
+    )]
+    fn the_shipped_documents_carry_a_season_and_it_ships_inert() {
+        let seasonal: RawConfig = toml::from_str(include_str!("../../../config/seasonal.toml"))
+            .expect("the seasonal profile parses");
+        let shipped: RawConfig = toml::from_str(DEFAULT_CONFIG).expect("the shipped config parses");
+
+        seasonal
+            .clone()
+            .validate()
+            .expect("the seasonal profile is a world the program will accept");
+
+        assert_eq!(
+            shipped.light.season_amplitude, 0.0,
+            "the shipped world has a season in it, so it is no longer the world every figure in \
+             docs/PHASE7.md was measured on and six golden vectors have to be re-recorded"
+        );
+        assert_eq!(
+            seasonal.light.season_amplitude, 0.25,
+            "the seasonal profile does not carry the amplitude the measurements were taken at"
+        );
+
+        // One number changed, and nothing else whatever.
+        let mut restored = seasonal;
+        restored.light.season_amplitude = shipped.light.season_amplitude;
+        assert_eq!(
+            restored, shipped,
+            "the seasonal profile changes something besides how deep the seasons run, so a run \
+             of it is an experiment with more than one variable in it"
+        );
+
+        // Both keys are required. A document missing either is refused rather than guessed at.
+        for missing in ["season_amplitude", "season_period"] {
+            let without: String = DEFAULT_CONFIG
+                .lines()
+                .filter(|line| !line.trim_start().starts_with(missing))
+                .collect::<Vec<&str>>()
+                .join("\n");
+
+            assert!(
+                toml::from_str::<RawConfig>(&without).is_err(),
+                "a document with no `light.{missing}` was accepted, so a run can be recorded \
+                 without the season that produced it"
+            );
+        }
     }
 
     /// The number written in the configuration document is the number the randomness

@@ -63,7 +63,11 @@ use coacervate_sim::world::World;
 /// two units below are gone from the arithmetic within a few hundred. What the number actually
 /// has to satisfy is the other end: it comes out of the tiles the body is standing on, so it
 /// has to be less than those tiles hold, which is what [`dawn`] is for.
-const FOUNDER_ENERGY: f64 = 2.0;
+/// ⭐ Visible to the crate since Phase 7's Group L, because `assay.rs` seeds its own founders
+/// and a competition assay whose founders started life holding a different amount from a run's
+/// would be measuring a different world from the one every figure in `docs/PHASE7.md` was taken
+/// on.
+pub(crate) const FOUNDER_ENERGY: f64 = 2.0;
 
 /// How much the field has to stop gaining before the light is called done.
 ///
@@ -101,24 +105,39 @@ pub fn genesis(world: &mut World, founders: u32) -> u64 {
 
     let limits = world.config().limits.clone();
     let (width, height) = (world.config().world.width, world.config().world.height);
-    let columns = columns_of(founders, width, height);
-    let rows = founders.div_ceil(columns);
 
     for founder in 0..founders {
-        // The middle of this founder's share of the world, so the gap between two founders is
-        // the same as the gap between the outermost and the edge - which across the width is
-        // also the gap over the seam, since SPEC section 8 wraps there.
-        let at = Vec2::new(
-            width * middle(founder % columns, columns),
-            height * middle(founder / columns, rows),
-        );
-
         world
-            .seed(founder_genome(&limits), at, FOUNDER_ENERGY)
+            .seed(
+                founder_genome(&limits),
+                place(founder, founders, width, height),
+                FOUNDER_ENERGY,
+            )
             .expect("a lit world has room and water for the founders it was asked for");
     }
 
     taken
+}
+
+/// Where founder `founder` of `founders` goes, on the even grid this module's header describes.
+///
+/// The middle of that founder's share of the world, so the gap between two founders is the same
+/// as the gap between the outermost and the edge - which across the width is also the gap over
+/// the seam, since SPEC section 8 wraps there.
+///
+/// ⭐ A function since Phase 7's Group L rather than four lines inside [`genesis`], because the
+/// competition assay in `assay.rs` puts **two** founder sets on this same grid at alternating
+/// positions. Where a founder goes has to be one computation: an assay whose arms stood
+/// somewhere other than a run's founders would be measuring a different experiment from the one
+/// it is meant to predict, and neither of the two copies would look wrong.
+pub(crate) fn place(founder: u32, founders: u32, width: f32, height: f32) -> Vec2 {
+    let columns = columns_of(founders, width, height);
+    let rows = founders.div_ceil(columns);
+
+    Vec2::new(
+        width * middle(founder % columns, columns),
+        height * middle(founder / columns, rows),
+    )
 }
 
 /// How many columns a grid of `founders` should have over a world of this shape.
@@ -155,7 +174,11 @@ fn middle(index: u32, count: u32) -> f32 {
 }
 
 /// Tick the world until the light has very nearly finished filling the field.
-fn dawn(world: &mut World) -> u64 {
+///
+/// ⭐ Visible to the crate since Phase 7's Group L: `assay.rs` seeds its arms into the shipped
+/// world *after the dawn*, and a dawn worked out a second time there would be a second stopping
+/// rule for the one moment a run begins at.
+pub(crate) fn dawn(world: &mut World) -> u64 {
     let mut before = world.grid().total_energy();
 
     while world.ticks() < DAWN_LIMIT {
@@ -215,4 +238,155 @@ pub fn founder_genome(limits: &LimitsConfig) -> Genome {
         }],
         limits,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::genesis;
+    use coacervate_sim::config::{Config, RawConfig, spec_defaults};
+    use coacervate_sim::world::World;
+
+    /// A world a sixteenth of the shipped one in area, at the shipped **light**.
+    ///
+    /// The light is deliberately not raised the way `run.rs`'s small world raises it. Both tests
+    /// here are about the *season*, whose floor is `cap / influx` and whose whole subject is what
+    /// the light does over time, so a brighter world would be a different experiment. What is cut
+    /// is the number of tiles and the arena, and the arena is cut by less than the water is, so
+    /// the energy budget still binds before the arena does — carrying capacity here is about 140
+    /// bodies against a cap of 250.
+    fn a_sixteenth_of_the_world(change: impl FnOnce(&mut RawConfig)) -> Config {
+        let mut raw = spec_defaults();
+        raw.world.width = 512.0;
+        raw.world.height = 288.0;
+        raw.world.grid_cols = 64;
+        raw.world.grid_rows = 36;
+        raw.limits.max_organisms = 250;
+        change(&mut raw);
+
+        raw.validate()
+            .expect("this test's configuration must be one the program will accept")
+    }
+
+    /// ⭐⭐ **The season does not begin until something is alive to feel it.**
+    ///
+    /// [`dawn`] stops on `gained / after < DAWN_SETTLED`, which is a **light-dependent** test. So
+    /// a season running through the dawn changes the dawn's *length* — and a seasoned run and a
+    /// flat run would then start their clocks at different ticks, against different fields, with
+    /// nothing in either recording saying so. Every comparison this project has ever made
+    /// between two profiles assumes the two worlds began at the same moment.
+    ///
+    /// ⚠️ **And there is a second reason, which is about the founders rather than the clock.**
+    /// A season whose phase were the world's tick count would land the founders of a shipped run
+    /// at 0.83× and falling towards the trough 1.6 generations later. Every survival figure in
+    /// `docs/PHASE7.md` was taken on level light at the founding; a season that moved the
+    /// founding would quietly invalidate all of them rather than adding to them.
+    #[test]
+    fn the_season_does_not_begin_until_something_is_alive_to_feel_it() {
+        let flat = a_sixteenth_of_the_world(|_| {});
+        let seasoned = a_sixteenth_of_the_world(|raw| raw.light.season_amplitude = 0.25);
+
+        let mut plain = World::new(&flat);
+        let mut weathered = World::new(&seasoned);
+
+        let plain_dawn = genesis(&mut plain, 8);
+        let weathered_dawn = genesis(&mut weathered, 8);
+
+        assert_eq!(
+            plain_dawn, weathered_dawn,
+            "a seasoned world's dawn took {weathered_dawn} ticks against a flat world's \
+             {plain_dawn}, so the two runs start their clocks at different moments and no \
+             figure taken on one is comparable with a figure taken on the other"
+        );
+        assert_eq!(
+            weathered
+                .grid()
+                .tiles()
+                .iter()
+                .map(|tile| tile.to_bits())
+                .collect::<Vec<u32>>(),
+            plain
+                .grid()
+                .tiles()
+                .iter()
+                .map(|tile| tile.to_bits())
+                .collect::<Vec<u32>>(),
+            "the two worlds' founders were seeded into different water"
+        );
+        assert!(
+            weathered.grid().season_phase().abs() < f64::EPSILON,
+            "the first founder was placed with the season already {} of the way through itself",
+            weathered.grid().season_phase()
+        );
+
+        // And once there is something alive, it starts.
+        weathered.tick();
+        assert!(
+            weathered.grid().season_phase() > 0.0,
+            "the season never starts at all, so `light.season_amplitude` is a setting with no \
+             effect and the config file describes a world that does not exist"
+        );
+    }
+
+    /// ⭐⭐ **Energy is conserved across three whole seasons of a living world**, checked on every
+    /// single tick.
+    ///
+    /// SPEC section 5's invariant is already asserted by `World::tick` — every tick in a debug
+    /// build and periodically in a release one. What this adds is **where** it is asserted: three
+    /// whole periods of a seasoned world, so the books are checked across the **trough**, which
+    /// is where biomass falls fastest and organisms are likeliest to die owing. Death is the one
+    /// movement in section 5's ledger that runs backwards, and a season is the only thing in this
+    /// world that makes it happen to a great many bodies at once on a known schedule.
+    ///
+    /// Sixty-three thousand ticks at the shipped period, in a world a sixteenth of the shipped
+    /// area at the shipped light — see [`a_sixteenth_of_the_world`]. What is cut is the number of
+    /// tiles, so the season, the ecology and the trough are all the shipped ones and only the
+    /// cost of a tick is not.
+    #[test]
+    #[ignore = "63,000 ticks; check.ps1 runs it via --include-ignored in the release pass"]
+    fn energy_is_conserved_across_three_whole_seasons() {
+        let settings = a_sixteenth_of_the_world(|raw| raw.light.season_amplitude = 0.25);
+        let period = settings.light.season_period;
+
+        let mut world = World::new(&settings);
+        genesis(&mut world, 8);
+
+        let (mut fewest, mut most) = (usize::MAX, 0);
+        for tick in 1..=period * 3 {
+            world.tick();
+
+            // Every tick, and in the release profile too, which is the whole point: `World::tick`
+            // checks the books every hundredth tick there, and the trough is where a tick that
+            // does not balance would be.
+            world.ledger().check(world.grid().total_energy());
+
+            // The swing is read over the **last two periods** only. A world founded with eight
+            // bodies runs from eight to a few hundred whatever the weather is doing, so a
+            // minimum taken over the whole run would say a season had happened when only a
+            // founding had.
+            if tick > period {
+                let alive = world.organisms().iter().flatten().count();
+                fewest = fewest.min(alive);
+                most = most.max(alive);
+            }
+        }
+
+        assert!(
+            fewest > 0,
+            "the world went extinct, so most of these sixty-three thousand ticks checked the \
+             books of an empty world"
+        );
+        // ⚠️ A **half**, not a doubling, and the figure is measured rather than aimed at: this
+        // world runs between **90 and 173** over its last two seasons, which is a 1.92-fold
+        // swing. The 330,000-tick runs of the full world read 4.5-fold at the same amplitude,
+        // and most of that is the secular fall of a population that is still finding its level
+        // rather than the season. What this bound is for is only that there **was** a trough for
+        // the invariant to be asserted across.
+        assert!(
+            2 * most > 3 * fewest,
+            "the population ran between {fewest} and {most} over the last two of three whole \
+             seasons, which is less than a half again — so this ran without a trough in it and \
+             the invariant was never asserted across the one movement in SPEC section 5's ledger \
+             that runs backwards"
+        );
+    }
 }

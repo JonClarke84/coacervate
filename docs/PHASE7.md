@@ -12,8 +12,8 @@
 | | |
 | --- | --- |
 | **Phase 7** | in progress |
-| **Current group** | D — Darwin in the margin (A, B, C, F, G, H, I, J and K are done) |
-| **Suite** | green — **267 tests** |
+| **Current group** | D — Darwin in the margin (A, B, C, F, G, H, I, J, K and L are done) |
+| **Suite** | green — **287 tests** |
 
 ⚠️ **Groups F, G and H are out of order and all three had to be.** F is the swimming work, taken
 out of turn because Jonathan's live run had reached tick 2.8 million with one myocyte in it and
@@ -37,6 +37,17 @@ muscle, and it is in Group I and in SPEC section 7: **only 2.2% of grown cells s
 their own genome names**, so development stops at nearly every cell it visits, and that is why
 bodies in this world are two cells for the first hundred thousand ticks of every run ever
 measured.
+
+⚠️⚠️⚠️ **Group L is the round that stopped arguing and built an instrument, and it is the most
+useful thing in this document.** Six rounds each removed one reason a lineage could not swim and
+each ended in a null, because nothing could measure what a configuration was *worth* without
+waiting for evolution to produce one. The **competition assay** removes the wait: two founder sets
+one mutation apart, seeded alternately, 42,000 ticks, and the ratio of living descendants is the
+selection coefficient — about four minutes a run against a day. Its table of coefficients is in
+Group L and it **refuted the seventh round's design before a line of it was written**: a muscle
+must earn +2.5 %/generation to break even, the entire measured value of shape in this world is
++0.85, and `rest_length` already collects that for nothing. The round shipped the instrument, a
+real pre-existing bug in what a muscle is charged for moving, and a season on the light.
 
 ⚠️⚠️ **Group J is Q31, and it is half a result and half a correction.** The distribution a re-drawn
 state comes from is now biased — towards states some cell is in for `trigger_state`, away from them
@@ -1674,6 +1685,348 @@ move at all.** Two candidates follow, and neither is built:
 
 **Q33** below carries this forward.
 
+### Group L — the instrument, one bug, and the weather — **done**
+
+⚠️ **Out of the phase's plan for the seventh time, and this time the round did not start with a
+design.** Groups F, G, H, I, J and K each removed one reason a lineage could not swim and each
+ended with the same sentence: *nothing swims*. The reason six rounds could each be necessary and
+none sufficient is that **nobody could measure what a configuration was worth without waiting for
+evolution to produce one** — so every change to the payoff was argued rather than priced, and each
+argument cost a 300,000-tick run to refute.
+
+- [x] **L1. The competition assay** ⭐⭐ — `crates/coacervate-app/src/assay.rs`. Public API only:
+  `World::seed`, `World::organisms`, `Organism::serial` and `Organism::parent`. No change to the
+  simulation whatever. Three tests: attribution, the noise floor, and the economy's calibration.
+- [x] **L2. A myocyte pays for the shape its sensor moved it to** ⭐⭐ — a genuine pre-existing
+  defect in `behaviour.rs`, independent of any payoff design.
+- [x] **L3. `light.season_period` and `light.season_amplitude`** — a triangle wave on
+  `light.influx`, shipped **inert**. `config/seasonal.toml` is the same world at 0.25.
+
+---
+
+#### ⭐⭐⭐ L1 — the selection coefficients, which are the most important thing in this document
+
+**Twenty-six assay runs. This table is what the instrument was built to produce, and every future
+payoff proposal in this project should be priced against it before a line of it is written.**
+
+⚠️ **It was taken on a prototype of the instrument and only two of its rows have been re-measured
+on the shipped one.** The noise floor and the myocyte row reproduce; the photocyte row does not,
+and the section headed *One row does not reproduce* below is the correction. Read the table as
+the best available price list and the two re-measured rows as the calibration — and **re-run the
+arm before quoting a row of it as a fact**, which now costs four minutes.
+
+Two founder sets that differ by **exactly one mutation** are seeded alternately into the shipped
+world after the dawn — 32 founders, 16 per arm, at alternating positions so neither arm gets
+systematically better water. Every organism born afterwards is attributed to the arm its parent
+belonged to. After 42,000 ticks (23.9 generations at the measured 1,753.9-tick generation) the
+ratio of living descendants **is** the selection coefficient.
+
+| Arm B, against an identical arm A | upkeep added | descendant ratio | **coefficient** |
+| --- | --- | --- | --- |
+| a third **photocyte** | +0.004/tick | 1.076 (s42), 1.022 (s7) | **+0.04 %/gen** — exactly neutral |
+| the longest **`rest_length`** the genome can ask for (8.0 → 13.6) | none | 1.297 / 1.063 / 1.289 | **+0.71 %/gen** flat, +0.88 seasoned |
+| a third **sclerocyte** — the cheapest inert cell there is | +0.002/tick | 0.855 (s42), 0.755 (s7) | **−1.07 %/gen** |
+| a third **myocyte**, holding still | +0.005/tick | 0.593 (s42) | **−2.46 %/gen** |
+| a third **myocyte**, beating at 2.5 rad/s | +0.005/tick | 0.516 (s42), 0.355 (s7) | **−2.7 to −4.4 %/gen** |
+| a third **devorocyte** | +0.009/tick | 0.126 (s42), 0.236 (s7) | **−6.1 to −9.0 %/gen** |
+| a **myocyte with an adhered sensocyte** | +0.011/tick | **0.097** (s42) | **−8.6 %/gen** |
+
+Every coefficient is quoted as an **excess over its own same-seed control**, which is what the
+noise-floor arm is for.
+
+| Magnitude | Value |
+| --- | --- |
+| Window | 42,000 ticks = **23.9 generations** |
+| Noise floor | **±0.16 %/generation** (1 s.d.; log-ratios +0.064 / +0.009 / −0.008 on three seeds) |
+| Resolution | about **0.3 %/generation** with three seeds |
+| Attribution loss | **0 to 4 births in ~40,000** |
+| Cost | about **four minutes per run** |
+
+**And the reading that answers Q32 and Q33 at once: which arms *keep* their extra cell.** After
+24 generations the surviving bodies hold, on average, 3.28 cells in the extra-photocyte arm, 2.22
+with a sclerocyte, **2.03 with a myocyte**, 2.04 with a devorocyte and 2.04 with the muscle-plus-
+sensor pair. The world keeps extra photocytes and sheds every other kind of cell inside two dozen
+generations — and it keeps the photocyte at a coefficient of *exactly zero*.
+
+> **Nothing in this world has an increasing return to being more than one thing.** A photocyte's
+> income scales linearly with photocyte count, upkeep scales linearly with cells, the reproduction
+> threshold is `reproduction_threshold × Σ construction` and is linear in cells, and lifespan is
+> `LIFETIME_UPKEEP × cells ÷ cost` and is linear again. Occlusion is actively *sub*linear. So
+> growth is a random walk and specialisation is a pure loss, at about **−0.5 %/generation for
+> every 0.001/tick of upkeep, whatever the cell does**.
+
+⚠️⚠️ **What that closes.** A muscle must earn **+2.5 %/generation** merely to break even. The
+*entire* measured value of shape in this world — the largest free shape change the genome can
+express, taken in full and for nothing — is **+0.85 %/generation**. A beating muscle shifts its
+body's mean geometry by 0.8% against `rest_length`'s 70%, so its share of that channel is about
+1%: **+0.01 %/gen against a −2.7 %/gen bill, a ratio of 1 : 270.** Even a muscle that could
+*hold* a shape perfectly captures at most the whole channel — **+0.85 against −2.5** — and
+`rest_length` already collects it for nothing, one point mutation away. **The self-shading muscle
+payoff was refuted before a line of it was written**, on the measured coefficient of the exact
+configuration it proposed to seed.
+
+##### ⚠️ Two things every coefficient here must be quoted with
+
+**It measures the filling regime** — two-celled bodies, a population rising to about 2,100. Group
+K's world at 300,000 ticks holds 6.21 cells per body and 826 organisms. Nobody should quote an
+assay coefficient as a fact about the mature world without seeding the arms into one.
+
+**And a ratio near 1.0 in the first 40,000 ticks can mean *still filling* rather than *no
+effect*.** The control's population is rising throughout that window, which is why every number
+above is an excess over its own control.
+
+##### ⚠️ One row does not reproduce, and it is the row the whole argument above rests on
+
+Rebuilt from the public API, with arm B being the founder plus **one appended gene** that buds a
+third cell off its photocyte at the next developmental step (angle π, so the three cells lie in a
+line with the photocyte in the middle), the instrument was re-run on this machine:
+
+| Arm, seed 42, 42,000 ticks | alive | ratio | log-ratio | **excess over its control** | cells/body |
+| --- | --- | --- | --- | --- | --- |
+| noise floor — the same genome both sides | 1031 / 1098 | 1.0650 | +0.0630 | — | 2.02 / 1.99 |
+| noise floor, seed 7 | 1034 / 1061 | 1.0261 | +0.0258 | — | 1.99 / 2.00 |
+| a third **photocyte** | 636 / 974 | 1.5314 | +0.4262 | **+1.52 %/gen** | 3.41 / 2.03 |
+| a third **myocyte**, holding still | 1382 / 706 | 0.5109 | −0.6717 | **−3.07 %/gen** | 2.14 / 1.99 |
+
+**Attribution was complete in every run — nought unattributable births out of 38,000 to 47,000 —
+and both arms' founders received exactly 32.0 units of energy, so neither was seeded into better
+water.** The instrument itself therefore reproduces: the noise floor at seed 42 comes back at
+**+0.063** against the recorded **+0.064**, and the myocyte arm at **−3.07 %/gen** against the
+recorded **−2.46**, which is the same sign and the same order and well outside the floor either
+way.
+
+⚠️ **The extra-photocyte arm does not.** It comes back at **1.531** — `+1.52 %/generation` against
+a noise floor of ±0.16, and nearly twice the largest coefficient the table above records for
+anything — where the design measured **1.076**, *"exactly neutral"*. What differs is **what a
+third cell was made of**: doubling a body's photocytes while adding 44% to its bill is not
+neutral, and *a third photocyte is worth precisely its own cost* does not survive this
+construction of one.
+
+**What survives, and it is the load-bearing half:** the two arms above are the *same* three-celled
+body differing in one `child_kind`, and the earning cell is kept at **three to one** against the
+silent one. A third cell that earns pays; a third cell that does not is shed — 2.14 cells a body
+in the myocyte arm, where every organism in it was **born with three**. The muscle arithmetic is
+unaffected either way, because it was never the photocyte's coefficient that priced a muscle. It
+was the muscle's own, and that one reproduces.
+
+---
+
+#### ⭐⭐ L2 — a myocyte whose sensor changed moved its spring for free
+
+**A genuine pre-existing defect, and it has nothing to do with any payoff design.**
+`Behaviour::contract` worked out how far a spring had moved by re-evaluating SPEC section 9's
+controller one tick back — **using this tick's sensor reading**. The sensor's whole contribution
+therefore cancelled out of the subtraction and was never charged. With `osc_freq = 0`, which Group
+I measured as **87% of all myocyte spring-ticks**, the sine cancelled too, and the charge was
+**exactly nought** while the rest length had genuinely moved by up to `base × stroke` — eight world
+units in one tick on a base-eight spring.
+
+In SPEC section 8's anisotropic water a free shape change is free displacement. That section
+refused this exact pattern by name when it declined to give a loose cell a drag axis: *"that is
+thrust with no muscle behind it, and it would look exactly like life."*
+
+| Magnitude | Value |
+| --- | --- |
+| Free movement available per tick | up to `base × stroke × \|sin(osc_phase)\|`, ≤ 8 units at base 8 |
+| Typical size today | mean \|Δ\| **0.0003** per tick |
+| Tail | reaches **0.824**, on 0.18–0.35% of body-ticks — the light gradient is quantised on 8-unit tiles and steps at every boundary crossing |
+| How often a myocyte has a sensocyte adhered to it | order **one body per 300,000-tick run** |
+
+That last row is why the fix is safe: it closes a real hole in the physics and changes essentially
+nothing in the shipped world.
+
+**The distance is now remembered rather than derived.** `Cell::contraction` holds what a myocyte's
+controller last multiplied its springs by — the same route `energy_flow` already takes through
+`World::scatter`. It is an **absence** until the controller has run once, because a body is
+*developed* at the length its controller asks for and has not travelled anywhere on its first
+tick.
+
+⚠️⚠️ **Remembering it on the cell has a trap in it, and it was found by writing the test rather
+than by reading the code.** A contraction is a fact about the *cell*; the charge is worked out per
+*spring*. So a myocyte in the middle of a chain is visited twice in one tick — and the obvious
+implementation, which reads last tick's value off the cell and writes this tick's back in the same
+visit, finds on the second spring that *last tick* has already become *this tick*. The second
+spring moves exactly as far and is charged **nothing**: every adhesion after the first, free,
+which is the same free-shape-change defect this group exists to close, arrived at from the other
+side. Measured red at exactly 1.0000× instead of 2×. The reading is therefore one pass over the
+cells, the spring loop sits between, and the writing is a second pass — and the controller is now
+evaluated once per **cell** rather than once per spring, which is also cheaper.
+
+⚠️⚠️ **And the tension is taken at the rest length the spring was already at, not the one this tick
+moved it to.** Taken after the jump, the tension contains the jump as well and the charge goes as
+its **square**. The property test found the worst case immediately: **0.319 energy in a single
+tick**, at a stiffness of 122 and a base of 8, with the spring standing exactly at rest and
+carrying no force at all — **more than thirty times** a two-celled body's entire per-tick upkeep
+of 0.009, produced by
+the resolution of the grid rather than by anything biological. Force through distance means the
+force that was opposing the movement when it began.
+
+##### ⚠️ What moved
+
+- **`a_run_produces_what_it_produced_before_group_a`** — ⭐ **unchanged, to the last bit**, and
+  that is the result rather than a relief. No muscle in those four thousand ticks has a sensocyte
+  adhered to it and none has a non-zero `osc_freq`, so neither half of L2 can reach the run. It is
+  the cheapest available statement that the fix touches only the case it was written for.
+- **`a_myocyte_oscillates_its_springs_and_pays_for_the_work`** — re-recorded for the third time,
+  and all three earlier figures are kept: **0.00186** at `movement_cost = 0.15`, **0.0827** after
+  Group H, **0.08233** now. Half a per cent, and it is the whole visible effect of L2 on a muscle
+  with no sensor: over a smooth 3 rad/s oscillation the two readings of the tension differ only by
+  the one-tick lag between the force and the distance it acts through.
+- **`a_myocyte_that_does_nothing_pays_nothing`** and
+  **`a_myocyte_takes_its_rhythm_from_the_gene_that_built_it`** — unchanged.
+- **`the_arenas_are_allocated_once_at_the_size_the_config_asks_for`** — 28 bytes a cell → **36**,
+  and 13,216,000 → **15,264,000** for the two arenas. Two megabytes against CLAUDE.md's
+  two-gigabyte resident target. `Cell::contraction` is eight bytes because it is written as an
+  absence rather than as a number standing for one.
+
+---
+
+#### ⭐⭐ L3 — the season
+
+A scalar multiplier on **`light.influx` alone**, applied at the one line in `Grid::regrow` that
+reads the per-row regrowth. The full argument is now SPEC section 4; what belongs here is what it
+measured.
+
+⚠️ **It ships at `season_amplitude = 0.0`** — `config/default.toml` is bit-for-bit the world every
+figure in this document was measured on. `config/seasonal.toml` is the same world at 0.25.
+
+##### The three things that were most likely to go wrong
+
+**1. The off switch that does not switch off.** All three reviewers of the design found the same
+defect, and it is the most dangerous thing the feature could have contained. The multiplier is
+computed **unconditionally**: `1 + amplitude × triangle(phase)` is exactly 1.0 at an amplitude of
+nought, so no branch is needed and the bit-identity still holds. An early return that skips the
+recompute leaves the world permanently lit at up to 1.25× its stated influx, with
+`season_amplitude = 0` showing in the config file, the panel and the replay log, while the ledger
+balances perfectly and says nothing. `a_world_with_no_season_is_the_world_that_was_there_before`
+is the guard, and its retune-to-zero half is the assertion that matters — **measured red at
+25.235 units of light against a flat world's 23.040** when the recompute was skipped.
+
+**2. A quadratic work charge.** See L2 above: measured red at **0.319 in a single tick**.
+
+**3. A season that moved a ceiling.** `influx` enters no ceiling, so a season needs no retarget and
+sheds no spill. `a_season_moves_no_ceiling` asserts the whole target array is bit-identical after a
+seasoned period. ⚠️ It deliberately does **not** also assert that `dissipated` is unchanged:
+measured over three periods on an empty world, dissipated per tick runs **15.184 flat, 14.992 at
+±25%, 14.480 at ±50%**, because diffusion knocks tiles off their patchy ceilings every tick
+whatever the light is doing. That assertion would be false and would end up weakened rather than
+fixed.
+
+⚠️ **`a_season_moves_no_ceiling` passes identically when the season is never applied at all**,
+which is exactly the Group H failure mode. `the_light_a_row_is_offered_rises_and_falls_with_the_season`
+is what catches that, and it was verified red — **1.0000003× instead of 1.25×** — with the
+multiplication removed.
+
+##### ⭐⭐ The measurement: three runs, fifteen whole periods, scored on integrals only
+
+Shipped world, seed 42, eight founders, release build, `--ticks 330000`. The dawn ends at tick
+**13,000**, so the window scored is world tick **15,000 → 330,000**: 315,000 ticks, which is
+**fifteen whole periods** and begins and ends at the same phase. ⚠️ Fifteen rather than the
+fourteen the design asked for, because the progress report is on a 5,000-tick grid and
+`gcd(21,000, 5,000) = 1,000` — so a whole number of periods lands on a report only every **five**
+of them, and 14 does not.
+
+**Predictions were written down first**, and three of the four hold.
+
+| Over fifteen whole periods | flat | ±25% | ±50% |
+| --- | --- | --- | --- |
+| `influx_total` | 6,978,241 | 6,951,729 (**−0.38%**) | 6,926,165 (**−0.75%**) |
+| `dissipated` | 7,053,272 | 7,025,634 (**−0.39%**) | 6,996,081 (**−0.81%**) |
+| `born` | 199,857 | 251,678 (**+25.9%**) | 265,800 (**+33.0%**) |
+| mean alive over the window | 1,099.2 | 1,369.1 (**+24.6%**) | 1,454.0 (**+32.3%**) |
+| mean cells per body | 5.65 | 4.11 | 3.32 |
+| corr(detrended cells/body, season phase) | **−0.066** | +0.075 | **−0.259** |
+
+- ✅ **`influx_total` falls, and by a fraction of a per cent.** Predicted 99.8% of the control;
+  measured 99.62% at ±25%. `influx` enters no ceiling, so a season sheds no spill; what it loses
+  is the little that a dim half-cycle fails to deliver into tiles that were not full.
+- ✅ **`dissipated` falls too**, which is the sign that says the season is on the income and not on
+  a ceiling. A season on `cap` would push it *up*.
+- ❌ **The seasoned/flat population ratio is not between 0.9 and 1.1.** It is **1.25** and
+  **1.32** on whole-window means, and the seasoned worlds carry *more* organisms rather than
+  fewer. Biomass is nearly unchanged — 33,347 / 31,473 / 31,006 at the end — so what a season
+  actually does is put **the same energy into more and smaller bodies**: 5.65 cells a body flat
+  against 3.32 at ±50%.
+- ⚠️ **And the falsifiable prediction is refuted at ±50% and unresolved at ±25%.** The
+  quasi-static reading — bodies larger at the bright peak, because SPEC section 3's sustained
+  influx sweep has mean cells rising 4.07 → 10.62 with the light — predicts a **positive**
+  correlation. Q32 predicts a negative one, because body size is a quotient and the population is
+  its denominator. At ±50% the correlation is **−0.26**, which is Q32's sign; at ±25% it is
+  +0.075, the same size as the flat control's −0.066 and therefore nothing.
+
+⚠️⚠️ **Three single runs at one seed, and the caveat is Group K's own.** Group I measured that a
+perturbation anywhere in this world diverges from its own baseline by about tick 50,000 and ends
+with a different world, so a 25% difference between three single runs is **not** established to be
+outside run-to-run variation. What carries weight is the monotone ordering across three
+amplitudes on four separate accounts, and the two sub-per-cent readings on the light, which are
+integrals and not end-of-run readings.
+
+⚠️ **The correlation statistic needs a detrend that this sampling rate barely supports.** Mean
+cells per body climbs from 2.0 to 9.9 over the run, so a raw correlation against phase comes back
+at **−0.44 on the flat control**, which must be zero. Subtracting a straight line fitted *within
+each cycle* brings the control to −0.066, and that is the reading above. Anybody re-running this
+should sample at 500 ticks rather than 5,000 and report the control's figure beside every other.
+
+##### ⚠️ The flat control does not reproduce Group K bit for bit, and the reason is L2
+
+The design required it to. It does not, and the honest reading is that **L2 changed the
+simulation, so it could not**: any myocyte with a non-zero `osc_freq` is now charged at the
+tension its spring was already carrying rather than at the post-jump one. Group I established
+that the first such muscle appears at around tick 50,000, and that a perturbation there ends with
+a different world.
+
+What the flat run *does* do is land on Group K's aggregates:
+
+| At world tick 313,000 | Group K | here | difference |
+| --- | --- | --- | --- |
+| `influx_total` | 6,873,766.5 | ~6,879,700 | **+0.09%** |
+| alive at the 25,000-tick checkpoint | 1,619 | ~1,585 | −2.1% |
+
+⚠️ **And it ends somewhere else entirely: 555 organisms of 9.85 cells against 826 of 6.21, at
+33,796 units of biomass against 32,276.** The same energy, in fewer and larger bodies. That is a
+single reading of a chaotic quantity and it should not be quoted as an effect of anything; the
+light budget agreeing to a thousandth is what says the instrument is the same instrument.
+
+##### What Group L decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **The assay lives in `coacervate-app` and is `#[cfg(test)]`** | `assay.rs` | It uses the public API only and must not perturb what it measures. It borrows `founding.rs`'s dawn and founder grid rather than growing a second copy of either — an assay whose arms stood somewhere other than a run's founders would predict a different experiment from the one it is for. |
+| **The two arms must be one mutation apart, asserted** | `assay.rs`, `one_mutation_apart` | Identical, one gene appended, or one field of one gene changed — which is `mutation.rs`'s own insertion, duplication and point operators. An arm that had quietly picked up a second change would return a coefficient for the pair with nothing in the reading to say so. |
+| **`Cell::contraction` is an `Option`, not a number** | `cell.rs` | A body is *developed* at the length its controller asks for, so a muscle has not travelled anywhere on its first tick. Started at 1.0 the charge would be measured from a rest length the spring was never at — which costs a newborn nothing today only because development lays an adhered daughter down at exactly its gene's `rest_length`. |
+| **The contraction is read in one pass and written in another** | `behaviour.rs`, `Behaviour::contracted` | ⚠️ A contraction is a fact about a cell and a charge is worked out per spring, so a muscle in a chain is visited twice. Read and written in one visit, its second spring is charged nothing. |
+| **The season is a triangle** | `grid.rs`, `Grid::season` | One scalar multiplies 36,864 tiles every tick, which is 36,864 times `behaviour.rs`'s single-spring `sin` exposure. Exact in f64, no libm, mean-preserving by exact antisymmetry, exactly 1.0 at amplitude nought. |
+| **The phase is accumulated and starts at the first seeding** | `grid.rs`, `world.rs` | Group G's `drifted` decision applied to the second clock, plus the dawn's own stopping rule being light-dependent. |
+| **Two new `ConfigError` variants, not one** | `config.rs` | ⚠️ The design asked for one, on the grounds that the amplitude could reuse `OutsideRange`. It cannot: that variant's sentence is `physics.drag_anisotropy`'s own — *"at 1.0 the water resists a cell equally in every direction"* — and in this file the sentence **is** the value of the refusal. |
+| **The chronicle says both ends of the season and nothing else** | `chronicle.rs` | Two lines a period, no direction and no judgement. Without them the log would report fourteen mass extinctions per seasonal run and record nothing about why, and CLAUDE.md's *"a lineage that thrives and then dies when the light dims was never worse"* would be unwritable by anybody reading it. |
+| **The `season_period` slider's far end is not a gate constant** | `settings.rs` | The gate deliberately has no ceiling. A slider still has to stop somewhere; 210,000 is ten times the shipped period and four times the median species lifetime. |
+
+##### ⚠️ What moved
+
+- **`the_live_settings_have_dials_and_the_locked_ones_do_not`** — `[light]` 6 → **8** dials, 25 →
+  **27** in all.
+- **`every_dial_is_a_condition_the_chronicle_reports`** — `CONDITIONS` 24 → **26**, and
+  `Condition::read` widened from `f32` to `f64`, because a period is a count of ticks rather than
+  a fraction of anything.
+- **`every_spec_default_literal_narrows`** — 28 → **29** decimal settings.
+- **`Kind::ALL`** — 10 → **11**, with `Kind::Season` tagged `"season"`.
+- **Twenty tests added: 267 → 287.**
+
+⚠️ **The check suite got slower, and the figure is worth recording because it was the thing this
+group was most likely to get wrong.** The assay's two long tests are `#[ignore]`d and
+`scripts/check.ps1` runs them through `--include-ignored` — five 42,000-tick runs — and
+`energy_is_conserved_across_three_whole_seasons` adds a 63,000-tick living world with the ledger
+checked on **every** tick. Measured end to end on the machine CLAUDE.md describes, with five other
+runs of this simulation competing for the cores: **6 minutes 52 seconds**, of which the release
+pass's app suite is 218 seconds and the two assay tests are nearly all of that. The 63,000-tick
+season costs **5.7 s**, because that world is a sixteenth of the shipped one's area at the shipped
+light.
+
+CLAUDE.md warns that a suite somebody stops running is worth nothing. If seven minutes becomes
+that, the answer is a filter on the release pass rather than a weaker test: the noise floor is
+what every coefficient in this document is quoted against, and a noise floor nobody ever
+re-measures is a number rather than a measurement.
+
 ### Group E — looking at one organism
 
 - [ ] **E1. `a_click_finds_the_organism_under_it`** — ⚠️ `camera.rs` maps world→screen only;
@@ -1737,6 +2090,29 @@ give a single muscle a payoff that is not locomotion — changing a body's shape
 self-shading, which SPEC section 6 already makes a photocyte's harvest depend on — or make the
 second muscle reachable in one mutation instead of two. The first is the one that removes the
 valley rather than shallowing it.
+
+**Q34** (new, Group L) — ⭐⭐ **the return to size, which is the only question the assay leaves
+open and the one it says is binding.** The instrument answered Q33 by pricing every specialisation
+in the world and finding none of them worth owning: **nothing here has an increasing return to
+being more than one thing**, and that is an economy-wide fact rather than a muscle fact. Every
+scaling in the model is linear or worse — income linear in photocytes, upkeep linear in cells, the
+reproduction threshold linear in cells, lifespan linear in cells — and occlusion is actively
+*sub*linear, since a bigger body self-shades more. So growth is a random walk. The next round
+should point at that and not at a cell kind: **what would have to be true for a five-celled body
+to out-earn five one-celled ones?** The assay can price any answer in forty minutes, which is the
+whole reason it exists.
+
+**Q35** (new, Group L) — ⚠️ **does body size track the light or the population?** Q32 says the
+population, with a half-generation lag; SPEC section 3's sustained influx sweep says the light,
+because mean cells per body rose 4.07 → 10.62 across a fourfold range of it. Those are rivals and
+they were untestable in a constant world. `config/seasonal.toml` separates them, because the
+population now rises and falls on a **known clock** while the light does the same thing a quarter
+of a period earlier. The statistic is the correlation of detrended mean cells per body against
+season phase, with the flat control — which must come out at zero — beside it. ⚠️ **And a genome
+statistic must be reported next to it**: genes per genome, mean `rest_length`, the fraction of
+genes that divide and adhere. Mean cells per body is an accounting quotient whose numerator and
+denominator the light both moves, and it will track the phase in a world where selection is doing
+nothing whatever.
 
 **Q3**, **Q5**, **Q6**, **Q8**, **Q9**, **Q12**, **Q16** (`reseed_on_extinction` still does
 nothing), **Q18**, **Q19**, **Q21**, **Q23**, **Q25**, **Q28** (`egui-wgpu` still requires

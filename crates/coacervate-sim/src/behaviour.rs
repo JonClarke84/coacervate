@@ -484,7 +484,7 @@ impl Neighbourhood {
 /// CLAUDE.md: a simulation that cannot allocate cannot leak. Every array here is built at the
 /// size the configuration implies - one entry per cell the world could ever hold, or one per
 /// organism - and none of them can grow. At SPEC section 3's defaults that is 256,000 cells at
-/// twenty bytes apiece and four thousand organisms at thirty-two, so about **5 MB**, and the
+/// twenty-four bytes apiece and four thousand organisms at thirty-two, so about **6 MB**, and the
 /// two neighbourhoods cost 5 MB each. Sixteen megabytes all told, against the 61 MB `world.rs`
 /// accounts for and CLAUDE.md's resident target of 2 GB.
 pub struct Behaviour {
@@ -547,6 +547,19 @@ pub struct Behaviour {
     sensed: Vec<f32>,
     sensors: Vec<u32>,
 
+    /// What every myocyte's controller says its springs' rest length is a multiple of, this
+    /// tick.
+    ///
+    /// ⚠️ **A per-cell quantity worked out in a pass of its own, and the reason is a trap rather
+    /// than tidiness.** The charge is worked out per *spring*, so a myocyte in the middle of a
+    /// chain is visited twice — and [`Cell::contraction`] holds *last* tick's value, which the
+    /// same visit has to overwrite. Read and written in one pass, the second spring would find
+    /// that "last tick" had already become "this tick", would measure a distance of nought and
+    /// would be charged nothing: every adhesion after the first, free. So the reading is here,
+    /// the spring loop sits between, and the writing happens after. See
+    /// `a_muscle_in_the_middle_of_a_chain_pays_for_every_spring_it_moves`.
+    contracted: Vec<f32>,
+
     /// What each cell gained or lost over the tick, for the renderer to brighten it by.
     ///
     /// Accumulated here and written onto the cells at the end, because a cell can be paid and
@@ -577,6 +590,7 @@ impl Behaviour {
             signal: vec![0.0; cells],
             sensed: vec![0.0; cells],
             sensors: vec![0; cells],
+            contracted: vec![1.0; cells],
             flow: vec![0.0; cells],
         }
     }
@@ -749,16 +763,25 @@ impl Behaviour {
     /// A muscle that is not moving therefore pays exactly nothing, and one working against a
     /// stiffer spring pays proportionally more.
     ///
-    /// The distance is worked out from the controller itself rather than remembered from last
-    /// tick - the rest length is a closed-form function of the time, so last tick's is a
-    /// subtraction rather than a number that has to be stored per spring and kept in step. The
-    /// one approximation in it is that the amplitude is taken as it is *now* for both, so a
-    /// tick in which the sensors changed sharply mis-measures the distance by whatever the
-    /// amplitude moved. That is a hundredth of a tick's swing at worst and it costs nothing to
-    /// be wrong about.
+    /// ⭐⭐ **The distance is *remembered* rather than worked out from the controller, and Group
+    /// L is that change.** The rest length looks like a closed-form function of the time, so
+    /// last tick's looked like a subtraction rather than a number anything had to store — and
+    /// that reading is wrong, because the controller also reads a **sensor**. Evaluating it a
+    /// tick back with *this* tick's sensor reading cancels the sensor out of the subtraction
+    /// entirely: a myocyte whose signal changed moved its spring for free, by up to
+    /// `base × stroke` in one tick, and with `osc_freq` at nought — 87% of myocyte spring-ticks
+    /// — the charge was **exactly** nought. In SPEC section 8's water that is free displacement.
+    /// See [`Cell::contraction`].
+    ///
+    /// ⚠️ **And the tension is taken at the rest length the spring was already at**, not the one
+    /// this tick has just moved it to. Taken after the jump the tension contains the jump as
+    /// well, and the charge goes as its **square** — which matters because a sensocyte reads a
+    /// light field quantised on eight-unit tiles and steps discontinuously at every boundary
+    /// crossing. Force through distance means the force that was opposing the movement when it
+    /// began; `no_single_tick_can_charge_a_muscle_more_than_the_body_holds` is the bound.
     fn contract(
         &mut self,
-        cells: &[Cell],
+        cells: &mut [Cell],
         springs: &mut [Spring],
         owner: &[usize],
         organisms: &[Option<Organism>],
@@ -773,6 +796,7 @@ impl Behaviour {
             signal,
             sensed,
             sensors,
+            contracted,
             lost,
             flow,
             ..
@@ -799,41 +823,61 @@ impl Behaviour {
             }
         }
 
+        // ⭐ **What every muscle's controller says, this tick.** A per-cell quantity, so it is
+        // worked out once per cell rather than once per spring - and it has to be, because
+        // [`Cell::contraction`] still holds *last* tick's value until the spring loop below has
+        // finished reading it. See [`Behaviour::contracted`].
         let seconds = elapsed(ticks);
-        let a_tick_ago = seconds - f64::from(DT);
+        for (index, cell) in cells.iter().enumerate() {
+            contracted[index] = 1.0;
+
+            // The gene that made this cell a myocyte is the gene that says how it moves. A cell
+            // carrying an index into its own organism's genome is an invariant
+            // `development.rs` establishes and nothing afterwards can disturb: a body and the
+            // genome it was grown from are made and replaced together.
+            let (CellKind::Myocyte, Some(which)) = (cell.kind, cell.gene) else {
+                continue;
+            };
+            let Some(organism) = organisms[owner[index]].as_ref() else {
+                continue;
+            };
+            let gene = &organism.genome().genes()[usize::from(which)];
+
+            let heard = if sensors[index] > 0 {
+                sensed[index] / narrowed(f64::from(sensors[index]))
+            } else {
+                0.0
+            };
+            let (freq, phase) = (f64::from(gene.osc_freq), f64::from(gene.osc_phase));
+
+            contracted[index] = contraction(drive, gene, heard, seconds.mul_add(freq, phase));
+        }
 
         for spring in springs.iter_mut() {
             let slot = owner[spring.a];
-            let Some(organism) = organisms[slot].as_ref() else {
+            if organisms[slot].is_none() {
                 continue;
-            };
+            }
 
             let mut now = 0.0f32;
             let mut a_moment_ago = 0.0f32;
             let mut muscles = 0u32;
 
             for end in [spring.a, spring.b] {
-                if cells[end].kind != CellKind::Myocyte {
+                if cells[end].kind != CellKind::Myocyte || cells[end].gene.is_none() {
                     continue;
                 }
-                // The gene that made this cell a myocyte is the gene that says how it moves.
-                // A cell carrying an index into its own organism's genome is an invariant
-                // `development.rs` establishes and nothing afterwards can disturb: a body and
-                // the genome it was grown from are made and replaced together.
-                let Some(which) = cells[end].gene else {
-                    continue;
-                };
-                let gene = &organism.genome().genes()[usize::from(which)];
 
-                let heard = if sensors[end] > 0 {
-                    sensed[end] / narrowed(f64::from(sensors[end]))
-                } else {
-                    0.0
-                };
-                let (freq, phase) = (f64::from(gene.osc_freq), f64::from(gene.osc_phase));
-
-                now += contraction(drive, gene, heard, seconds.mul_add(freq, phase));
-                a_moment_ago += contraction(drive, gene, heard, a_tick_ago.mul_add(freq, phase));
+                now += contracted[end];
+                // Where this muscle's controller had it a tick ago, which is a fact about the
+                // muscle and is therefore kept on the muscle. A cell whose controller has never
+                // run is taken to be already where it asks to be - its body was *developed* at
+                // that length - so its first tick moves nothing and is charged nothing.
+                //
+                // ⚠️ Summed over the myocyte ends only, exactly as `now` is, and multiplied by
+                // the same `each` below. A mean over *both* ends would fold a non-myocyte's 1.0
+                // into the total and halve the distance.
+                a_moment_ago += cells[end].contraction.unwrap_or(contracted[end]);
                 muscles += 1;
             }
 
@@ -847,7 +891,7 @@ impl Behaviour {
             spring.rest_length = base * now;
 
             let apart = wrapped_offset(cells[spring.a].pos, cells[spring.b].pos, width).length();
-            let tension = f64::from(spring.stiffness) * f64::from(apart - spring.rest_length);
+            let tension = f64::from(spring.stiffness) * f64::from(apart - base * a_moment_ago);
             let moved = f64::from(base) * f64::from(now - a_moment_ago);
             let cost = movement_cost * tension.abs() * moved.abs();
 
@@ -861,6 +905,14 @@ impl Behaviour {
                 if cells[end].kind == CellKind::Myocyte {
                     flow[end] -= narrowed(cost) * each;
                 }
+            }
+        }
+
+        // ⭐ And only now is last tick's contraction replaced by this tick's, once every spring
+        // that reads it has been read. See [`Behaviour::contracted`].
+        for (index, cell) in cells.iter_mut().enumerate() {
+            if cell.kind == CellKind::Myocyte && cell.gene.is_some() {
+                cell.contraction = Some(contracted[index]);
             }
         }
     }
@@ -1452,7 +1504,10 @@ mod tests {
     use super::*;
     use crate::cell::CellKind;
     use crate::config::{Config, RawConfig, spec_defaults};
-    use crate::genome::{Action, Gene, Genome, SensorTarget, State};
+    use crate::genome::{
+        Action, Gene, Genome, MAX_SENSOR_GAIN, MAX_STIFFNESS, SensorTarget, State,
+    };
+    use proptest::prelude::*;
     use std::f32::consts::FRAC_PI_2;
 
     /// SPEC's default configuration with some of it changed, checked and ready to build a
@@ -2850,9 +2905,25 @@ mod tests {
         // now **thirteen per cent** of it. Nothing about what a muscle is charged for its work
         // changed. What changed is that a muscle is no longer priced mostly by being owned,
         // which is what the sweep was for.
+        //
+        // ⚠️ **Re-recorded a third time in Group L, and all three earlier figures are kept:**
+        // 0.00186 at `movement_cost = 0.15`, 0.0827 after Group H, and **0.08233** now. Half a
+        // per cent, and it is the whole visible effect of Group L on a muscle with no sensor.
+        // The work is now charged at the tension the spring was **already carrying** rather
+        // than at the one this tick's contraction has just moved it to - see
+        // `no_single_tick_can_charge_a_muscle_more_than_the_body_holds` for why, which is that
+        // the second reading is quadratic in a jump the light field can make discontinuously.
+        // Over a smooth 3 rad/s oscillation the two readings differ only by the one-tick lag
+        // between the force and the distance it acts through, which at a twentieth of a radian
+        // a tick is exactly this half a per cent.
+        //
+        // The **first** tick is unchanged at nought either way, which is worth knowing because
+        // Group L also stopped the first tick being measured from a phase the muscle was never
+        // at: here the spring starts at `base × 1.0`, so it is carrying no tension on tick zero
+        // and pays nothing whichever distance is used.
         assert!(
-            (spent - 0.0827).abs() < 1e-4,
-            "a myocyte spent {spent} over a hundred and thirty ticks, against the 0.0827 \
+            (spent - 0.08233).abs() < 1e-4,
+            "a myocyte spent {spent} over a hundred and thirty ticks, against the 0.08233 \
              recorded here"
         );
         assert!(
@@ -2960,6 +3031,313 @@ mod tests {
              length its phase puts it at",
             scene.springs[0].rest_length
         );
+    }
+
+    /// One body for the three tests below: a myocyte that is deaf to time and listens to a
+    /// sensocyte, with a sclerocyte on the far end of the spring it works.
+    ///
+    /// The sensocyte's own adhesion is given a stiffness of **nought** deliberately. It has to
+    /// be a spring, because SPEC section 9's "connected" means adhered and one spring away — but
+    /// a spring carrying force as well as signal would put a second charge into every reading
+    /// below, and what these tests are about is the one spring the muscle is working.
+    fn a_sensed_muscle(
+        scene: &mut Scene,
+        gain: f32,
+        phase: f32,
+        spring: (f32, f32),
+        apart: f32,
+    ) -> usize {
+        let genome = Genome::new(
+            vec![
+                a_behaviour_gene(1, 0.0, phase, gain, SensorTarget::Light),
+                a_behaviour_gene(2, 0.0, 0.0, 0.0, SensorTarget::Detritus),
+            ],
+            &scene.config.limits,
+        );
+
+        let body = scene.add(
+            genome,
+            4.0,
+            &[
+                (CellKind::Myocyte, Vec2::new(40.0, 72.0), Some(0)),
+                (CellKind::Sclerocyte, Vec2::new(40.0 + apart, 72.0), None),
+                (CellKind::Sensocyte, Vec2::new(40.0, 60.0), Some(1)),
+            ],
+        );
+        scene.adhere(0, 1, spring.0, spring.1);
+        scene.adhere(0, 2, 12.0, 0.0);
+
+        body
+    }
+
+    /// Where a grain of detritus goes to drive that sensocyte's signal over the half-way mark.
+    ///
+    /// Four units from the sensocyte. `drift_gradient` fades a grain out linearly to nothing at
+    /// `SENSE_RANGE`, so one grain at four units reads `(1 − 4/13.6)/4 = 0.176`, which against
+    /// the unit reference for a detritus sensor is a signal of **0.15** — enough that a gain of
+    /// −8 drives the amplitude hard against the bottom of its clamp from anywhere in `0..=1`.
+    const A_GRAIN_NEARBY: Vec2 = Vec2::new(44.0, 60.0);
+
+    /// ⭐⭐ **A myocyte pays for the shape its sensor moved it to.**
+    ///
+    /// The defect this replaces is a pre-existing hole in the physics and has nothing to do with
+    /// any payoff. `Behaviour::contract` used to work out how far a spring had moved by
+    /// re-evaluating SPEC section 9's controller one tick back — **using this tick's sensor
+    /// reading** — so the sensor's whole contribution cancelled out of the subtraction and was
+    /// never charged. With `osc_freq = 0`, which Group I measured as 87% of all myocyte
+    /// spring-ticks, the sine contributed nothing either, and the charge was **exactly nought**
+    /// while the rest length had genuinely moved by up to `base × stroke`: eight world units in
+    /// one tick, on a base-eight spring.
+    ///
+    /// ⚠️ **In anisotropic water a free shape change is free displacement.** SPEC section 8
+    /// refused exactly this pattern when it declined to give a loose cell a drag axis — *"that
+    /// is thrust with no muscle behind it, and it would look exactly like life."*
+    ///
+    /// The body below is the configuration: `osc_freq` nought, a phase that holds the spring
+    /// away from its unmodulated length, and a sensocyte whose signal goes from nothing to over
+    /// the half-way mark between two consecutive ticks. What it is charged is
+    /// `movement_cost × tension × distance` for the distance it **actually** moved.
+    #[test]
+    fn a_muscle_pays_for_the_shape_its_sensor_moved_it_to() {
+        let settings = evenly_lit();
+        let mut scene = Scene::new(&settings);
+        scene.fill_with_light();
+
+        let body = a_sensed_muscle(&mut scene, -MAX_SENSOR_GAIN, FRAC_PI_2, (8.0, 10.0), 8.0);
+
+        // One tick with nothing to smell: the amplitude is the bare resting one, and the spring
+        // is put where the phase says and left there.
+        scene.run();
+        let unsensed = scene.energy(body);
+
+        // Then the water changes, and with it the only thing this muscle listens to. A gain of
+        // −8 against a signal of 0.15 drives `resting_amplitude + gain × signal` below nought,
+        // so the clamp puts the amplitude at exactly zero and the spring goes back to its
+        // unmodulated length. Every quantity below is therefore exact.
+        scene.drop_detritus(A_GRAIN_NEARBY, 0.5);
+        scene.run();
+
+        let swing = f64::from(scene.config.behaviour.resting_amplitude)
+            * f64::from(scene.config.behaviour.stroke);
+        let held = 8.0 * (1.0 + swing);
+        let moved = held - 8.0;
+        let tension = 10.0 * (8.0 - held);
+        let expected = f64::from(scene.config.metabolism.movement_cost) * tension.abs() * moved;
+
+        assert!(
+            expected > 0.0,
+            "this scene's settings give the muscle nothing to move, so it cannot measure whether \
+             moving is charged for"
+        );
+        assert!(
+            (unsensed - scene.energy(body) - expected).abs() < 1e-7,
+            "a muscle whose sensor moved its spring by {moved} world units against a tension of \
+             {tension} was charged {}, and force through distance is {expected}. It was exactly \
+             nought before this was fixed, because the distance was worked out by re-evaluating \
+             the controller with this tick's sensor reading",
+            unsensed - scene.energy(body)
+        );
+        assert!(
+            (scene.springs[0].rest_length - 8.0).abs() < 1e-4,
+            "the spring came to rest at {} rather than at its unmodulated eight, so the sensor \
+             did not drive the amplitude to the bottom of its clamp and the arithmetic above is \
+             not the arithmetic being measured",
+            scene.springs[0].rest_length
+        );
+    }
+
+    /// ⭐⭐ **And a muscle holding a shape still pays nothing**, which is the asymmetry the whole
+    /// economy rests on.
+    ///
+    /// `a_myocyte_that_does_nothing_pays_nothing` says this for a muscle with no sensor at all.
+    /// This says it for the case the fix above had to be careful about: a muscle with a sensor
+    /// whose reading never changes, and a phase that holds its spring a long way from the length
+    /// its gene asked for. Holding a shape is not work, however far from rest the shape is.
+    ///
+    /// ⚠️ **The first tick is what the fix had to be careful about.** A muscle whose phase is
+    /// anything but nought would, on the obvious implementation, be charged once at birth for a
+    /// journey from a rest length it was never at — its body was *developed* at the length the
+    /// controller asks for. So the remembered contraction is an **absence** until the controller
+    /// has run once, exactly as `Cell::gene` is an absence rather than a number standing for
+    /// one. See [`Cell::contraction`], which records why that costs nothing today and would
+    /// stop costing nothing quietly.
+    #[test]
+    fn a_muscle_holding_still_still_pays_nothing() {
+        let settings = evenly_lit();
+        let mut scene = Scene::new(&settings);
+        scene.fill_with_light();
+
+        // The grain is there before the first tick and never moves, so the signal is a constant.
+        scene.drop_detritus(A_GRAIN_NEARBY, 0.5);
+        let body = a_sensed_muscle(&mut scene, MAX_SENSOR_GAIN, 1.0, (8.0, 10.0), 8.0);
+        let dissipated_before = scene.ledger.dissipated();
+
+        for _ in 0..100 {
+            scene.run();
+        }
+
+        assert!(
+            (scene.energy(body) - 4.0).abs() < f64::EPSILON,
+            "a myocyte whose sensor reads the same thing every tick paid {} over a hundred \
+             ticks, so holding a shape has become work and a body would be selected on how many \
+             muscles it has rather than on what it does with them",
+            4.0 - scene.energy(body)
+        );
+        assert!(
+            (scene.ledger.dissipated() - dissipated_before).abs() < f64::EPSILON,
+            "a hundred ticks in which no shape changed still dissipated {}",
+            scene.ledger.dissipated() - dissipated_before
+        );
+        assert!(
+            (scene.springs[0].rest_length - 8.0).abs() > 1.0,
+            "the spring is at {} — within a unit of its unmodulated length — so this body is \
+             not holding a shape at all and the claim above is about nothing",
+            scene.springs[0].rest_length
+        );
+    }
+
+    /// ⭐⭐ **A muscle in the middle of a chain pays for *every* spring it moves.**
+    ///
+    /// ⚠️ **This is the trap in remembering the contraction on the cell**, and nothing else in
+    /// this file would have caught it. A myocyte's contraction is a fact about the *cell* and the
+    /// charge is worked out per *spring*, so a muscle with two springs is visited twice — and an
+    /// implementation that read last tick's value off the cell and wrote this tick's back in the
+    /// same visit would find, on the second spring, that "last tick" had already become "this
+    /// tick". The second spring would move exactly as far and be charged **nothing**, and a
+    /// lineage would get every adhesion after the first for free.
+    ///
+    /// So the reading and the writing are two passes over the cells with the spring loop between
+    /// them, and this is the test that says so: the same muscle, once with one spring and once
+    /// with two identical ones, pays exactly twice as much.
+    #[test]
+    fn a_muscle_in_the_middle_of_a_chain_pays_for_every_spring_it_moves() {
+        let worked = |springs: usize| {
+            let settings = evenly_lit();
+            let mut scene = Scene::new(&settings);
+            scene.fill_with_light();
+
+            let genome = Genome::new(
+                vec![a_behaviour_gene(1, 3.0, 0.0, 0.0, SensorTarget::Light)],
+                &settings.limits,
+            );
+            let body = scene.add(
+                genome,
+                4.0,
+                &[
+                    (CellKind::Myocyte, Vec2::new(40.0, 72.0), Some(0)),
+                    (CellKind::Sclerocyte, Vec2::new(48.0, 72.0), None),
+                    (CellKind::Sclerocyte, Vec2::new(32.0, 72.0), None),
+                ],
+            );
+            scene.adhere(0, 1, 8.0, 10.0);
+            if springs > 1 {
+                // The mirror image of the first, so the two are the same spring worked the same
+                // way and the answer is exactly twice rather than nearly.
+                scene.adhere(0, 2, 8.0, 10.0);
+            }
+
+            for _ in 0..130 {
+                scene.run();
+            }
+
+            4.0 - scene.energy(body)
+        };
+
+        let one = worked(1);
+        let two = worked(2);
+
+        assert!(
+            one > 0.0,
+            "the muscle with one spring paid nothing, so this measures nothing at all"
+        );
+        assert!(
+            ((two / one) - 2.0).abs() < 1e-6,
+            "a muscle working two identical springs paid {two} against the {one} it pays for \
+             one, which is {:.4} times rather than twice. Its second spring moved just as far \
+             and was charged for a distance of nought",
+            two / one
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        /// ⭐⭐ **No single tick can charge a muscle more than the force it was already carrying.**
+        ///
+        /// The work a muscle does is `force × distance`, and **which** force is the whole of this
+        /// test. Taken at the rest length the contraction has just moved the spring *to*, the
+        /// tension contains the jump as well — so the charge is `k × base² × Δ²`, quadratic in a
+        /// quantity the world can move discontinuously. The light gradient a sensocyte reads is
+        /// quantised on eight-unit tiles and steps at every boundary crossing, so at an inserted
+        /// gene's mean stiffness of 72 and a base of 7.88 one crossing would cost **0.29 in a
+        /// single tick** — more than thirty times a two-celled body's entire per-tick upkeep of
+        /// 0.009, and this test's own worst case is **0.319**. Produced by the
+        /// resolution of the grid rather than by anything biological.
+        ///
+        /// Taken at the rest length the spring **was** at, the charge is linear in the distance,
+        /// which is also the physically correct reading of force through distance: the force
+        /// opposing the movement is the force that was there when it began.
+        ///
+        /// The bound below is that statement with nothing left out — the tension the spring was
+        /// already carrying, times the furthest the stroke can move it — and it holds over the
+        /// whole space of gains, signals, resting amplitudes, strokes, phases, stiffnesses and
+        /// rest lengths. ⚠️ **At `stretch = 0` it is exactly nought**: a spring standing at the
+        /// length it was holding is carrying no force, so a sensor may move it as far as it likes
+        /// for free, and that single case is what the quadratic reading cannot pass.
+        #[test]
+        fn no_single_tick_can_charge_a_muscle_more_than_the_body_holds(
+            resting in 0.0f32..=1.0,
+            stroke in 0.0f32..=1.0,
+            phase in 0.0f32..std::f32::consts::TAU,
+            gain in -MAX_SENSOR_GAIN..=MAX_SENSOR_GAIN,
+            stiffness in 0.0f32..=MAX_STIFFNESS,
+            base in 1.0f32..=MAX_REST_LENGTH,
+            stretch in 0.0f32..=5.0,
+        ) {
+            let mut raw = spec_defaults();
+            raw.light.influx = 0.012;
+            raw.world.width = 256.0;
+            raw.world.height = 144.0;
+            raw.world.grid_cols = 32;
+            raw.world.grid_rows = 18;
+            raw.light.gradient = 0.0;
+            raw.light.patchiness = 0.0;
+            raw.limits.max_organisms = 8;
+            raw.limits.max_cells_per_organism = 8;
+            raw.behaviour.resting_amplitude = f64::from(resting);
+            raw.behaviour.stroke = f64::from(stroke);
+            let settings = raw
+                .validate()
+                .expect("this test's configuration must be one the program will accept");
+
+            // Where the controller puts this spring with nothing to smell, which is where it
+            // stands when the grain arrives.
+            let held = base * (1.0 + resting * stroke * phase.sin());
+
+            let mut scene = Scene::new(&settings);
+            scene.fill_with_light();
+            let body = a_sensed_muscle(&mut scene, gain, phase, (base, stiffness), held + stretch);
+
+            scene.run();
+            let unsensed = scene.energy(body);
+
+            scene.drop_detritus(A_GRAIN_NEARBY, 0.5);
+            scene.run();
+
+            // The tension the spring was already carrying, times the furthest a stroke can move
+            // a rest length in one tick.
+            let tension = f64::from(stiffness) * f64::from(stretch);
+            let reach = 2.0 * f64::from(base) * f64::from(stroke);
+            let most = f64::from(settings.metabolism.movement_cost) * tension * reach;
+
+            let spent = unsensed - scene.energy(body);
+            prop_assert!(
+                spent <= most + 1e-9,
+                "one tick charged {spent} against the {most} a spring carrying {tension} of \
+                 tension can do while being moved through {reach}. A charge above this is the \
+                 jump being counted twice — once as the distance and once as the force"
+            );
+        }
     }
 
     /// ⭐ The drift is **searched** rather than scanned, and this test is the reason the whole

@@ -80,6 +80,10 @@ gradient = 0.75          # 0 = uniform, 1 = fully top-weighted
 patchiness = 0.5         # spatial noise amplitude
 patch_drift = 0.0006     # world units per tick the patches slide sideways — see section 4
 diffusion = 0.04         # lateral spread per tick
+season_period = 21000    # ticks for one whole rise and fall of `influx` — measured window,
+                         # see section 4
+season_amplitude = 0.0   # how deep that rise and fall goes, as a fraction of `influx`.
+                         # ⚠️ Ships at nought: `config/seasonal.toml` is the same world at 0.25
 
 [physics]
 drag = 0.92              # velocity retained per tick (high — viscous regime)
@@ -243,6 +247,26 @@ it closes the window between "old enough to breed" and "dead" from both ends at 
 founder's death, before a single birth.** The temperature slider is a real environmental
 pressure and it is not a carrying-capacity control.
 
+### ⭐⭐ `light.season_amplitude` ships at nought, and shipping it inert is the decision
+
+The season is the first mechanism this project has landed **switched off**, and that is a
+decision rather than caution. Phase 7's Group H shipped a sevenfold change to every muscle in
+the world and could not afterwards separate *did I break anything* from *the world is now
+different*; the two questions had been asked in one commit. With the amplitude at nought the
+multiplier `1 + amplitude × triangle(phase)` is exactly 1.0, `f64::from(x) * 1.0` narrows back to
+`x` for every `x` there is, and `config/default.toml` is **bit-for-bit** the world every figure
+in `docs/PHASE7.md` was measured on. Six golden vectors do not have to be re-recorded, every
+prior reading stays comparable, and a varying world is one profile away.
+
+⚠️ **The multiplier is computed unconditionally and there is no branch for the amplitude being
+nought.** An early return there is the most dangerous thing this feature could contain: it leaves
+the multiplier frozen wherever the season was when the dial reached zero, and the world then runs
+permanently at up to 1.25× its stated influx with `season_amplitude = 0` written in the config
+file, in the panel and in the replay log, while section 5's ledger balances to the last digit and
+says nothing. That is section 4's named failure — *"a world that was poorer than its `influx`
+said, with a carrying capacity nobody could explain"* — reached through the settings panel and in
+the other direction.
+
 **Profiles.** Ship named presets rather than expecting anyone to tune 26 sliders from cold:
 
 | Profile | Intent |
@@ -251,6 +275,7 @@ pressure and it is not a carrying-capacity control.
 | `dense` | ⭐ **The same total energy in a quarter of the water** — `world.height` cut to 288 with `light.influx` raised fourfold to match, so `tiles × influx` is the `default` profile's exactly. It exists to ask section 6's open question: does a feeding-strategy split appear once bodies actually *meet* one another? At the shipped density only **13.5%** of cells are in contact with a foreign body; at four times it, **58.8%** are, and predation measured **eight times** higher. ⚠️ **The height is what shrinks, never the width.** Section 8 warns that springs have no length limit and are not found by the spatial hash, and a 64-cell body at `MAX_REST_LENGTH` reaches 870 units — so in a world narrower than about 1,200 a single chain reaches more than half way round it and that warning goes live. ⚠️ And the population *falls* here rather than holding: raising `influx` further to prop it back up is the `bloom` failure below, arrived at by a different road. |
 | `slow` | `max_ticks_per_second` reduced so meaningful change happens over hours rather than minutes. For leaving it up on a second screen and noticing it rather than watching it. |
 | `bloom` | High light influx — the old `0.012` is exactly this. **The population fills `max_organisms` and stops, with the water still full**, which is stagnation by way of the arena rather than by way of abundance. Worth shipping precisely because it is what a too-bright world actually looks like from the outside: a healthy-looking constant population with no selection acting on it. |
+| `seasonal` | ⭐⭐ **The shipped world with the light rising and falling** — `light.season_amplitude` 0.0 → 0.25 and nothing else changed. It exists because every other profile in this project is a *constant* environment, in which being adapted is a fixed fact about a lineage. ⚠️ **Do not expect a muscle from it**, and that is measured rather than hoped: the competition assay run flat and seasoned, three seeds, two whole periods, moved the coefficient on the largest free shape change from **+0.71 to +0.88 %/generation** against a seed-to-seed spread of ±0.5 — no detectable difference. The fastest the standing field can change is its own 8,000-tick filling time, which is 4.6 lifetimes, so **no body ever lives through a change in its own conditions.** What it is for is ecology and chronicle: a population that rises and falls on a known clock is the first thing in this project that makes section 15's Q32 — does body size track the light or the population? — testable at all. |
 | `famine` | Low influx — a world of a few hundred bodies rather than a few thousand. ⚠️ **It does not produce extinction, and that is a measured finding rather than an oversight.** At a tenth of the shipped light the population settles at about 210 and goes on turning over indefinitely, because how hard a body has to work to replace itself does not depend on how much light there is — only how many bodies the world can carry does. What *does* end a run is `upkeep_scale`: at 3 or above, a founder dies of old age before it has earned the reproduction threshold, and nothing is ever born. If a preset is wanted that demonstrates extinction, that is the slider it has to move. |
 
 ---
@@ -405,6 +430,123 @@ per recomputation is proportional to how far the field moved since the last one,
 recomputations happen in inverse proportion to the same interval. What the interval buys is
 smoothness; the implementation uses 100 ticks, which at the shipped drift is a hundred and
 thirtieth of a tile's width.
+
+### ⭐⭐ The light rises and falls, and it does so on `influx` and on nothing else
+
+The patches drift, so the best water is somewhere new. That is a field moving in **space**. A
+season is the same field moving in **time**, and it exists for a reason that is not a payoff: a
+world whose statistics never change is one in which being adapted is a fixed fact about a
+lineage, and there is no version of *conditions changing* in a constant environment.
+
+Per tick, `regrowth` is scaled by one scalar before it is offered:
+
+```
+phase      = (phase + 1 / season_period) mod 1        // accumulated, never derived from a tick count
+season     = 1 + season_amplitude × triangle(phase)
+regrowth   = influx × light_profile(y) × season
+```
+
+where `triangle` is nought at the start, `+1` a quarter of the way through, nought at the half
+and `−1` three quarters through — the corners being the brightest and dimmest moments of the
+year.
+
+**A triangle rather than a sine, and it is not a stylistic choice.** One scalar multiplies all
+36,864 tiles every tick, which is **36,864 times** the golden-vector exposure that `behaviour.rs`'s
+single-spring `sin` carries, and a transcendental that moves in the last bit across a toolchain
+change would move every recording this project has ever made. A triangle is exact in 64-bit
+arithmetic at every phase, needs no library function, is mean-preserving over a period by exact
+antisymmetry rather than by cancellation, is **exactly 1.0** at an amplitude of nought, and reads
+identically to a sine at ±25%.
+
+**The phase is accumulated rather than worked out from the tick count**, exactly as the drift's
+own offset is and for the same reason: `[light]` is live, so somebody can turn `season_period` up
+mid-run, and a `ticks / period` phase would teleport a living world into a different part of its
+year the instant they did. Turning a dial changes the *speed* of the season and never where in
+one the world is.
+
+**And it is held at nought until the first organism is ever seeded.** The dawn that fills the
+field stops on a **light-dependent** test — `gained / after < DAWN_SETTLED` — so a season running
+through the dawn would change the dawn's *length*, and a seasoned run and a flat run would then
+start their clocks at different ticks against different fields. It would also land the founders
+of every shipped run at 0.83× and falling towards the trough 1.6 generations later, when every
+survival figure in `docs/PHASE7.md` was taken on level light at the founding.
+
+#### ⚠️ It is on `influx` because `influx` enters no ceiling
+
+`relight` builds `regrowth` from `influx` and `targets` from `cap × light_profile × (1 + patchiness
+× noise)`. **`influx` appears in no target.** So a season needs no retarget, moves no ceiling down
+under a full tile, and sheds no spill whatever — which is the whole energy argument, and it is
+what makes a season a different kind of object from the drift above. Measured over **fifteen whole
+periods** of a living world, world ticks 15,000 to 330,000:
+
+| Over fifteen whole periods | flat | ±25% | ±50% |
+| --- | --- | --- | --- |
+| `influx_total` | 6,978,241 | 6,951,729 (**−0.38%**) | 6,926,165 (**−0.75%**) |
+| `dissipated` | 7,053,272 | 7,025,634 (**−0.39%**) | 6,996,081 (**−0.81%**) |
+
+**Both fall, and both by a fraction of a per cent.** That pair of signs is the detector: a season
+on the *income* lowers `influx_total` slightly, because a dim half-cycle fails to deliver a little
+into tiles that were not full; a season on a *ceiling* would raise `dissipated` instead, and would
+raise it by the spill it created.
+
+The same amplitude applied to `cap` instead adds **0.656 per tick** of ceiling spill — 4.3% of
+throughput — swings the standing field by **90.7%**, and silently rescales a sensocyte's fixed
+0.02 reference against a field that has moved by that much. Nothing in the program would catch
+it: energy leaving through `dissipated` keeps section 5's invariant balanced to the last digit,
+which is the same blindness this section already records about a drifting ceiling. **A season on
+`cap`, `gradient`, `patchiness` or `metabolism.upkeep_scale` is refused for that reason and not
+for a stylistic one**, and the last of those is the worst: section 3's sweep records that
+`upkeep_scale` at ×3 and ×4 kills every world it is applied to before a single birth.
+
+#### The window the period has to sit in, measured
+
+| | Ticks | Why |
+| --- | --- | --- |
+| **Floor** | **8,000** | `cap / influx` — the time a tile takes to fill from empty. Below it the light changes and the water does not: measured, the standing field swings **2.04%** at a period of 2,000 against **6.74%** at 20,000 |
+| **Shipped** | **21,000** | 12.0 generations, so **6.0 generations per half cycle**; 2.4 whole cycles inside a median species life; and `gcd(21,000, 25,000) = 1,000`, so this project's 25,000-tick checkpoints walk **21 distinct phases** instead of the four a period of 20,000 would give them |
+| **Ceiling** | **~50,500** | the median species lifetime, above which a lineage lives entirely inside one half cycle and what it experiences is a trend rather than a season |
+
+The gate refuses anything below the floor and **nothing** above: a million-tick climate is a
+legitimate experiment, and an invented upper bound is one somebody argues with on the evening an
+experiment is refused. Zero is refused along with everything else below the floor, because
+`season_amplitude` is the off switch and a second one is two ways of saying the same thing.
+
+#### What the amplitude costs the population, against the right control
+
+The first reading of this compared the seasoned **trough** against the flat run's **mean**, which
+overstates the depth by more than double. **The flat world already swings by a factor of about two
+and a half on its own**, so its own second-half minimum is the only control worth comparing a
+seasoned trough against. Measured over the second half of a 330,000-tick run at 5,000-tick
+resolution:
+
+| | flat | ±25% | ±50% |
+| --- | --- | --- | --- |
+| second-half **low** | **517** | 468 | 529 |
+| second-half **high** | **1,234** | 2,109 | 2,202 |
+| peak to trough | **2.39×** | 4.51× | 4.16× |
+| mean alive over the run | **1,099** | 1,369 | 1,454 |
+
+⚠️ **Read the first row as *the trough does not deepen much* and no further.** At 5,000-tick
+sampling a trough is undersampled, and the ±50% run's low is above the ±25% run's — which is
+noise, not a reversal. What the table does establish is the thing the bound rests on: a seasoned
+world does not collapse, and it carries **more** organisms on average rather than fewer, because
+the same energy goes into more and smaller bodies (5.65 cells a body flat against 3.32 at ±50%).
+
+⚠️ **The bound of 0.5 is where the evidence stops and it is not a drift argument.** With a trough
+of a few hundred bodies and the largest real selection coefficient in this world at 0.85
+%/generation, `N·s` is comfortably above 1 at every amplitude the gate allows and for some way
+past it — drift does not outrun selection anywhere in the range. A bound is still not optional:
+above 1.0 the multiplier goes negative, which is light running backwards.
+
+#### ⚠️ And the honest headline: the season does not change what shape is worth
+
+Run under a ±25% season at period 21,000, three seeds, two whole periods, the competition assay
+returns the coefficient on the largest free shape change the genome can express at **+0.88
+%/generation**, against **+0.71** flat. The difference is 0.17 against a seed-to-seed spread of
+±0.5. **There is no detectable effect.** The reason is in the floor above: the fastest the
+standing field can change is its own 8,000-tick filling time, which is 4.6 lifetimes, so no body
+ever lives through a change in its own conditions. Build a season because a world that varies is
+the world this project is about; do not build one expecting a muscle.
 
 **Carrying capacity.** Total influx per tick is fixed, so total living biomass is bounded by
 it. This is the pressure that drives everything else in the simulation and is the reason
@@ -691,6 +833,64 @@ follow from that and neither is a price — **a single muscle doing something us
 locomotion**, such as changing a body's shape and therefore its self-shading, so that the first
 one pays; or **making the second muscle reachable in one mutation rather than two**. Both are
 argued in `docs/PHASE7.md`'s Group K and neither is built.
+
+### ⭐⭐⭐ What each of these cells is actually worth, measured
+
+**The first of the two candidates above was built as a design and refuted before a line of it was
+written, by an instrument that prices a body plan in forty minutes instead of a day.** The
+competition assay — `crates/coacervate-app/src/assay.rs` — seeds two founder sets that differ by
+**exactly one mutation** alternately into the shipped world after the dawn, attributes every
+organism born afterwards to the arm its parent belonged to, and reads the ratio of living
+descendants after 42,000 ticks (23.9 generations). Its noise floor is **±0.16 %/generation** and
+it resolves about **0.3**.
+
+| Arm B, against an identical arm A | upkeep added | descendant ratio | **coefficient** |
+| --- | --- | --- | --- |
+| a third **photocyte** | +0.004/tick | 1.076 | **+0.04 %/gen** — neutral |
+| the longest **`rest_length`** the genome can ask for (8.0 → 13.6) | none | 1.297 / 1.063 / 1.289 | **+0.71 %/gen** |
+| a third **sclerocyte** | +0.002/tick | 0.855 / 0.755 | **−1.07 %/gen** |
+| a third **myocyte**, holding still | +0.005/tick | 0.593 | **−2.46 %/gen** |
+| a third **myocyte**, beating at 2.5 rad/s | +0.005/tick | 0.516 / 0.355 | **−2.7 to −4.4 %/gen** |
+| a third **devorocyte** | +0.009/tick | 0.126 / 0.236 | **−6.1 to −9.0 %/gen** |
+| a **myocyte with an adhered sensocyte** | +0.011/tick | **0.097** | **−8.6 %/gen** |
+
+The world keeps extra photocytes — 3.28 cells a body after 24 generations against the control's
+1.98 — and **sheds every other kind of cell inside two dozen generations**: 2.22 for a sclerocyte,
+2.03 for a myocyte, 2.04 for a devorocyte, 2.04 for the muscle-and-sensor pair.
+
+> ⚠️⚠️ **Nothing in this world has an increasing return to being more than one thing.** A
+> photocyte's income scales linearly with photocyte count, upkeep scales linearly with cells,
+> section 10's reproduction threshold is linear in cells and section 10's lifespan is linear in
+> cells. Occlusion is actively *sub*linear, because a bigger body self-shades more. So growth is
+> a random walk and specialisation is a pure loss, at about **−0.5 %/generation for every
+> 0.001/tick of upkeep, whatever the cell does.**
+
+**The arithmetic that closes the muscle question.** A muscle must earn **+2.5 %/generation** to
+break even. The entire measured value of shape in this world — the largest free shape change the
+genome can express, taken in full and for nothing — is **+0.85 %/generation**. A beating muscle
+shifts its body's mean geometry by 0.8% against `rest_length`'s 70%, so its share of that channel
+is about 1%: **+0.01 against −2.7, a ratio of 1 : 270.** Even a muscle that could hold a shape
+perfectly captures at most the whole channel, **+0.85 against −2.5** — and `rest_length` already
+collects it for nothing, one point mutation away. This is why a self-shading payoff is not built,
+and it is a measurement rather than an opinion.
+
+⚠️ **Two things every coefficient here must be quoted with.** It measures the **filling** regime —
+two-celled bodies, a population rising towards 2,100 — and section 15's 300,000-tick world holds
+6.21 cells per body and 826 organisms, where own-body shading is a much larger share of a
+photocyte's income. And a ratio near 1.0 over the first 40,000 ticks can mean *still filling*
+rather than *no effect*, which is why the noise-floor arm exists and why every figure above is an
+excess over its own same-seed control.
+
+⚠️ **The photocyte row does not reproduce and the honest note belongs here.** Rebuilt from the
+public API with arm B being the founder plus one appended gene, that arm comes back at **1.531**
+rather than 1.076 — `+1.52 %/generation` against a noise floor of ±0.16. The noise floor itself
+reproduces (+0.063 against a recorded +0.064 at seed 42) and the myocyte row reproduces (−3.07
+against −2.46 %/gen), so the instrument agrees with itself; what differs is what a *third cell*
+was made of. Doubling a body's photocytes while adding 44% to its bill is not neutral. What
+survives, and it is the load-bearing half, is the **pair**: the same three-celled body differing
+in one `child_kind` keeps the earning cell over the silent one at three to one, and the arm that
+was given a muscle is back to 2.14 cells a body having been born with three. `docs/PHASE7.md`'s
+Group L has both readings.
 
 ### ⭐⭐ Buoyancy, and why depth is a property of composition
 

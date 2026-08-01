@@ -499,6 +499,39 @@ pub struct Cell {
     /// position it is drawing, and fetching it from anywhere else would mean the renderer
     /// walking two arrays in step.
     pub energy_flow: f32,
+
+    /// ⭐⭐ **What a myocyte's controller last multiplied its springs' rest length by**, or
+    /// nothing at all for a cell whose controller has never run.
+    ///
+    /// **Phase 7's Group L, and it closes a hole in the physics.** SPEC section 6 charges a
+    /// myocyte `movement_cost × work done` and `behaviour.rs` reads work as force through
+    /// distance. The distance used to be worked out by evaluating SPEC section 9's controller a
+    /// tick back rather than remembered — the rest length is a closed-form function of the time,
+    /// so last tick's looked like a subtraction rather than a number anything had to store. It
+    /// is not. The controller also reads a **sensor**, and the back-evaluation used *this*
+    /// tick's reading for both terms, so a sensor's whole contribution cancelled out of the
+    /// subtraction and was never charged. With `osc_freq` at nought — 87% of myocyte spring-ticks
+    /// (Group I) — the sine cancelled too and the charge was exactly nought while the rest
+    /// length had genuinely moved by up to `base × stroke`.
+    ///
+    /// ⚠️ In SPEC section 8's anisotropic water a free shape change is free displacement, which
+    /// is the pattern that section refused by name when it declined to give a loose cell a drag
+    /// axis: *"that is thrust with no muscle behind it, and it would look exactly like life."*
+    ///
+    /// ⚠️ **It is an absence rather than a one.** A muscle whose `osc_phase` is anything but
+    /// nought has not travelled anywhere on its first tick: its body was *developed* at the
+    /// length its controller asks for, so both the distance it moved and the force that
+    /// distance acted through are nought. Started at 1.0 the pair would be measured from a rest
+    /// length the spring was never at — which costs a newborn nothing today, only because
+    /// `development.rs` lays an adhered daughter down at exactly its gene's `rest_length` and
+    /// the tension there is nought, and which would begin charging the moment anything laid a
+    /// body down any other way. An absence cannot be wrong about a tick that has not happened.
+    /// It is written the way `Self::gene` is written, for the same reason.
+    ///
+    /// Only `behaviour.rs` writes it and only `behaviour.rs` reads it. It rides on the cell
+    /// because that is the one thing in this simulation that is gathered, ticked and scattered
+    /// back as a unit — the same route `Self::energy_flow` takes through `World::scatter`.
+    pub contraction: Option<f32>,
 }
 
 impl Cell {
@@ -520,6 +553,8 @@ impl Cell {
             // one has, and this is the state a seed cell begins in.
             gene: None,
             energy_flow: 0.0,
+            // No controller has run on it. See the field: this is an absence and not a one.
+            contraction: None,
         }
     }
 }

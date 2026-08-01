@@ -57,6 +57,14 @@ patch_drift = 0.0006     # `default.toml`'s, unchanged, and deliberately not sca
                          # swimming and budding can do, and neither of those got faster when
                          # the water got shallower.
 diffusion = 0.04
+season_period = 21000    # `default.toml`'s, unchanged. ⚠️ The floor is `cap / influx`, which in
+                         # this world is 2,000 rather than 8,000 — a quarter, because the light
+                         # is four times as bright — so a season here could legitimately run four
+                         # times as fast. It does not, for the reason `patch_drift` does not
+                         # scale either: this profile exists to ask one question about density,
+                         # and a preset that quietly also changed the weather would be an
+                         # experiment with two variables in it.
+season_amplitude = 0.0   # `default.toml`'s, unchanged, and inert here for the same reason.
 
 [physics]
 drag = 0.92

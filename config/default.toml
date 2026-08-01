@@ -36,6 +36,21 @@ patch_drift = 0.0006     # world units per tick the blotches slide sideways. Mea
                          # the blotches keep their shape and move. Bounded at 0.005, where the
                          # drift destroys more energy per tick than the light delivers. SPEC 4.
 diffusion = 0.04         # lateral spread per tick
+season_period = 21000    # ticks for one whole rise and fall of `influx`. Measured window, not
+                         # guessed: the floor is 8,000 = `cap / influx`, the time a tile takes to
+                         # fill from empty, below which the light changes and the water does not;
+                         # the ceiling is ~50,500, the median species lifetime, above which a
+                         # lineage lives entirely inside one half cycle. 21,000 is 12.0
+                         # generations - six per half cycle - 2.4 cycles inside a median species
+                         # life, and coprime enough with the project's 25,000-tick checkpoints
+                         # (gcd 1,000) that they walk 21 distinct phases instead of four. SPEC 4.
+season_amplitude = 0.0   # how deep that rise and fall goes, as a fraction of `influx`: the light
+                         # runs between `1 - a` and `1 + a` times its stated value. ⚠️ **It ships
+                         # at nought**, so this world is bit-for-bit the world every figure in
+                         # docs/PHASE7.md was measured on; `config/seasonal.toml` is the same
+                         # world with 0.25. Bounded at 0.5, which is where the measurements stop
+                         # and nowhere else - a seasoned world does not collapse, it carries more
+                         # and smaller bodies on the same energy. SPEC 4.
 
 [physics]
 drag = 0.92              # velocity retained per tick (high — viscous regime)

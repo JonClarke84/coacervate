@@ -451,6 +451,35 @@ pub struct Grid {
 
     /// How many ticks since the ceilings were last worked out. See [`RETARGET_EVERY`].
     since_retarget: u64,
+
+    /// How deep the season runs, `light.season_amplitude`, at the width the arithmetic runs at.
+    season_amplitude: f64,
+
+    /// How far through its season one tick takes the world: `1 / light.season_period`.
+    ///
+    /// Kept as the step rather than as the period for the reason [`Self::drifted`] is
+    /// accumulated rather than derived - see [`Self::season_phase`].
+    season_step: f64,
+
+    /// Where in its season the world is, between nought and one.
+    ///
+    /// ⚠️ **Accumulated rather than worked out from a tick count**, exactly as [`Self::drifted`]
+    /// is and for exactly the same reason: `[light]` is live, so somebody can turn
+    /// `season_period` up mid-run, and a `ticks / period` phase would teleport a living world
+    /// into a different part of its year the instant they did. Adding a step per tick means a
+    /// change of period changes the *speed* and nothing else.
+    season_phase: f64,
+
+    /// Whether the season has started at all.
+    ///
+    /// ⚠️ **It is held at nought until the first organism is ever seeded**, and that is not
+    /// tidiness. `founding.rs` ends its dawn on `gained / after < DAWN_SETTLED` - a
+    /// **light-dependent** test - so a season running through the dawn changes the dawn's
+    /// *length*, and a seasoned run and a flat run then start their clocks at different ticks
+    /// against different fields. It would also land every founder in this project's history at
+    /// 0.83x and falling towards the trough 1.6 generations later, when every survival figure
+    /// ever measured here was taken on level light.
+    seasoned: bool,
 }
 
 /// How many ticks pass between two recomputations of the tiles' ceilings.
@@ -505,6 +534,10 @@ impl Grid {
             drift_per_tick: 0.0,
             drifted: 0.0,
             since_retarget: 0,
+            season_amplitude: 0.0,
+            season_step: 0.0,
+            season_phase: 0.0,
+            seasoned: false,
         };
         grid.relight(config);
 
@@ -560,6 +593,22 @@ impl Grid {
             / f64::from(self.noise.cols);
 
         self.diffusion = light.diffusion;
+
+        self.season_amplitude = f64::from(light.season_amplitude);
+        // A period is a count of ticks and the gate refuses anything below `SEASON_PERIOD_FLOOR`,
+        // so this division cannot be by nought.
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a season's period is a count of ticks bounded below at eight thousand and \
+                      a run is not nine quadrillion ticks long; every period a person can write \
+                      is exact as a 64-bit float"
+        )]
+        let period = light.season_period as f64;
+        self.season_step = 1.0 / period;
+
+        // ⚠️ `season_phase` is deliberately left where it is, for the reason `drifted` below is:
+        // turning a dial changes how fast the seasons run and not where in one the world is.
+        // See `retuning_the_season_changes_its_speed_and_not_where_it_is`.
 
         // ⚠️ `drifted` is deliberately left where it is. A live change to `[light]` moves how
         // fast the blotches travel and how deep they are; it does not move them, and a retune
@@ -775,10 +824,81 @@ impl Grid {
     /// several times what it can, so the ceiling is enforced once, after the energy has
     /// finished moving, rather than being defended by every operation that touches a tile.
     pub fn tick(&mut self, ledger: &mut Ledger) {
+        self.turn();
         self.drift();
         ledger.light(self.regrow());
         self.diffuse();
         ledger.overflow(self.spill());
+    }
+
+    /// Start the seasons.
+    ///
+    /// ⭐ **Called by [`crate::world::World::seed`] and by nothing else.** SPEC section 4's
+    /// season is a fact about a world with something living in it: the dawn that fills the field
+    /// ends on a light-dependent test, so a season running through it would change how long the
+    /// dawn takes and a seasoned run and a flat run would begin at different ticks against
+    /// different fields. Idempotent, because a world is seeded many times and there is one
+    /// moment the clock starts.
+    pub(crate) fn begin_season(&mut self) {
+        self.seasoned = true;
+    }
+
+    /// Where in its season the world is, between nought and one: nought and a half are the mean,
+    /// a quarter is the brightest and three quarters the dimmest.
+    ///
+    /// ⭐ **The phase, and deliberately not the multiplier.** The multiplier is two-to-one over a
+    /// cycle - 1.0 happens twice, once on the way up and once on the way down - so it cannot say
+    /// whether the light is rising or falling, and a *lag* between the light and what lives under
+    /// it is the whole of what the season was built to make testable.
+    #[must_use]
+    pub const fn season_phase(&self) -> f64 {
+        self.season_phase
+    }
+
+    /// Move the world on through its season by one tick.
+    ///
+    /// Held at nought until something is alive to feel it - see [`Self::seasoned`] - and
+    /// wrapped every tick rather than allowed to grow, exactly as [`Self::drift`] wraps its own
+    /// offset, so the arithmetic keeps every digit it started with however long a run goes on.
+    fn turn(&mut self) {
+        if self.seasoned {
+            self.season_phase = (self.season_phase + self.season_step).rem_euclid(1.0);
+        }
+    }
+
+    /// What this tick multiplies [`crate::config::LightConfig::influx`] by.
+    ///
+    /// ⭐⭐ **Computed unconditionally, and there is no branch here for a reason.**
+    /// `1 + amplitude × triangle(phase)` is **exactly** 1.0 when the amplitude is nought, and
+    /// `f64::from(x) * 1.0` narrows back to `x` for every `x` there is - so a world with no
+    /// season is bit-for-bit the world that was there before one existed, without anything
+    /// having to remember to skip the arithmetic. An early return here is the most dangerous
+    /// thing this feature could contain: it would leave the multiplier frozen wherever the
+    /// season was when the amplitude dial reached nought, and the world would run permanently at
+    /// up to 1.25x its stated influx with `season_amplitude = 0` written in the config file, in
+    /// the panel and in the replay log, while SPEC section 5's ledger balanced to the last digit
+    /// and said nothing.
+    ///
+    /// # Why a triangle rather than a sine
+    ///
+    /// One scalar multiplies all 36,864 tiles every tick, which is **36,864 times** the
+    /// golden-vector exposure that `behaviour.rs`'s one-spring `sin` carries. A triangle is
+    /// exact in 64-bit arithmetic at every phase, needs no library function, is mean-preserving
+    /// over a period by exact antisymmetry rather than by cancellation, is exactly 1.0 at an
+    /// amplitude of nought, and reads identically to a sine at plus or minus a quarter.
+    fn season(&self) -> f64 {
+        // The triangle: nought at the start, +1 a quarter of the way through, nought at the
+        // half, −1 three quarters through. Every coefficient is a small power of two, so the
+        // whole of this is exact.
+        let wave = if self.season_phase < 0.25 {
+            4.0 * self.season_phase
+        } else if self.season_phase < 0.75 {
+            2.0 - 4.0 * self.season_phase
+        } else {
+            4.0 * self.season_phase - 4.0
+        };
+
+        self.season_amplitude.mul_add(wave, 1.0)
     }
 
     /// Move the blotches on by one tick, and re-read the ceilings if they have moved far
@@ -840,9 +960,15 @@ impl Grid {
     /// can see. `light_never_runs_backwards` is where that argument is written out in full.
     fn regrow(&mut self) -> f64 {
         let mut realised = 0.0;
+        // ⭐ **SPEC section 4's season, and it is this one multiplication.** It is here rather
+        // than in `relight` because `relight` is where a *ceiling* is worked out, and the whole
+        // energy argument for a season on `influx` is that `influx` enters no ceiling: no
+        // retarget, no target moving down under a full tile, no spill shed to `dissipated`. See
+        // [`Grid::season`] and `a_season_moves_no_ceiling`.
+        let season = self.season();
 
         for row in 0..self.rows {
-            let offered = self.regrowth[row];
+            let offered = narrowed(f64::from(self.regrowth[row]) * season);
             let across = row * self.cols..(row + 1) * self.cols;
 
             for tile in across {
@@ -2712,5 +2838,300 @@ mod tests {
                 );
             }
         }
+    }
+
+    // -------------------------------------------------------------------------------------
+    // Phase 7's Group L — the season
+    // -------------------------------------------------------------------------------------
+
+    /// A field with no population on it, ticked for a while, so a claim about the *light* is
+    /// not also a claim about who was eating.
+    fn ticked(config: &Config, ticks: u64) -> (Grid, Ledger) {
+        let mut grid = Grid::new(config);
+        let mut ledger = Ledger::new(grid.total_energy());
+
+        grid.begin_season();
+        for _ in 0..ticks {
+            grid.tick(&mut ledger);
+        }
+
+        (grid, ledger)
+    }
+
+    /// ⭐⭐ **A world with no season is the world that was there before one existed** — to the
+    /// bit, and not only on the tick it was built.
+    ///
+    /// The multiplier is `1 + amplitude × triangle(phase)`, computed **unconditionally**. At an
+    /// amplitude of nought that expression is exactly 1.0, `f64::from(x) * 1.0` narrows back to
+    /// `x` for every `x` there is, and the identity holds to the last bit however long the run
+    /// goes on and whatever the period is set to.
+    ///
+    /// ⚠️⚠️ **The second half is the one that matters, and every reviewer of this design found
+    /// the same defect.** An implementation that takes an early return when the amplitude is
+    /// nought — the obvious optimisation, and the obvious way to write "no season means no
+    /// work" — leaves the light multiplier frozen wherever the season happened to be when the
+    /// dial reached zero. The world then runs permanently at up to **1.25× its stated influx**,
+    /// with `season_amplitude = 0` showing in the config file, in the panel and in the replay
+    /// log, while SPEC section 5's ledger balances to the last digit and says nothing. That is
+    /// section 4's named failure — *"a world that was poorer than its influx said, with a
+    /// carrying capacity nobody could explain"* — reached through the settings panel and in the
+    /// other direction.
+    #[test]
+    fn a_world_with_no_season_is_the_world_that_was_there_before() {
+        // Two grids differing only in the season's *period*, at an amplitude of nought.
+        let (slow, slow_books) = ticked(&config(|raw| raw.light.season_period = 8_000), 5_000);
+        let (quick, quick_books) =
+            ticked(&config(|raw| raw.light.season_period = 1_000_000), 5_000);
+
+        assert_eq!(
+            slow.tiles
+                .iter()
+                .map(|tile| tile.to_bits())
+                .collect::<Vec<u32>>(),
+            quick
+                .tiles
+                .iter()
+                .map(|tile| tile.to_bits())
+                .collect::<Vec<u32>>(),
+            "two worlds with no season in them, differing only in how long that absent season \
+             would take, are holding different energy after five thousand ticks"
+        );
+        assert_eq!(
+            slow_books.influx_total().to_bits(),
+            quick_books.influx_total().to_bits(),
+            "the same two worlds have taken in different amounts of light"
+        );
+
+        // ⭐ And the retune. Two thousand ticks of a real season, then the dial to nought: the
+        // very next tick has to offer exactly what a world that never had one offers.
+        let seasoned = config(|raw| raw.light.season_amplitude = 0.25);
+        let flat = config(|_| {});
+
+        let (mut retuned, mut retuned_books) = ticked(&seasoned, 2_000);
+        retuned.relight(&flat);
+
+        let (mut always_flat, mut flat_books) = ticked(&flat, 2_000);
+        assert!(
+            retuned.season_phase() > 0.0,
+            "the season never advanced, so this measures nothing"
+        );
+
+        let before = retuned_books.influx_total();
+        let flat_before = flat_books.influx_total();
+        retuned.tick(&mut retuned_books);
+        always_flat.tick(&mut flat_books);
+
+        assert_eq!(
+            (retuned_books.influx_total() - before).to_bits(),
+            (flat_books.influx_total() - flat_before).to_bits(),
+            "a world retuned to `season_amplitude = 0` took in {} of light on its next tick \
+             where a world that never had a season took {}. The multiplier is frozen where the \
+             season left it, so this world is permanently lit at something other than its stated \
+             influx and nothing anywhere says so",
+            retuned_books.influx_total() - before,
+            flat_books.influx_total() - flat_before
+        );
+    }
+
+    /// ⭐⭐ **The anti-Group-H test: the light a row is offered really does rise and fall.**
+    ///
+    /// Group H shipped a sevenfold change to every muscle in the world and only afterwards
+    /// discovered that the code path it acted on was essentially never taken. The lesson is that
+    /// *the mechanism landing* and *the mechanism doing something* are two claims, and only the
+    /// second is worth anything. This is the second one for the season: over a whole period the
+    /// light offered peaks at 1.25× the flat constant a quarter of the way in, troughs at 0.75×
+    /// three quarters in, and the total over the period is preserved.
+    ///
+    /// ⚠️ **The fixture is the hard part of this test and it is easy to get wrong.** The obvious
+    /// setup — turn the drift and the diffusion off and pick a period — reads *clipped* light
+    /// rather than *offered* light: at the shipped ceiling the tiles are 99.997% full by the end
+    /// of one period, so what a tile takes stops following what it is offered and the sum ratio
+    /// comes back at 1.000027 against an asserted 1e-9, four orders of magnitude out. So
+    /// `patchiness` is nought, the ceiling is raised until the field stays near one per cent of
+    /// it throughout, and the assertions are against the season **scalar** rather than against
+    /// the argmax of realised light.
+    ///
+    /// The tolerance is **1e-5**, which is what narrowing 144 rows to 32 bits over eight thousand
+    /// ticks actually delivers. ⚠️ It is a tolerance on the *fixture* rather than on the season:
+    /// a tile is a 32-bit number and adding a thousandth to one that already holds a great deal
+    /// rounds the addition by a fraction of what was added, so at the shipped ceiling — where a
+    /// tile is full — a single tick's realised light could not be read anything like this
+    /// closely. Raising `cap` is what buys the digits, and it is the same choice as turning the
+    /// patchiness off: this test is about the offer and not about the clip.
+    #[test]
+    fn the_light_a_row_is_offered_rises_and_falls_with_the_season() {
+        const PERIOD: u64 = 8_000;
+        const AMPLITUDE: f64 = 0.25;
+
+        let settings = config(|raw| {
+            raw.light.season_period = PERIOD;
+            raw.light.season_amplitude = AMPLITUDE;
+            raw.light.patchiness = 0.0;
+            raw.light.patch_drift = 0.0;
+            raw.light.diffusion = 0.0;
+            // A ceiling a whole period of light cannot come near, so every tile takes all of
+            // what it is offered and this measures the offer rather than the clip.
+            raw.light.cap = 1_000.0;
+        });
+
+        let mut grid = Grid::new(&settings);
+        let mut ledger = Ledger::new(grid.total_energy());
+        grid.begin_season();
+
+        // What one tick of the same world with no season in it puts into the field.
+        let flat: f64 = grid
+            .regrowth
+            .iter()
+            .map(|row| f64::from(*row) * f64::from(u32::try_from(grid.cols()).expect("small")))
+            .sum();
+
+        let mut offered = Vec::with_capacity(usize::try_from(PERIOD).expect("a period is small"));
+        for _ in 0..PERIOD {
+            let before = ledger.influx_total();
+            grid.tick(&mut ledger);
+            offered.push((ledger.influx_total() - before) / flat);
+        }
+
+        // The phase advances before the light falls, so the `n`th tick of the run is at phase
+        // `n / period`: the peak is the two-thousandth tick and the trough the six-thousandth.
+        let at = |ticks: u64| offered[usize::try_from(ticks).expect("small") - 1];
+        let (peak, trough) = (at(PERIOD / 4), at(PERIOD * 3 / 4));
+
+        assert!(
+            (peak - (1.0 + AMPLITUDE)).abs() < 1e-5,
+            "a quarter of the way through a season a row was offered {peak} times what a flat \
+             world offers it, against the {} an amplitude of {AMPLITUDE} asks for",
+            1.0 + AMPLITUDE
+        );
+        assert!(
+            (trough - (1.0 - AMPLITUDE)).abs() < 1e-5,
+            "three quarters of the way through a season a row was offered {trough} times what a \
+             flat world offers it, against the {} an amplitude of {AMPLITUDE} asks for",
+            1.0 - AMPLITUDE
+        );
+
+        // And the total over a whole period is the flat world's total. A triangle is exactly
+        // antisymmetric under a half-period shift, so this is not an approximation that happens
+        // to hold - it is why the wave is a triangle.
+        let total: f64 = offered.iter().sum();
+        let ticks = f64::from(u32::try_from(PERIOD).expect("a period fits"));
+        assert!(
+            (total / ticks - 1.0).abs() < 1e-5,
+            "a whole period of a season delivered {} times what a flat world delivers over the \
+             same stretch, so the wave is not mean-preserving and a season is a change in this \
+             world's income rather than in its timing",
+            total / ticks
+        );
+    }
+
+    /// ⭐⭐ **A season moves no ceiling**, and this is the whole energy argument for putting it on
+    /// `influx` rather than on `cap`, written as a test instead of as a paragraph.
+    ///
+    /// `Grid::relight` builds `regrowth` from `influx` and `targets` from
+    /// `cap × light_profile × (1 + patchiness × noise)`. **`influx` enters no ceiling.** So a
+    /// season needs no retarget, moves no target down under a full tile, and sheds no spill
+    /// whatever — and the same amplitude applied to `cap` instead would add 0.656/tick of
+    /// ceiling spill, 4.3% of throughput, and swing the standing field by 90.7% while SPEC
+    /// section 5's ledger balanced perfectly throughout.
+    ///
+    /// This is the claim that would go silently false the day somebody "simplified" the season
+    /// by folding it into the relight table.
+    ///
+    /// ⚠️ **It does not also assert that `dissipated` is unchanged, and that omission is
+    /// measured rather than an oversight.** Over three periods on an empty world, dissipated per
+    /// tick runs **15.184 flat, 14.992 at ±25%, 14.480 at ±50%** — a 1.3% and a 4.6% difference,
+    /// because diffusion knocks tiles off their patchy ceilings every tick whatever the light is
+    /// doing and a dimmer half-cycle leaves fewer of them there to be knocked off. Asserting
+    /// equality there would be asserting something false and then weakening it until it passed.
+    #[test]
+    fn a_season_moves_no_ceiling() {
+        let settings = config(|raw| {
+            raw.light.season_period = 8_000;
+            raw.light.season_amplitude = 0.25;
+            // The drift off, so the only thing that could move a ceiling is the season.
+            raw.light.patch_drift = 0.0;
+        });
+
+        let untouched = Grid::new(&settings);
+        let (seasoned, _) = ticked(&settings, 8_000);
+
+        assert_eq!(
+            seasoned
+                .targets
+                .iter()
+                .map(|tile| tile.to_bits())
+                .collect::<Vec<u32>>(),
+            untouched
+                .targets
+                .iter()
+                .map(|tile| tile.to_bits())
+                .collect::<Vec<u32>>(),
+            "a whole seasoned period moved a ceiling. The season is on `light.influx`, which \
+             enters no target, and the moment it reaches one it starts shedding energy to \
+             `dissipated` on every tick with the ledger balancing perfectly throughout"
+        );
+        assert_eq!(
+            seasoned
+                .regrowth
+                .iter()
+                .map(|row| row.to_bits())
+                .collect::<Vec<u32>>(),
+            untouched
+                .regrowth
+                .iter()
+                .map(|row| row.to_bits())
+                .collect::<Vec<u32>>(),
+            "the season has been folded into the relight table, so a retune and a season are \
+             now two ways of computing one number and neither of them can be turned off"
+        );
+    }
+
+    /// ⭐⭐ **Retuning the season changes its speed and not where it is.**
+    ///
+    /// Group G's decision about `drifted`, applied to the second clock. `[light]` is live — SPEC
+    /// section 3 — so somebody can turn the period up mid-run, and a phase worked out as
+    /// `ticks / period` would teleport a living world into a different part of its year the
+    /// instant they did. The phase is therefore **accumulated**, one step of `1 / period` per
+    /// tick, exactly as the drift's offset is.
+    ///
+    /// It is also what makes it impossible to move the season into the relight table: doing so
+    /// would make a retune and a season two ways of computing the same number.
+    #[test]
+    fn retuning_the_season_changes_its_speed_and_not_where_it_is() {
+        let quick = config(|raw| {
+            raw.light.season_period = 8_000;
+            raw.light.season_amplitude = 0.25;
+        });
+        let slow = config(|raw| {
+            raw.light.season_period = 16_000;
+            raw.light.season_amplitude = 0.25;
+        });
+
+        let (mut grid, mut ledger) = ticked(&quick, 2_000);
+        let where_it_was = grid.season_phase();
+        assert!(
+            (where_it_was - 0.25).abs() < 1e-9,
+            "two thousand ticks of an eight-thousand-tick season should be a quarter of the way \
+             through it, and this world is {where_it_was} of the way"
+        );
+
+        grid.relight(&slow);
+        assert!(
+            (grid.season_phase() - where_it_was).abs() < f64::EPSILON,
+            "turning the dial moved the world from {where_it_was} of the way through its season \
+             to {}, which is a living population being teleported into a different part of the \
+             year by a settings change",
+            grid.season_phase()
+        );
+
+        for _ in 0..2_000 {
+            grid.tick(&mut ledger);
+        }
+        assert!(
+            (grid.season_phase() - 0.375).abs() < 1e-9,
+            "after two thousand more ticks at half the speed the world should be three eighths \
+             of the way through its season, and it is {} of the way",
+            grid.season_phase()
+        );
     }
 }

@@ -77,6 +77,8 @@ pub struct RawLight {
     pub patchiness: f64,
     pub patch_drift: f64,
     pub diffusion: f64,
+    pub season_period: u64,
+    pub season_amplitude: f64,
 }
 
 /// The `[physics]` table as written: how the soup pushes back.
@@ -189,6 +191,8 @@ pub fn spec_defaults() -> RawConfig {
             patchiness: 0.5,
             patch_drift: 0.0006,
             diffusion: 0.04,
+            season_period: 21_000,
+            season_amplitude: 0.0,
         },
         physics: RawPhysics {
             drag: 0.92,
@@ -288,6 +292,34 @@ pub enum ConfigError {
         most: f32,
     },
 
+    /// A setting whose upper end is where the **evidence** stops rather than where anything
+    /// breaks, given a value past it.
+    ///
+    /// The only one of these is `light.season_amplitude`, and it is a fifth kind of refusal
+    /// rather than a use of [`Self::OutsideRange`] because that variant's sentence is
+    /// `physics.drag_anisotropy`'s own — the water resisting a cell equally in every direction
+    /// — and the whole value of a refusal in this file is the sentence it writes. See
+    /// [`SEASON_AMPLITUDE_CEILING`].
+    Unmeasured {
+        field: &'static str,
+        value: f32,
+        least: f32,
+        most: f32,
+    },
+
+    /// A clock told to run faster than the thing it is a clock for, given a period below what
+    /// the world can follow.
+    ///
+    /// The only one of these is `light.season_period`, and it is a sixth kind of refusal for the
+    /// reason [`Self::OutrunsTheLight`] is a fourth: the arithmetic is perfectly well behaved
+    /// and it is the *world* that stops being able to feel the setting. See
+    /// [`SEASON_PERIOD_FLOOR`].
+    FasterThanTheWater {
+        field: &'static str,
+        value: u64,
+        least: u64,
+    },
+
     /// A setting that may be nothing but cannot be less than nothing, given a value below
     /// zero.
     Negative { field: &'static str, value: f32 },
@@ -379,6 +411,45 @@ impl std::fmt::Display for ConfigError {
                  decays to nothing, so no arrangement of muscles can move it. The upper end \
                  is a limit of the arithmetic rather than a preference: measured at 3 with a \
                  collision stiffness of 5,000, a cell's velocity became not-a-number"
+            ),
+            // The one refusal in this file whose upper end is not a fact about the arithmetic
+            // or about the world, but about **what has been run**. It says that and nothing
+            // else. In particular it does not say the population falls far enough for drift to
+            // outrun selection: with the flat world's own trough measured at 766 organisms and
+            // the largest real coefficient in this world at 0.85 %/generation, `N·s` is 3.6 at
+            // an amplitude of a half and 1.8 at three quarters - so that sentence would be
+            // false everywhere the gate allows, and a refusal somebody can disprove is a
+            // refusal somebody deletes.
+            Self::Unmeasured {
+                field,
+                value,
+                least,
+                most,
+            } => write!(
+                out,
+                "{field}: {value} is outside {least}..={most}. Nothing deeper than a half has \
+                 ever been measured in this world, and that is the whole of the reason: the \
+                 upper end is where the evidence stops. The lower end is no season at all, \
+                 which is the control for every claim about one"
+            ),
+            // Long for the reason the two above are long. A period is a number of ticks and
+            // reads like any other; what makes a short one refused is that the light would be
+            // changing faster than the field it is filling can follow, so the world would be
+            // running under a season nothing in it could feel - which looks identical in a
+            // settings file to one it can.
+            Self::FasterThanTheWater {
+                field,
+                value,
+                least,
+            } => write!(
+                out,
+                "{field}: {value} is below {least}. That floor is `light.cap / light.influx` - \
+                 the time a tile takes to fill from empty - and below it the light changes and \
+                 the water does not: measured, the standing field swings 2.04% at a period of \
+                 2,000 against 6.74% at 20,000. There is no upper bound, because a very slow \
+                 climate is a legitimate experiment; and nought is refused rather than meaning \
+                 no season, because `light.season_amplitude` is the off switch and a second one \
+                 is two ways of saying the same thing"
             ),
             // A sentence of its own, rather than a use of the one above with a lower end
             // of zero and no upper end. Written that way it would read
@@ -574,6 +645,81 @@ pub const DIFFUSION_STABILITY_LIMIT: f32 = 0.25;
 /// blotches, worked out once from the seed. It is the control for every claim about drift.
 pub const PATCH_DRIFT_CEILING: f32 = 0.005;
 
+/// The shortest season the water can follow, in ticks, and the transfer function that decides
+/// it.
+///
+/// ⭐⭐ **Phase 7's Group L.** `light.season_period` is how long one whole rise and fall of
+/// `light.influx` takes. What bounds it below is not the arithmetic and not the ledger: it is
+/// that **the field the light is filling has its own time constant**, and below that the light
+/// changes and the water does not.
+///
+/// # The arithmetic
+///
+/// A tile fills from empty at `influx × profile` a tick against a ceiling of `cap × profile`, so
+/// the profile cancels and the filling time is `cap / influx` — **8,000 ticks** at SPEC section
+/// 3's shipped 8.0 and 0.001. A season shorter than that is a light the standing field averages
+/// away rather than follows.
+///
+/// **Measured, on an empty world at an amplitude of 0.25**: the standing field swings **2.04%**
+/// peak to trough at a period of 2,000, against **6.74%** at 20,000. Three times the season for
+/// a third of the effect, and the shape of that curve is the tile's own filling time.
+///
+/// # What the shipped period is, and why 21,000
+///
+/// The window runs from this floor up to about 50,500 ticks, the median species lifetime, above
+/// which a lineage lives entirely inside one half-cycle and the season is a trend rather than a
+/// season. **21,000** sits inside it and is chosen from three readings at once: it is 12.0
+/// generations at the measured 1,754-tick generation, so **6.0 generations per half cycle**;
+/// 2.4 whole cycles fit inside a median species life; and `gcd(21,000, 25,000) = 1,000`, so the
+/// project's 25,000-tick checkpoints walk **21 distinct phases** of the season instead of the
+/// four that a period of 20,000 would give them.
+///
+/// # ⚠️ There is deliberately no ceiling
+///
+/// A million-tick climate is a legitimate experiment. An invented upper bound is one somebody
+/// argues with on the evening an experiment is refused, and there is nothing on the other side
+/// of it that fails.
+pub const SEASON_PERIOD_FLOOR: u64 = 8_000;
+
+/// The deepest season anything has been measured at, as a fraction of `light.influx`.
+///
+/// ⭐⭐ **Phase 7's Group L.** The multiplier the light is scaled by is
+/// `1 + season_amplitude × triangle(phase)`, so an amplitude of 0.25 is a world running between
+/// 0.75× and 1.25× its stated influx over a period. Carrying capacity is proportional to influx
+/// to within 10% over a fourfold range — measured biomass 14,936 / 23,320 / 32,276 / 49,356 /
+/// 65,985 at 0.5× through 2× — so the amplitude **is** a carrying-capacity swing and can be read
+/// as one.
+///
+/// # A half is where the evidence stops, and that is the whole of the reason
+///
+/// 0.25 and 0.5 are the only amplitudes ever run in this world. What they do to the population is
+/// measured against the flat run's **own** second-half minimum rather than against its mean,
+/// which is the correction that halves the apparent depth of the trough — and against whole-cycle
+/// integrals rather than end-of-run readings. Fifteen whole periods, world ticks 15,000 to
+/// 330,000:
+///
+/// | | flat | ±25% | ±50% |
+/// | --- | --- | --- | --- |
+/// | second-half **low** | **517** | 468 | 529 |
+/// | second-half **high** | **1,234** | 2,109 | 2,202 |
+/// | peak to trough | **2.39×** | 4.51× | 4.16× |
+/// | mean alive over the window | **1,099** | 1,369 | 1,454 |
+/// | mean cells per body | **5.65** | 4.11 | 3.32 |
+///
+/// **The flat world already swings by about two and a half on its own**, and a seasoned world
+/// does not collapse: it carries *more* organisms on average, because the same energy goes into
+/// more and smaller bodies. ⚠️ The trough row is undersampled at 5,000-tick resolution — the ±50%
+/// low sits above the ±25% one, which is noise rather than a reversal — and it should be read as
+/// *the trough does not deepen much* and no further.
+///
+/// ⚠️ **It is not a drift bound**, and the refusal must not say it is. With a trough of a few
+/// hundred bodies and the largest real selection coefficient in this world at 0.85 %/generation,
+/// `N·s` is comfortably above one everywhere the gate allows and for some way past it.
+///
+/// A bound is still not optional. Above **1.0** the multiplier goes negative, which is light
+/// running backwards: tiles draining into no account, and SPEC section 5's invariant failing.
+pub const SEASON_AMPLITUDE_CEILING: f32 = 0.5;
+
 /// Isotropic water: the drag a cell feels across its own body axis is the drag it feels
 /// along it, which is what this project shipped with until Phase 7.
 ///
@@ -701,6 +847,48 @@ fn within(field: &'static str, value: f64, least: f32, most: f32) -> Result<f32,
     }
 }
 
+/// A setting bounded at both ends, where the upper end is where the **measurements** stop.
+///
+/// A fifth gate rather than [`within`] with different constants, for the reason [`within`]
+/// itself is not [`stable`]: the two are not the same claim, and the sentence a refusal writes
+/// is the whole of its value. `within` says the arithmetic or the model stops working; this says
+/// the arithmetic works perfectly and **nobody has run it**.
+fn measured(field: &'static str, value: f64, least: f32, most: f32) -> Result<f32, ConfigError> {
+    let narrowed = narrow(field, value)?;
+
+    if (least..=most).contains(&narrowed) {
+        Ok(narrowed)
+    } else {
+        Err(ConfigError::Unmeasured {
+            field,
+            value: narrowed,
+            least,
+            most,
+        })
+    }
+}
+
+/// A clock bounded below by how fast the thing it is a clock for can respond.
+///
+/// A sixth gate, and a whole number rather than a fraction, so nothing narrows: a period is a
+/// count of ticks. Nought is refused by the same comparison as every other value below the
+/// floor, which is what stops there being a forbidden gap a slider can be dragged into.
+fn followable_by_the_water(
+    field: &'static str,
+    value: u64,
+    least: u64,
+) -> Result<u64, ConfigError> {
+    if value >= least {
+        Ok(value)
+    } else {
+        Err(ConfigError::FasterThanTheWater {
+            field,
+            value,
+            least,
+        })
+    }
+}
+
 /// A setting that has to exist for the simulation to mean anything: a world with no
 /// width, a tile that can hold no energy, a tick worth no years.
 fn positive(field: &'static str, value: f64) -> Result<f32, ConfigError> {
@@ -810,6 +998,25 @@ pub struct LightConfig {
     pub patch_drift: f32,
 
     pub diffusion: f32,
+
+    /// How long one whole rise and fall of [`Self::influx`] takes, in ticks.
+    ///
+    /// ⭐⭐ **Phase 7's Group L, and it is the only clock in this world besides the drift.** SPEC
+    /// section 4's field already moves in *space*; this is what makes it move in *time*, so that
+    /// being adapted stops being a fixed fact about a lineage. It is on `influx` and on nothing
+    /// else, which is the whole energy argument: `influx` enters no ceiling, so a season needs
+    /// no retarget, moves no target down under a full tile, and sheds no spill whatever. See
+    /// [`SEASON_PERIOD_FLOOR`] for the window it has to sit in.
+    pub season_period: u64,
+
+    /// How deep that rise and fall goes, as a fraction of [`Self::influx`].
+    ///
+    /// ⭐⭐ **The off switch, and the only one.** The light is scaled by
+    /// `1 + season_amplitude × triangle(phase)`, computed **unconditionally** — at nought that
+    /// expression is exactly 1.0 and the world is bit-for-bit the world that was there before a
+    /// season existed. It ships at nought. See [`SEASON_AMPLITUDE_CEILING`] for why a half is
+    /// the far end and what the trough actually does.
+    pub season_amplitude: f32,
 }
 
 /// The checked `[physics]` table: how the soup pushes back.
@@ -1046,6 +1253,26 @@ impl RawConfig {
                     self.light.diffusion,
                     DIFFUSION_STABILITY_LIMIT,
                 )?,
+                // How long one whole rise and fall of the light takes, and the one setting here
+                // bounded below by how fast the *field* can respond. A tile fills from empty in
+                // `cap / influx` ticks; below that the light changes and the water does not, so
+                // the world runs under a season nothing in it can feel. No upper bound: a very
+                // slow climate is a legitimate experiment. See `SEASON_PERIOD_FLOOR`.
+                season_period: followable_by_the_water(
+                    "light.season_period",
+                    self.light.season_period,
+                    SEASON_PERIOD_FLOOR,
+                )?,
+                // How deep that rise and fall goes, and the one setting here bounded by what has
+                // been **run** rather than by what anything means. Nought is no season, which is
+                // what ships and what every earlier figure was measured under; a half is where
+                // the measurements stop. See `SEASON_AMPLITUDE_CEILING`.
+                season_amplitude: measured(
+                    "light.season_amplitude",
+                    self.light.season_amplitude,
+                    0.0,
+                    SEASON_AMPLITUDE_CEILING,
+                )?,
             },
             physics: PhysicsConfig {
                 // "velocity retained per tick" - a proportion of what was there before.
@@ -1199,6 +1426,7 @@ mod tests {
             ("light.patchiness", raw.light.patchiness),
             ("light.patch_drift", raw.light.patch_drift),
             ("light.diffusion", raw.light.diffusion),
+            ("light.season_amplitude", raw.light.season_amplitude),
             ("physics.drag", raw.physics.drag),
             ("physics.drag_anisotropy", raw.physics.drag_anisotropy),
             (
@@ -1254,8 +1482,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            28,
-            "SPEC section 3 has twenty-eight decimal settings; this list has {}, so one has \
+            29,
+            "SPEC section 3 has twenty-nine decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );
@@ -1912,6 +2140,175 @@ mod tests {
                 .starts_with("light.patch_drift: "),
             "a negative drift was refused by something other than its own gate"
         );
+    }
+
+    /// ⭐⭐ **Phase 7's Group L.** The `[light]` table carries a season, and it ships **inert**.
+    ///
+    /// Two keys, both required. Neither has a `serde(default)`, for this file's own reason: a
+    /// season that silently defaulted to absent is a run whose replay log does not describe it,
+    /// and SPEC section 13 wants a recording to carry the settings that produced it.
+    ///
+    /// ⚠️ **The shipped amplitude is nought, and that is the discipline rather than caution.**
+    /// Group H shipped a sevenfold change to every muscle in the world and could not afterwards
+    /// separate *did I break anything* from *the world is now different*. The mechanism lands
+    /// here switched off — `config/default.toml` is bit-for-bit the world every figure in
+    /// `docs/PHASE7.md` was measured on — and `config/seasonal.toml` is the profile that turns
+    /// it on. That is one line of a settings file between the two experiments.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the shipped amplitude is nought exactly, and nought is the one value in this \
+                  file that must not be approximate: it is the off switch"
+    )]
+    fn the_light_table_carries_a_season() {
+        let shipped = spec_defaults();
+
+        assert_eq!(
+            shipped.light.season_amplitude, 0.0,
+            "the season does not ship inert, so `config/default.toml` is no longer the world \
+             every figure in docs/PHASE7.md was measured on"
+        );
+        assert_eq!(
+            shipped.light.season_period, 21_000,
+            "the shipped period is 21,000 ticks — twelve generations, six to the half cycle, \
+             and coprime with the project's 25,000-tick checkpoints"
+        );
+
+        let checked = shipped
+            .validate()
+            .expect("a world with no season is a world");
+        assert_eq!(checked.light.season_amplitude, 0.0);
+        assert_eq!(checked.light.season_period, 21_000);
+
+        // That both keys are *required* is a claim about the document, so it is checked where a
+        // document can be read: `main.rs`'s
+        // `the_shipped_documents_carry_a_season_and_it_ships_inert`. This crate has no way to
+        // read TOML, by design.
+    }
+
+    /// ⭐⭐ A season the water cannot follow is refused, and the refusal says why.
+    ///
+    /// The floor is `cap / influx` — the time a tile takes to fill from empty, 8,000 ticks at
+    /// SPEC section 3's shipped light. Below it the *light* changes and the *water* does not:
+    /// measured, the standing field swings 2.04% at a period of 2,000 against 6.74% at 20,000.
+    /// A season nothing in the world can feel is a season that is not there, and it would look
+    /// identical in the config file to one that is.
+    ///
+    /// ⚠️ **There is no upper bound.** A million-tick climate is a legitimate experiment, and an
+    /// invented ceiling is one somebody argues with on the evening an experiment is blocked.
+    ///
+    /// ⚠️ **And zero is refused rather than meaning "no season".** The amplitude is the off
+    /// switch. A second one, with a division by it standing behind, is two ways to say the same
+    /// thing and one of them silently wrong.
+    #[test]
+    fn a_season_the_water_cannot_follow_is_refused() {
+        let base = spec_defaults();
+
+        for allowed in [SEASON_PERIOD_FLOOR, 21_000, 1_000_000] {
+            let mut fine = base.clone();
+            fine.light.season_period = allowed;
+            assert_eq!(
+                fine.validate()
+                    .expect("a period at or above the floor has to be usable")
+                    .light
+                    .season_period,
+                allowed,
+                "a period of {allowed} did not survive being checked"
+            );
+        }
+
+        for period in [0, 1, 2_000, SEASON_PERIOD_FLOOR - 1] {
+            let mut too_quick = base.clone();
+            too_quick.light.season_period = period;
+
+            let complaint = too_quick
+                .validate()
+                .expect_err("a period below the floor must stop the run")
+                .to_string();
+
+            assert!(
+                complaint.starts_with("light.season_period: "),
+                "a period of {period} was refused and the complaint was about something else: \
+                 {complaint}"
+            );
+            assert!(
+                complaint.contains("8000"),
+                "the complaint about a period of {period} does not say what the floor is: \
+                 {complaint}"
+            );
+            assert!(
+                complaint.contains("the water"),
+                "the complaint about a period of {period} does not say *why* — that below a \
+                 tile's own filling time the light changes and the water does not: {complaint}"
+            );
+        }
+    }
+
+    /// ⭐⭐ A season deeper than anything measured is refused, and the refusal says only that.
+    ///
+    /// 0.25 and 0.5 are the only amplitudes ever run. The bound is where the **evidence** stops
+    /// and it is not an argument about drift: with the flat world's own second-half trough
+    /// measured at 766 organisms and the largest real selection coefficient in this world at
+    /// 0.85 %/generation, `N·s` is 3.6 at an amplitude of a half and still 1.8 at three
+    /// quarters. "The population falls far enough that drift outruns selection" is not true
+    /// anywhere this gate allows, and a refusal that said so would be a sentence somebody could
+    /// disprove and then delete the bound over.
+    ///
+    /// A bound is not optional, though: above 1.0 the multiplier `1 + amplitude × triangle` goes
+    /// negative, which is light running backwards.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "an amplitude at the ceiling must arrive as exactly the amplitude that was \
+                  written; near enough would let the depth of a season be quietly adjusted"
+    )]
+    fn a_season_deeper_than_anything_measured_is_refused() {
+        let base = spec_defaults();
+
+        for allowed in [0.0, 0.25, f64::from(SEASON_AMPLITUDE_CEILING)] {
+            let mut fine = base.clone();
+            fine.light.season_amplitude = allowed;
+            assert_eq!(
+                fine.validate()
+                    .expect("an amplitude at or below the ceiling has to be usable")
+                    .light
+                    .season_amplitude,
+                narrow("light.season_amplitude", allowed).expect("these all narrow"),
+                "an amplitude of {allowed} did not survive being checked"
+            );
+        }
+
+        for amplitude in [0.5001, 0.75, 1.5, -0.25] {
+            let mut too_deep = base.clone();
+            too_deep.light.season_amplitude = amplitude;
+
+            let complaint = too_deep
+                .validate()
+                .expect_err("an amplitude outside the measured range must stop the run")
+                .to_string();
+
+            assert!(
+                complaint.starts_with("light.season_amplitude: "),
+                "an amplitude of {amplitude} was refused and the complaint was about something \
+                 else: {complaint}"
+            );
+            assert!(
+                complaint.contains("0..=0.5"),
+                "the complaint about an amplitude of {amplitude} does not say what the range \
+                 is: {complaint}"
+            );
+            assert!(
+                complaint.contains("measured"),
+                "the complaint about an amplitude of {amplitude} does not say that the bound is \
+                 where the evidence stops, which is the only thing it may say: {complaint}"
+            );
+            assert!(
+                !complaint.contains("drift"),
+                "the complaint about an amplitude of {amplitude} claims something about drift, \
+                 and `N·s` is 3.6 at a half and 1.8 at three quarters — so the claim is false \
+                 everywhere this gate allows: {complaint}"
+            );
+        }
     }
 
     /// `max_ticks = 0` means "no limit", and that convention stops here.

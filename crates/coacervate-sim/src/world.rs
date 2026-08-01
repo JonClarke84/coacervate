@@ -67,13 +67,13 @@
 //! largest size the configuration could ever need - every organism the world allows, each
 //! with every cell it allows - and nothing here has any way to grow one. At SPEC section 3's
 //! defaults that is four thousand organisms of sixty-four cells apiece: **256,000 cells,
-//! about 7 MB, and 252,000 springs at about 6 MB**. The dense copies the tick hands to the
+//! about 9 MB, and 252,000 springs at about 6 MB**. The dense copies the tick hands to the
 //! physics are the same two arenas again, plus two indices per cell - one to put the crowd
-//! back where it came from and one saying whose cell it is - so another 17 MB; the physics
+//! back where it came from and one saying whose cell it is - so another 19 MB; the physics
 //! builds its own working arrays at 15 MB more and the behaviour pass at 16 MB more than that;
 //! the drift of dead biomass is a grain per cell at 4 MB; the four thousand organisms are a
 //! third of a megabyte and the resource field is under half of one. A default world is
-//! therefore around **66 MB**, against CLAUDE.md's resident target of 2 GB.
+//! therefore around **70 MB**, against CLAUDE.md's resident target of 2 GB.
 //!
 //! The cell and spring arenas are built at their full *length* rather than merely reserved,
 //! because an organism is written into a slot and a slot has to be there to be written into.
@@ -599,6 +599,15 @@ impl World {
             .checked_add(1)
             .expect("a run has minted every serial number there is");
 
+        // ⭐⭐ **Phase 7's Group L: the seasons start here, and here is the only place they can
+        // start.** SPEC section 4's season is a fact about a world with something living in it.
+        // `founding.rs` fills the field first and stops when it stops filling - a
+        // **light-dependent** test - so a season running through the dawn would change how long
+        // the dawn takes, and a seasoned run and a flat run would begin at different ticks
+        // against different fields. Idempotent: this is the moment the first body arrives, and
+        // every body after the first arrives at a world whose clock is already going.
+        self.grid.begin_season();
+
         Ok(slot)
     }
 
@@ -976,6 +985,13 @@ mod tests {
                     // A cell with no gene is written as a number no gene can be, rather than
                     // as nought, which is gene zero and a perfectly ordinary answer.
                     cell.gene.map_or(u32::MAX, u32::from),
+                    // ⭐ Phase 7's Group L. A myocyte's remembered contraction decides what its
+                    // organism is charged on the *next* tick, so two runs that agreed about
+                    // everything else and disagreed about this would be two runs that were
+                    // about to part company. An absence is written as not-a-number, which a
+                    // contraction can never be, for the same reason a missing gene is written
+                    // as a number no gene can be.
+                    cell.contraction.map_or(u32::MAX, f32::to_bits),
                 ]);
             }
         }
@@ -3491,9 +3507,16 @@ mod tests {
         );
 
         // What the arenas actually cost, so the figures in the module documentation are
-        // checked rather than remembered. 28 bytes a cell and 24 a spring: 13,216,000 bytes
+        // checked rather than remembered. 36 bytes a cell and 24 a spring: 15,264,000 bytes
         // for the two that hold the world, and the same again less a little for the two the
         // tick packs the living into, plus one index per cell to put them back.
+        //
+        // ⚠️ **Re-recorded in Phase 7's Group L, and the earlier figure is kept: 28 bytes a
+        // cell and 13,216,000 for the pair.** [`Cell::contraction`] is what a myocyte's
+        // controller last multiplied its springs by, and it is eight bytes because it is
+        // written as an **absence** rather than as a number standing for one - the distinction
+        // is what stops a muscle being charged, once, at birth, for a journey it never made.
+        // Two megabytes against CLAUDE.md's two-gigabyte resident target.
         let arenas = default_world.cells.len() * size_of::<Cell>()
             + default_world.springs.len() * size_of::<Spring>();
         let mirrors = default_world.crowd.capacity() * size_of::<Cell>()
@@ -3501,14 +3524,14 @@ mod tests {
             + default_world.live.capacity() * size_of::<usize>()
             + default_world.owner.capacity() * size_of::<usize>();
         assert!(
-            (12_000_000..15_000_000).contains(&arenas),
-            "the two arenas of a default world cost {arenas} bytes, against the 13,216,000 \
+            (14_000_000..17_000_000).contains(&arenas),
+            "the two arenas of a default world cost {arenas} bytes, against the 15,264,000 \
              recorded here"
         );
         assert!(
-            (16_000_000..19_000_000).contains(&mirrors),
+            (18_000_000..21_000_000).contains(&mirrors),
             "the dense copies the physics is handed cost {mirrors} bytes, against the \
-             17,312,000 recorded here"
+             19,360,000 recorded here"
         );
 
         // And the drift, which is Group B's addition: a grain for every cell the world can

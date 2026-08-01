@@ -1,0 +1,93 @@
+# The `seasonal` profile: the shipped world, with the light rising and falling.
+#
+# ⭐⭐ **This exists because a world whose statistics never change is one in which being adapted
+# is a fixed fact.** Every earlier profile in this project is a *constant* environment. The light
+# falls at the same rate for ever, the field settles at the same level for ever, and a lineage
+# that has found the best thing to be goes on being it until something eats it. SPEC section 4
+# already made the field move in *space* — `patch_drift` slides the blotches sideways so that the
+# best water is somewhere new. This is the same idea in *time*.
+#
+# Everything below is `default.toml` with **one number changed**: `light.season_amplitude`, from
+# 0.0 to 0.25. Read `default.toml` for what the rest of them mean; the comments there are the
+# document and are deliberately not copied.
+#
+# ⚠️ **Do not expect a muscle from it.** The fastest the standing field can change is its own
+# 8,000-tick filling time, which is 4.6 lifetimes, so no body ever lives through a change in its
+# own conditions. The competition assay was run flat and seasoned, three seeds, two whole
+# periods: the selection coefficient on the largest free shape change this genome can express
+# moved from **+0.71 %/generation flat to +0.88 %/generation seasoned**, a difference of 0.17
+# against a seed-to-seed spread of ±0.5. **The season does not detectably change what shape is
+# worth.** What it does change is that the population rises and falls on a known clock, which is
+# what makes Q32's claim — that body size tracks the population rather than the light — testable
+# for the first time.
+
+[world]
+seed = 42
+width = 2048.0
+height = 1152.0
+grid_cols = 256
+grid_rows = 144
+years_per_tick = 1000.0
+
+[light]
+influx = 0.001
+cap = 8.0
+gradient = 0.75
+patchiness = 0.5
+patch_drift = 0.0006
+diffusion = 0.04
+season_period = 21000    # `default.toml`'s, unchanged. Twelve generations, six to the half
+                         # cycle. See there for the window it sits in and why 21,000 rather than
+                         # 20,000.
+season_amplitude = 0.25  # ⭐ **The one number this profile changes.** The light runs between
+                         # 0.75x and 1.25x its stated influx over each period. Carrying capacity
+                         # is proportional to influx to within 10% over a fourfold range, so this
+                         # is a carrying-capacity swing of the same size — and it is a *swing*
+                         # rather than a loss: measured over fifteen whole periods, `influx_total`
+                         # comes back at 99.62% of the flat run's and `dissipated` at 99.61%,
+                         # because `influx` enters no ceiling and a season therefore sheds no
+                         # spill. A season on `cap` would push `dissipated` up instead.
+                         #
+                         # What it costs the population is not much, and what it changes is the
+                         # shape of it. The flat world already swings about 2.4-fold on its own;
+                         # at 0.25 the mean population is 1,369 against 1,099 and the mean body is
+                         # 4.11 cells against 5.65 — the same energy in more and smaller bodies.
+                         # Bounded at 0.5, which is where the measurements stop.
+
+[physics]
+drag = 0.92
+drag_anisotropy = 2.0
+collision_stiffness = 40.0
+spring_damping = 0.35
+
+[behaviour]
+resting_amplitude = 0.8
+stroke = 1.0
+
+[metabolism]
+upkeep_scale = 1.0
+gene_cost = 0.0001
+movement_cost = 0.0001
+reproduction_threshold = 2.2
+offspring_share = 0.45
+
+[mutation]
+point_rate = 0.06
+point_sigma = 0.12
+duplication_rate = 0.02
+deletion_rate = 0.02
+insertion_rate = 0.01
+reorder_rate = 0.02
+genome_duplication_rate = 0.0008
+
+[limits]
+max_organisms = 4000
+max_cells_per_organism = 64
+max_genes = 128
+max_dev_steps = 16
+
+[run]
+max_wall_clock_hours = 12.0
+max_ticks = 0
+max_ticks_per_second = 0
+reseed_on_extinction = false

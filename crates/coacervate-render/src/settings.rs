@@ -45,7 +45,7 @@
 
 use coacervate_sim::config::{
     Config, ConfigError, DIFFUSION_STABILITY_LIMIT, DRAG_ANISOTROPY_CEILING, DRAG_ANISOTROPY_FLOOR,
-    PATCH_DRIFT_CEILING, RawConfig,
+    PATCH_DRIFT_CEILING, RawConfig, SEASON_AMPLITUDE_CEILING, SEASON_PERIOD_FLOOR,
 };
 
 /// One setting a person may turn while the run is going.
@@ -194,6 +194,35 @@ pub const DIALS: &[Dial] = &[
         places: Some(3),
         read: |raw| raw.light.diffusion,
         write: |raw, value| raw.light.diffusion = value,
+    },
+    Dial {
+        table: "light",
+        // ⭐ Not `8000.0`. The near end is `SEASON_PERIOD_FLOOR`, imported for the reason
+        // `light.diffusion` imports its own: below it the light changes and the water does not,
+        // so the world runs under a season nothing in it can feel. The far end is **not** a gate
+        // constant, because the gate deliberately has no ceiling - a million-tick climate is a
+        // legitimate experiment and an invented bound is one somebody argues with on the evening
+        // an experiment is refused. A slider still has to stop somewhere, and ten times the
+        // shipped period is four times the median species lifetime: past it a lineage lives
+        // entirely inside one half cycle and what it is watching is a trend rather than a season.
+        label: "season_period",
+        least: SEASON_PERIOD_LEAST,
+        most: SEASON_PERIOD_MOST,
+        places: Some(0),
+        read: |raw| period(raw.light.season_period),
+        write: |raw, value| raw.light.season_period = ticks(value),
+    },
+    Dial {
+        table: "light",
+        // ⭐ Not `0.5`. The far end is `SEASON_AMPLITUDE_CEILING`, which is where the measurements
+        // stop and nowhere else. Nought is no season at all, which is what ships and which is the
+        // control for every claim about one.
+        label: "season_amplitude",
+        least: 0.0,
+        most: SEASON_AMPLITUDE_CEILING as f64,
+        places: Some(2),
+        read: |raw| raw.light.season_amplitude,
+        write: |raw, value| raw.light.season_amplitude = value,
     },
     Dial {
         table: "physics",
@@ -554,11 +583,66 @@ fn whole(value: f64) -> u32 {
     value.clamp(0.0, 600.0).round() as u32
 }
 
+/// A dial's value, as the whole number of ticks `light.season_period` is written in.
+///
+/// Clamped into the slider's own range before the conversion, so the floor and the negative are
+/// both taken and there is nothing left to truncate or to lose a sign. Every whole number in that
+/// range is exactly representable at either width.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a season's period in ticks, clamped to the slider's own 8,000..=210,000 on the line \
+              above; f64 holds every whole number in that range exactly"
+)]
+fn ticks(value: f64) -> u64 {
+    value.clamp(SEASON_PERIOD_LEAST, SEASON_PERIOD_MOST).round() as u64
+}
+
+/// The same period back out again, for the slider to sit at.
+///
+/// A period is a count of ticks and a slider is a `f64`. Exact for every value the dial can
+/// express, and for every value a document could carry short of nine quadrillion ticks.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a season's period is a count of ticks; every one the dial can express is exact as a \
+              64-bit float, and this is a number being put on a slider"
+)]
+fn period(ticks: u64) -> f64 {
+    ticks as f64
+}
+
+/// The near end of the `light.season_period` slider, which **is** the gate's own floor.
+///
+/// ⚠️ A named constant rather than the cast written inline, because a `const` item is the only
+/// place an `#[expect]` can be hung in a `const` array — and CLAUDE.md's rule is that a lossy
+/// `as` is either restructured away or annotated with why it is not lossy. Eight thousand is
+/// exact at every width there is.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "the gate's own floor, which is eight thousand and is exact as a 64-bit float. The \
+              cast is here rather than at the dial so that the dial's end is this constant \
+              rather than a copy of its value"
+)]
+const SEASON_PERIOD_LEAST: f64 = SEASON_PERIOD_FLOOR as f64;
+
+/// The far end of the same slider, and the one dial end in this file that is **not** a gate
+/// constant.
+///
+/// The gate deliberately has no ceiling on a season's period: a very slow climate is a legitimate
+/// experiment, and an invented bound is one somebody argues with on the evening an experiment is
+/// refused. A slider still has to stop somewhere. Ten times the shipped period is four times the
+/// median species lifetime, and past that a lineage lives entirely inside one half cycle — so
+/// what a person is watching is a trend rather than a season, and the way to ask for one is the
+/// configuration file rather than the slider.
+const SEASON_PERIOD_MOST: f64 = 210_000.0;
+
 #[cfg(test)]
 mod tests {
     use super::{DIALS, Dials, locked};
     use coacervate_sim::chronicle;
-    use coacervate_sim::config::{DIFFUSION_STABILITY_LIMIT, spec_defaults};
+    use coacervate_sim::config::{
+        DIFFUSION_STABILITY_LIMIT, SEASON_AMPLITUDE_CEILING, SEASON_PERIOD_FLOOR, spec_defaults,
+    };
 
     /// ⭐ **Phase 7, `C8`.** Every slider a person can turn is a condition the event log reports
     /// a change to, and every condition it reports is a slider.
@@ -756,7 +840,8 @@ mod tests {
         // And the five tables SPEC calls "the rest" are here in full. Counted per table, so a
         // setting dropped out of one of them is a number that changes.
         for (table, settings) in [
-            ("light", 6),
+            // ⭐ Eight since Phase 7's Group L: `season_period` and `season_amplitude`.
+            ("light", 8),
             ("physics", 4),
             ("behaviour", 2),
             ("metabolism", 5),
@@ -772,7 +857,7 @@ mod tests {
         }
         assert_eq!(
             DIALS.len(),
-            25,
+            27,
             "the dials do not add up to the tables above"
         );
 
@@ -847,5 +932,89 @@ mod tests {
         dials
             .set(dial, f64::from(DIFFUSION_STABILITY_LIMIT) + 0.001)
             .expect_err("a hair past the stability limit is a field that grows without limit");
+    }
+
+    /// ⭐⭐ **Group L.** The two season dials stop where the gate does, and at the gate's own
+    /// constants rather than at copies of their values.
+    ///
+    /// The same claim `the_diffusion_dial_stops_where_the_gate_does_and_not_at_a_copy_of_it`
+    /// makes, for the two settings added last — and it matters more for these two than for any
+    /// other pair in the file, because **neither bound can be guessed from the name of the
+    /// setting.** A period's floor is `light.cap / light.influx`, which is a fact about the field
+    /// and not about the season; an amplitude's ceiling is where the *measurements* stop, which
+    /// is not a fact about anything at all except what has been run.
+    ///
+    /// ⚠️ **One end here is deliberately not a gate constant, and this is where that is written
+    /// down.** The gate has no ceiling on a period: a very slow climate is a legitimate
+    /// experiment, and an invented bound is one somebody argues with on the evening an experiment
+    /// is refused. A slider still has to stop somewhere, so its far end is [`SEASON_PERIOD_MOST`]
+    /// — ten times the shipped period — and the way to ask for a slower season is the
+    /// configuration file.
+    #[test]
+    fn the_two_season_dials_stop_where_the_gate_does() {
+        let dial = |field: &str| {
+            DIALS
+                .iter()
+                .find(|dial| dial.field() == field)
+                .expect("both season settings are live")
+        };
+
+        let period = dial("light.season_period");
+        assert!(
+            (period.least - super::SEASON_PERIOD_LEAST).abs() < f64::EPSILON,
+            "the season-period dial starts at {} and the gate refuses below \
+             {SEASON_PERIOD_FLOOR}",
+            period.least
+        );
+
+        let amplitude = dial("light.season_amplitude");
+        assert!(
+            (amplitude.most - f64::from(SEASON_AMPLITUDE_CEILING)).abs() < f64::EPSILON,
+            "the season-amplitude dial stops at {} and the gate refuses above \
+             {SEASON_AMPLITUDE_CEILING}",
+            amplitude.most
+        );
+        assert!(
+            amplitude.least.abs() < f64::EPSILON,
+            "the season-amplitude dial cannot be turned off; it starts at {}",
+            amplitude.least
+        );
+
+        // And both ends of both are reachable, and a hair past each is refused. The gate allows
+        // the ends themselves — a limit that cannot be reached is a limit one step lower with
+        // nobody able to tell which — so the refusal has to be tested just outside them.
+        let mut dials = shipped();
+        dials
+            .set(period, super::SEASON_PERIOD_LEAST)
+            .expect("the floor itself is a season the water can follow");
+        dials
+            .set(period, super::SEASON_PERIOD_MOST)
+            .expect("the far end of the slider is a world");
+        dials
+            .set(amplitude, f64::from(SEASON_AMPLITUDE_CEILING))
+            .expect("the deepest season anything has been measured at is allowed");
+        dials
+            .set(amplitude, 0.0)
+            .expect("no season at all is the control for every claim about one");
+        dials
+            .set(amplitude, f64::from(SEASON_AMPLITUDE_CEILING) + 0.001)
+            .expect_err("a season deeper than anything measured is not a world to run");
+
+        // ⚠️ The period's floor cannot be crossed through the slider at all, because `ticks`
+        // clamps into the dial's own range before the gate sees it — so the refusal is checked
+        // through the document instead, which is the route a person editing a file takes.
+        let mut document = shipped();
+        assert!(
+            (document.value(period) - 21_000.0).abs() < f64::EPSILON,
+            "the shipped period is not the one SPEC section 4 measured"
+        );
+        document
+            .set(period, super::SEASON_PERIOD_LEAST - 1.0)
+            .expect("the slider clamps rather than refusing, so this is the floor itself");
+        assert!(
+            (document.value(period) - super::SEASON_PERIOD_LEAST).abs() < f64::EPSILON,
+            "a slider dragged below the floor left the period at {} rather than at the floor",
+            document.value(period)
+        );
     }
 }

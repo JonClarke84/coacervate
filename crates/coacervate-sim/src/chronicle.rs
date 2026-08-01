@@ -237,6 +237,15 @@ pub enum Kind {
 
     /// ⭐ **The loss.** A named lineage has stopped building a kind of cell it used to build.
     LettingGo,
+
+    /// ⭐ **Phase 7's Group L.** The light has reached one end of its season.
+    ///
+    /// ⚠️ **Without this the log would report fourteen mass extinctions in a run and record
+    /// nothing whatever about why.** CLAUDE.md marks the rule load-bearing — *"a lineage that
+    /// thrives and then dies when the light dims was never worse, the conditions changed"* — and
+    /// a log with no line saying the light dimmed is a log in which that sentence cannot be
+    /// written by anybody reading it.
+    Season,
 }
 
 impl Kind {
@@ -244,7 +253,7 @@ impl Kind {
     ///
     /// Written out so a test can walk the whole set rather than a sample of it, exactly as
     /// `CellKind::ALL` is.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Adhesion,
         Self::CellKind,
         Self::Predation,
@@ -255,6 +264,7 @@ impl Kind {
         Self::Conditions,
         Self::Repetition,
         Self::LettingGo,
+        Self::Season,
     ];
 
     /// What this kind is called in a file, for ever.
@@ -275,6 +285,7 @@ impl Kind {
             Self::Conditions => "conditions",
             Self::Repetition => "repetition",
             Self::LettingGo => "letting_go",
+            Self::Season => "season",
         }
     }
 }
@@ -376,7 +387,11 @@ struct Condition {
     phrase: &'static str,
 
     /// Read it out of a configuration.
-    read: fn(&Config) -> f32,
+    ///
+    /// ⚠️ Widened to 64 bits in Phase 7's Group L, because `light.season_period` is a **count of
+    /// ticks** rather than a fraction of anything - and a period of a million ticks read through
+    /// a 32-bit float would be printed in the log as a number nobody wrote.
+    read: fn(&Config) -> f64,
 }
 
 /// ⭐ **C8.** Every condition of a world SPEC section 3 does not lock at run start.
@@ -391,150 +406,171 @@ struct Condition {
 /// The five tables here are exactly the ones [`World::retune`] will accept a change to, and
 /// exactly `settings.rs`'s twenty-five sliders less `run.max_ticks_per_second` — which is not a
 /// fact about the world at all, but about how fast a person is watching it.
-const CONDITIONS: [Condition; 24] = [
+const CONDITIONS: [Condition; 26] = [
     Condition {
         table: "light",
         label: "influx",
         phrase: "the light reaching the water",
-        read: |config| config.light.influx,
+        read: |config| f64::from(config.light.influx),
     },
     Condition {
         table: "light",
         label: "cap",
         phrase: "the most a tile of water can hold",
-        read: |config| config.light.cap,
+        read: |config| f64::from(config.light.cap),
     },
     Condition {
         table: "light",
         label: "gradient",
         phrase: "how much of the light falls near the surface",
-        read: |config| config.light.gradient,
+        read: |config| f64::from(config.light.gradient),
     },
     Condition {
         table: "light",
         label: "patchiness",
         phrase: "how unevenly the light falls",
-        read: |config| config.light.patchiness,
+        read: |config| f64::from(config.light.patchiness),
     },
     Condition {
         table: "light",
         label: "patch_drift",
         phrase: "how fast the bright water moves",
-        read: |config| config.light.patch_drift,
+        read: |config| f64::from(config.light.patch_drift),
     },
     Condition {
         table: "light",
         label: "diffusion",
         phrase: "how fast energy spreads sideways through the water",
-        read: |config| config.light.diffusion,
+        read: |config| f64::from(config.light.diffusion),
+    },
+    Condition {
+        table: "light",
+        label: "season_period",
+        phrase: "how long a season lasts",
+        // ⚠️ A count of ticks rather than a fraction, and the one entry in this table that is not
+        // a narrowed number. `u32::try_from` and then a widening would be exact and would refuse
+        // a period of five billion, which the gate allows; this is exact for every period a run
+        // could reach in nine quadrillion ticks.
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a season's period is a count of ticks; every one a person could write is \
+                      exact as a 64-bit float, and this is a number being printed in a sentence"
+        )]
+        read: |config| config.light.season_period as f64,
+    },
+    Condition {
+        table: "light",
+        label: "season_amplitude",
+        phrase: "how deep the seasons run",
+        read: |config| f64::from(config.light.season_amplitude),
     },
     Condition {
         table: "physics",
         label: "drag",
         phrase: "how much of its speed the water leaves a cell",
-        read: |config| config.physics.drag,
+        read: |config| f64::from(config.physics.drag),
     },
     Condition {
         table: "physics",
         label: "drag_anisotropy",
         phrase: "how much harder the water holds a body sideways than lengthways",
-        read: |config| config.physics.drag_anisotropy,
+        read: |config| f64::from(config.physics.drag_anisotropy),
     },
     Condition {
         table: "physics",
         label: "collision_stiffness",
         phrase: "how hard two cells push each other apart",
-        read: |config| config.physics.collision_stiffness,
+        read: |config| f64::from(config.physics.collision_stiffness),
     },
     Condition {
         table: "physics",
         label: "spring_damping",
         phrase: "how quickly an adhesion stops springing",
-        read: |config| config.physics.spring_damping,
+        read: |config| f64::from(config.physics.spring_damping),
     },
     Condition {
         table: "behaviour",
         label: "resting_amplitude",
         phrase: "how hard a muscle works with nothing telling it otherwise",
-        read: |config| config.behaviour.resting_amplitude,
+        read: |config| f64::from(config.behaviour.resting_amplitude),
     },
     Condition {
         table: "behaviour",
         label: "stroke",
         phrase: "how far a muscle works the adhesion it holds",
-        read: |config| config.behaviour.stroke,
+        read: |config| f64::from(config.behaviour.stroke),
     },
     Condition {
         table: "metabolism",
         label: "upkeep_scale",
         phrase: "what it costs a cell simply to be alive",
-        read: |config| config.metabolism.upkeep_scale,
+        read: |config| f64::from(config.metabolism.upkeep_scale),
     },
     Condition {
         table: "metabolism",
         label: "gene_cost",
         phrase: "what one gene costs to carry",
-        read: |config| config.metabolism.gene_cost,
+        read: |config| f64::from(config.metabolism.gene_cost),
     },
     Condition {
         table: "metabolism",
         label: "movement_cost",
         phrase: "what a unit of work costs to do",
-        read: |config| config.metabolism.movement_cost,
+        read: |config| f64::from(config.metabolism.movement_cost),
     },
     Condition {
         table: "metabolism",
         label: "reproduction_threshold",
         phrase: "how much a body must hold before it has a child",
-        read: |config| config.metabolism.reproduction_threshold,
+        read: |config| f64::from(config.metabolism.reproduction_threshold),
     },
     Condition {
         table: "metabolism",
         label: "offspring_share",
         phrase: "how much of itself a parent hands to a child",
-        read: |config| config.metabolism.offspring_share,
+        read: |config| f64::from(config.metabolism.offspring_share),
     },
     Condition {
         table: "mutation",
         label: "point_rate",
         phrase: "how often one gene is changed as a genome is copied",
-        read: |config| config.mutation.point_rate,
+        read: |config| f64::from(config.mutation.point_rate),
     },
     Condition {
         table: "mutation",
         label: "point_sigma",
         phrase: "how far a changed number moves",
-        read: |config| config.mutation.point_sigma,
+        read: |config| f64::from(config.mutation.point_sigma),
     },
     Condition {
         table: "mutation",
         label: "duplication_rate",
         phrase: "how often a gene is copied twice",
-        read: |config| config.mutation.duplication_rate,
+        read: |config| f64::from(config.mutation.duplication_rate),
     },
     Condition {
         table: "mutation",
         label: "deletion_rate",
         phrase: "how often a gene is dropped",
-        read: |config| config.mutation.deletion_rate,
+        read: |config| f64::from(config.mutation.deletion_rate),
     },
     Condition {
         table: "mutation",
         label: "insertion_rate",
         phrase: "how often a gene that was not there appears",
-        read: |config| config.mutation.insertion_rate,
+        read: |config| f64::from(config.mutation.insertion_rate),
     },
     Condition {
         table: "mutation",
         label: "reorder_rate",
         phrase: "how often two genes side by side swap places",
-        read: |config| config.mutation.reorder_rate,
+        read: |config| f64::from(config.mutation.reorder_rate),
     },
     Condition {
         table: "mutation",
         label: "genome_duplication_rate",
         phrase: "how often a whole genome is doubled",
-        read: |config| config.mutation.genome_duplication_rate,
+        read: |config| f64::from(config.mutation.genome_duplication_rate),
     },
 ];
 
@@ -665,6 +701,9 @@ pub struct Chronicle {
 
     /// How many clustering samples had been taken when the lineages were last looked at.
     samples: u64,
+
+    /// Where in its season the world was at the last look. See [`Chronicle::weather`].
+    season_phase: f64,
 }
 
 impl Chronicle {
@@ -698,6 +737,7 @@ impl Chronicle {
             watched: Vec::with_capacity(slots),
             carrying: Vec::with_capacity(slots * 2),
             samples: 0,
+            season_phase: 0.0,
         }
     }
 
@@ -718,6 +758,7 @@ impl Chronicle {
     pub fn observe(&mut self, world: &World, taxonomy: &Taxonomy) {
         let population = self.survey(world, taxonomy);
         self.collapse(world.ticks(), population);
+        self.weather(world);
 
         // ⭐ **C5 and the loss.** Once per *clustering sample*, and not once per tick: a lineage
         // that arrived and one that went are differences between two samples of the population,
@@ -1043,6 +1084,42 @@ impl Chronicle {
         }
     }
 
+    /// ⭐ **Group L.** Write down that the light has reached one end of its season.
+    ///
+    /// Two lines a period, at the brightest and at the dimmest, and no others: **no direction and
+    /// no judgement**. A season is a fact about the conditions and not about anything living
+    /// under them, and CLAUDE.md is explicit that a lineage which thrives and then dies when the
+    /// light dims *was never worse — the conditions changed*. Without these two lines the log
+    /// would report fourteen mass extinctions in a run of the seasonal profile and record nothing
+    /// whatever about why, and that sentence would be unwritable by anybody reading the log
+    /// afterwards.
+    ///
+    /// ⚠️ **Nothing is said in a world with no season in it.** The extremes of a flat light are a
+    /// phase that is running and a multiplier that is not, and fourteen lines a run about
+    /// conditions that never moved would be noise in the one place this project cannot afford
+    /// any.
+    ///
+    /// It reads the **phase** rather than the multiplier, for the reason `grid.rs` gives about
+    /// exposing one and not the other: the multiplier is two-to-one over a cycle, so it cannot
+    /// say whether the light is rising or falling, and which of the two ends has been reached is
+    /// the whole of what these lines are for.
+    fn weather(&mut self, world: &World) {
+        let now = world.grid().season_phase();
+        let was = std::mem::replace(&mut self.season_phase, now);
+
+        if world.config().light.season_amplitude <= 0.0 {
+            return;
+        }
+
+        // A quarter of the way through is the brightest and three quarters the dimmest — see
+        // `Grid::season`, whose triangle those two are the corners of.
+        for (mark, said) in [(0.25, said_brightest()), (0.75, said_dimmest())] {
+            if crossed(was, now, mark) {
+                self.note(world.ticks(), Kind::Season, said);
+            }
+        }
+    }
+
     /// ⭐ **C8.** Write down that a person changed the conditions of the world.
     ///
     /// Handed the configuration as it was and as it now is; every one of [`CONDITIONS`] that
@@ -1212,8 +1289,39 @@ fn said_collapse(from: u32, to: u32, over: u64) -> String {
     )
 }
 
+/// Whether a phase running forwards from `was` to `now` has passed `mark`, wrapping included.
+///
+/// A phase advances by less than a whole cycle a tick — the gate puts the shortest season at
+/// eight thousand ticks — so `now < was` can only mean it went past the end and came round.
+fn crossed(was: f64, now: f64, mark: f64) -> bool {
+    if now < was {
+        was < mark || mark <= now
+    } else {
+        was < mark && mark <= now
+    }
+}
+
+/// ⭐ **Group L.** The light is as bright as this season takes it.
+///
+/// ⚠️ **What changed, and not whether it is good.** "The light is at its best" would be the
+/// natural English and is exactly the sentence CLAUDE.md's load-bearing rule forbids: brighter
+/// water is not a better world, it is a different one, and half of what a season is for is the
+/// other end of it.
+fn said_brightest() -> String {
+    "The light reaching this water is as strong as it becomes. It will fall from here, and \
+     reach its dimmest half a season from now."
+        .to_owned()
+}
+
+/// ⭐ **Group L.** The light is as dim as this season takes it.
+fn said_dimmest() -> String {
+    "The light reaching this water is as weak as it becomes. It will rise from here, and reach \
+     its brightest half a season from now."
+        .to_owned()
+}
+
 /// ⭐ **C8.** A person changed the conditions of the world.
-fn said_conditions(condition: &Condition, from: f32, to: f32) -> String {
+fn said_conditions(condition: &Condition, from: f64, to: f64) -> String {
     format!(
         "The conditions of this world have been changed by hand: {} is now {to}, where it was \
          {from}.",
@@ -2145,6 +2253,8 @@ mod tests {
             said_adhesion(64),
             said_predation(),
             said_collapse(2_140, 812, 4_900),
+            said_brightest(),
+            said_dimmest(),
         ];
 
         for kind in CellKind::ALL {
@@ -2191,6 +2301,96 @@ mod tests {
         assert!(
             !is_permissible("this lineage is more advanced than the last"),
             "the filter these sentences were checked against accepts everything"
+        );
+    }
+
+    /// ⭐⭐ **Group L.** The log says when the light reaches each end of its season, and says
+    /// nothing at all in a world that has no season in it.
+    ///
+    /// ⚠️ **Without these two lines a seasoned run reports fourteen mass extinctions and records
+    /// nothing whatever about why.** CLAUDE.md marks the rule load-bearing — *"a lineage that
+    /// thrives and then dies when the light dims was never worse, the conditions changed"* — and
+    /// a log with no line saying the light dimmed is one in which that sentence cannot be written
+    /// by anybody reading it afterwards.
+    ///
+    /// ⚠️ **And the flat control is half the test.** Two lines a period about a light that never
+    /// moved would be noise in the one place this project cannot afford any, and the phase goes
+    /// on turning whether or not the amplitude is nought.
+    #[test]
+    fn the_log_says_when_the_light_reaches_each_end_of_its_season() {
+        // The shortest season the gate allows, so one period is eight thousand ticks rather than
+        // twenty-one, and a world small enough that eight thousand of them are cheap.
+        let seasoned = |amplitude: f64| {
+            let mut raw = spec_defaults();
+            raw.world.grid_cols = 32;
+            raw.world.grid_rows = 18;
+            raw.light.season_period = 8_000;
+            raw.light.season_amplitude = amplitude;
+            raw.validate().expect("a seasoned world is a world")
+        };
+
+        let watched = |amplitude: f64| {
+            let settings = seasoned(amplitude);
+            let mut world = World::new(&settings);
+            let taxonomy = Taxonomy::new(&settings);
+            let mut log = Chronicle::new(&settings);
+
+            // Something has to be alive before the season starts at all - `World::seed` is what
+            // begins it, and the dawn is deliberately not part of the year.
+            world
+                .seed(
+                    Genome::new(Vec::new(), &settings.limits),
+                    Vec2::new(100.0, 100.0),
+                    0.0,
+                )
+                .expect("a body that asks for nothing can be seeded into a dark world");
+
+            for _ in 0..16_000 {
+                world.tick();
+                log.observe(&world, &taxonomy);
+            }
+
+            log
+        };
+
+        let log = watched(0.25);
+        let seasons = of(&log, Kind::Season);
+        assert_eq!(
+            seasons.len(),
+            4,
+            "two whole seasons should have reached each of their two ends once, and the log \
+             carries {} lines: {}",
+            seasons.len(),
+            said(&log)
+        );
+        // ⚠️ Within a tick or two rather than exactly, and the reason is the design rather than
+        // the arithmetic being loose: the phase is **accumulated** one step at a time so that
+        // retuning the period changes the speed and not where the world is, and two thousand
+        // additions of a eight-thousandth land a hair below a quarter. Measured: 2,001 and 6,001.
+        assert!(
+            seasons[0].tick.abs_diff(2_000) <= 2,
+            "the light reached its brightest at tick {} rather than a quarter of the way through \
+             the first season",
+            seasons[0].tick
+        );
+        assert!(
+            seasons[1].tick.abs_diff(6_000) <= 2,
+            "the light reached its dimmest at tick {} rather than three quarters of the way \
+             through the first season",
+            seasons[1].tick
+        );
+        assert!(
+            seasons[0].said.contains("as strong as it becomes")
+                && seasons[1].said.contains("as weak as it becomes"),
+            "the two ends of the season are not told apart: {}",
+            said(&log)
+        );
+
+        let flat = watched(0.0);
+        assert!(
+            of(&flat, Kind::Season).is_empty(),
+            "a world with no season in it reported {} of them",
+            of(&flat, Kind::Season).len()
         );
     }
 
