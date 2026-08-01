@@ -274,6 +274,7 @@ fn main() -> ExitCode {
         heading();
     }
     report(run.world());
+    println!("\n{}", composition(&Census::of(run.world())));
     println!("\n{}", lineages(run.taxonomy()));
     println!("\n{}", chronicle(run.chronicle()));
     println!("\n{}", ending(why));
@@ -411,7 +412,7 @@ fn listen(interrupt: &Interrupt) {
 /// The column headings of the progress report, written once.
 fn heading() {
     println!(
-        "{:>12} {:>9} {:>6} {:>9} {:>8} {:>8} {:>11} {:>11} {:>9} {:>9} {:>11} {:>11}",
+        "{:>12} {:>9} {:>6} {:>9} {:>8} {:>8} {:>11} {:>11} {:>9} {:>9} {:>11} {:>11} {:>6}",
         "time",
         "tick",
         "alive",
@@ -424,6 +425,7 @@ fn heading() {
         "died",
         "body",
         "genome",
+        "depth",
     );
 }
 
@@ -450,7 +452,7 @@ fn report(world: &World) {
 
     println!(
         "{:>9.1} Ma {:>9} {:>6} {:>9.0} {:>8.0} {:>8.0} {:>11.0} {:>11.0} {:>9} {:>9} \
-         {:>6.2}+-{:<4.2} {:>6.2}+-{:<4.2}",
+         {:>6.2}+-{:<4.2} {:>6.2}+-{:<4.2} {:>6.0}",
         millions,
         world.ticks(),
         census.population,
@@ -465,7 +467,39 @@ fn report(world: &World) {
         census.cell_spread,
         census.mean_genes,
         census.gene_spread,
+        census.mean_depth,
     );
+}
+
+/// ⭐ **Phase 7, Group G.** What the population is *made of*, as one line of the closing report.
+///
+/// SPEC section 6's six kinds each have to be worth specialising into under some circumstance
+/// and not others, and the only way to know whether any of them is is to count them. Every
+/// reading of that in `docs/PHASE4.md` and `docs/PHASE7.md` - *"4,797 photocytes, 652
+/// gonocytes, 11 sclerocytes, 6 sensocytes, 1 myocyte, 0 devorocytes"* - had to be taken by
+/// hand off a debugger, which is why they appear once per phase rather than once per run.
+///
+/// Written in `CellKind::ALL`'s order, which is SPEC section 6's table's, so a reading here
+/// can be laid straight against that table and against `series.rs`'s per-kind biomass.
+fn composition(census: &Census) -> String {
+    let cells: usize = census.kinds.iter().sum();
+    let names = [
+        "photocytes",
+        "devorocytes",
+        "myocytes",
+        "sclerocytes",
+        "sensocytes",
+        "gonocytes",
+    ];
+
+    let mut said = format!("Of {cells} living cells:");
+    for (name, count) in names.iter().zip(census.kinds) {
+        said.push_str(&format!(" {count} {name},"));
+    }
+    said.pop();
+    said.push('.');
+
+    said
 }
 
 /// ⭐ **Phase 7, `A3`.** What the last clustering of the population found, as one line of the
@@ -617,7 +651,8 @@ mod tests {
         assert_eq!(raw.light.influx, 0.001);
         assert_eq!(raw.light.cap, 8.0);
         assert_eq!(raw.light.gradient, 0.75);
-        assert_eq!(raw.light.patchiness, 0.15);
+        assert_eq!(raw.light.patchiness, 0.5);
+        assert_eq!(raw.light.patch_drift, 0.0006);
         assert_eq!(raw.light.diffusion, 0.04);
 
         assert_eq!(raw.physics.drag, 0.92);

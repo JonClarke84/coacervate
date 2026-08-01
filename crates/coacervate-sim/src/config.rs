@@ -75,6 +75,7 @@ pub struct RawLight {
     pub cap: f64,
     pub gradient: f64,
     pub patchiness: f64,
+    pub patch_drift: f64,
     pub diffusion: f64,
 }
 
@@ -176,7 +177,8 @@ pub fn spec_defaults() -> RawConfig {
             influx: 0.001,
             cap: 8.0,
             gradient: 0.75,
-            patchiness: 0.15,
+            patchiness: 0.5,
+            patch_drift: 0.0006,
             diffusion: 0.04,
         },
         physics: RawPhysics {
@@ -243,6 +245,19 @@ pub enum ConfigError {
     /// The only one of these is `light.diffusion`, and it is the only bound in the file
     /// that nothing else would catch. See [`DIFFUSION_STABILITY_LIMIT`].
     Unstable {
+        field: &'static str,
+        value: f32,
+        limit: f32,
+    },
+
+    /// A setting whose upper end is set by what the light can put back, given a value past
+    /// it.
+    ///
+    /// The only one of these is `light.patch_drift`, and it is a separate kind of refusal
+    /// from [`Self::Unstable`] because nothing here stops computing: the arithmetic is
+    /// perfectly well behaved and the *world* is the thing that fails. See
+    /// [`PATCH_DRIFT_CEILING`].
+    OutrunsTheLight {
         field: &'static str,
         value: f32,
         limit: f32,
@@ -316,6 +331,24 @@ impl std::fmt::Display for ConfigError {
                  that still conserves energy exactly nothing else in the program will \
                  catch it"
             ),
+            // Long for the same reason the one above it is. A drift of a hundredth of a
+            // world unit per tick is a sixth of a cell-width a second and reads as nothing at
+            // all; what makes it refused is that a ceiling sliding out from under a full tile
+            // takes more energy out of the world per tick than the light puts in, and a
+            // person who has just been told "0..=0.005" with no reason attached will conclude
+            // the bound is squeamishness and go and widen it.
+            Self::OutrunsTheLight {
+                field,
+                value,
+                limit,
+            } => write!(
+                out,
+                "{field}: {value} is outside 0..={limit}. The upper end is what the light can \
+                 replace rather than a preference: a tile's ceiling moving out from under it \
+                 sheds the difference to `dissipated`, so a field dragged sideways faster \
+                 than this destroys more energy per tick than `light.influx` delivers, and \
+                 the world empties while the energy ledger balances perfectly throughout"
+            ),
             // Also long, and for the same reason: neither end of this one can be guessed
             // from the name of the setting. The lower end is where the water stops being
             // anisotropic at all, which is the world in which SPEC section 8's conservation
@@ -365,7 +398,7 @@ impl std::error::Error for ConfigError {}
 ///
 /// `field` is the setting's full path, `light.influx` and the like. It is carried here
 /// purely so a refusal can name it - a complaint about a number, with no indication which
-/// of thirty-five settings it came from, sends you hunting through the file by hand.
+/// of thirty-six settings it came from, sends you hunting through the file by hand.
 ///
 /// # The rule
 ///
@@ -479,6 +512,55 @@ const MAX_DEV_STEPS_CEILING: u32 = 255;
 /// `coacervate_render::settings`.
 pub const DIFFUSION_STABILITY_LIMIT: f32 = 0.25;
 
+/// The fastest the blotches of light may be told to slide sideways, in world units per
+/// tick, and the second bound in this file that comes from what the world *does* rather than
+/// from what the setting means.
+///
+/// ⭐ **The failure past it is the same shape as [`DIFFUSION_STABILITY_LIMIT`]'s and arrives
+/// by a completely different road.** Nothing here stops computing. What happens is that the
+/// world quietly runs out of energy while the ledger of SPEC section 5 balances to the last
+/// digit throughout, because the loss is *accounted for* - it goes to `dissipated` - and an
+/// account that is being credited correctly is invisible to every check in the project.
+///
+/// # The arithmetic
+///
+/// A tile cannot hold more than its ceiling (SPEC section 4), and a drifting patch field is
+/// a field of ceilings sliding sideways. Every tick, a full tile whose ceiling has moved down
+/// under it sheds the difference to `dissipated`. So the drift costs the world
+///
+/// ```text
+/// loss per tile per tick  =  patch_drift × |d(target)/dx|
+/// ```
+///
+/// and `target = cap × profile(y) × (1 + patchiness × noise)`, so
+///
+/// ```text
+/// |d(target)/dx|  =  cap × profile × patchiness × |d(noise)/dx|
+/// ```
+///
+/// The noise is a smoothstep between lattice points `NOISE_LATTICE_SPACING` tiles apart,
+/// which in the shipped world is 128 world units; a smoothstep's steepest slope is 1.5 across
+/// its span, and two neighbouring lattice heights can differ by 2. So `|d(noise)/dx|` is at
+/// most `2 × 1.5 / 128 = 0.0234` per world unit, and at the shipped `cap` of 8 and a
+/// `patchiness` of 1 the steepest ceiling in the world falls by `0.1875 × profile` per unit
+/// of drift.
+///
+/// A tile is offered `influx × profile` per tick. The profile cancels, and the two are equal
+/// at `0.001 / 0.1875 = 0.0053`. Past that the drift takes more out of the brightest water
+/// than the light puts into it, whatever is living there.
+///
+/// **Five thousandths, rounded down from that, and it is a bound on the shipped light rather
+/// than on any light.** That is a real difference from `DIFFUSION_STABILITY_LIMIT`, which is
+/// a fact about a stencil and holds at every configuration; a world with `light.influx`
+/// turned up is a world that could follow a faster drift. It is written as one number anyway,
+/// because a bound that moved with four other settings is a bound nobody can reason about and
+/// because the interesting range is nowhere near it: the shipped **0.0006** is a ninth of it,
+/// and SPEC section 4's whole argument is about the window between 0.0003 and 0.001.
+///
+/// Nought is allowed and is the world as it was before Phase 7's Group G: a fixed field of
+/// blotches, worked out once from the seed. It is the control for every claim about drift.
+pub const PATCH_DRIFT_CEILING: f32 = 0.005;
+
 /// Isotropic water: the drag a cell feels across its own body axis is the drag it feels
 /// along it, which is what this project shipped with until Phase 7.
 ///
@@ -559,6 +641,26 @@ fn stable(field: &'static str, value: f64, limit: f32) -> Result<f32, ConfigErro
         Ok(narrowed)
     } else {
         Err(ConfigError::Unstable {
+            field,
+            value: narrowed,
+            limit,
+        })
+    }
+}
+
+/// A speed bounded above by what the light can put back: `0..=limit`, ends included.
+///
+/// A fourth gate rather than [`stable`] with a different constant, for the reason [`stable`]
+/// itself is not [`fraction`]: the two are not the same claim. `stable` says the arithmetic
+/// stops working; this says the arithmetic works perfectly and the world empties. Sharing a
+/// function would share the sentence, and the sentence is the whole value of the refusal.
+fn followable(field: &'static str, value: f64, limit: f32) -> Result<f32, ConfigError> {
+    let narrowed = narrow(field, value)?;
+
+    if (0.0..=limit).contains(&narrowed) {
+        Ok(narrowed)
+    } else {
+        Err(ConfigError::OutrunsTheLight {
             field,
             value: narrowed,
             limit,
@@ -677,6 +779,23 @@ pub struct LightConfig {
     pub cap: f32,
     pub gradient: f32,
     pub patchiness: f32,
+
+    /// How fast the blotches of light slide sideways through the world, in world units per
+    /// tick.
+    ///
+    /// ⭐ **The setting that makes swimming worth anything**, and it is the counterpart to
+    /// `physics.drag_anisotropy`: that one made locomotion *possible*, and a 310,000-tick run
+    /// with it in place still ended with one myocyte, because a static field gives a body
+    /// nowhere better to go. See SPEC section 4 for the window this number has to sit in.
+    ///
+    /// The short version is three measured speeds. Budding disperses a lineage at **0.0003**
+    /// world units per tick - one roughly six-unit bud every fifteen-hundred-tick generation.
+    /// A tile refills from empty in eight thousand ticks, which over a tile's own width is
+    /// **0.001**. An anisotropic swimmer manages **0.0005 to 0.0025**. So a field drifting
+    /// between the first and the second of those is one a body that can swim can follow and a
+    /// body that can only bud cannot.
+    pub patch_drift: f32,
+
     pub diffusion: f32,
 }
 
@@ -844,6 +963,17 @@ impl RawConfig {
                 // ledger of section 5 stops balancing. Nothing in section 3 says so; it
                 // follows from the formula.
                 patchiness: fraction("light.patchiness", self.light.patchiness)?,
+                // How fast those blotches slide sideways, and the one setting here bounded
+                // by what the light can afford. A ceiling moving out from under a full tile
+                // sheds the difference to `dissipated`, so the drift is a continuous drain
+                // proportional to `patchiness × patch_drift`; past `PATCH_DRIFT_CEILING` it
+                // takes more out of the brightest water than `light.influx` puts in. See
+                // that constant, and SPEC section 4.
+                patch_drift: followable(
+                    "light.patch_drift",
+                    self.light.patch_drift,
+                    PATCH_DRIFT_CEILING,
+                )?,
                 // "lateral spread per tick", and the one setting here bounded by whether
                 // the arithmetic survives rather than by what the setting means. SPEC
                 // section 4: past a quarter the five-point stencil overshoots and the
@@ -987,6 +1117,7 @@ mod tests {
             ("light.cap", raw.light.cap),
             ("light.gradient", raw.light.gradient),
             ("light.patchiness", raw.light.patchiness),
+            ("light.patch_drift", raw.light.patch_drift),
             ("light.diffusion", raw.light.diffusion),
             ("physics.drag", raw.physics.drag),
             ("physics.drag_anisotropy", raw.physics.drag_anisotropy),
@@ -1022,7 +1153,7 @@ mod tests {
     /// Obvious, and it is here because the obvious rule for narrowing a number fails it.
     /// That rule is "accept the number only if converting it back gives exactly what was
     /// written", which sounds like precisely the right standard and rejects fifteen of
-    /// the twenty-five numbers in SPEC's own defaults - `influx`, `drag`, `patchiness` and
+    /// the twenty-six numbers in SPEC's own defaults - `influx`, `drag`, `patchiness` and
     /// most of the mutation rates among them. The reason is that a value like `0.012` has
     /// no exact representation in binary at either size, so the two sizes round it
     /// slightly differently and the comparison fails. Under that rule the shipped
@@ -1038,8 +1169,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            25,
-            "SPEC section 3 has twenty-five decimal settings; this list has {}, so one has \
+            26,
+            "SPEC section 3 has twenty-six decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );
@@ -1052,7 +1183,7 @@ mod tests {
 
         assert!(
             refused.is_empty(),
-            "{} of the 25 numbers in SPEC's own default configuration cannot be loaded:\n  {}",
+            "{} of the 26 numbers in SPEC's own default configuration cannot be loaded:\n  {}",
             refused.len(),
             refused.join("\n  ")
         );
@@ -1100,9 +1231,9 @@ mod tests {
 
     /// SPEC's own defaults go through the gate and come out the other side unchanged.
     ///
-    /// Every one of the thirty-five settings is checked, not a sample, and the reason is
+    /// Every one of the thirty-six settings is checked, not a sample, and the reason is
     /// the shape of the code being tested rather than thoroughness for its own sake.
-    /// Turning a document into a checked configuration is thirty-five hand-written
+    /// Turning a document into a checked configuration is thirty-six hand-written
     /// assignments in a row, all of the same shape, several of them neighbours with
     /// identical types - `gradient` and `patchiness` sit side by side and are both
     /// fractions between zero and one. Copy the wrong one and every test that looks at a
@@ -1130,7 +1261,8 @@ mod tests {
         assert_eq!(config.light.influx, 0.001);
         assert_eq!(config.light.cap, 8.0);
         assert_eq!(config.light.gradient, 0.75);
-        assert_eq!(config.light.patchiness, 0.15);
+        assert_eq!(config.light.patchiness, 0.5);
+        assert_eq!(config.light.patch_drift, 0.0006);
         assert_eq!(config.light.diffusion, 0.04);
 
         assert_eq!(config.physics.drag, 0.92);
@@ -1208,7 +1340,7 @@ mod tests {
         // because 0.5 *is* a fraction: what excludes it is the stability of the arithmetic
         // rather than the meaning of the setting, and it is the value somebody would
         // actually write.
-        let corruptions: [(&str, Corruption); 25] = [
+        let corruptions: [(&str, Corruption); 26] = [
             ("world.width", |raw| raw.world.width = 0.0),
             ("world.height", |raw| raw.world.height = 0.0),
             ("world.years_per_tick", |raw| raw.world.years_per_tick = 0.0),
@@ -1216,6 +1348,11 @@ mod tests {
             ("light.cap", |raw| raw.light.cap = 0.0),
             ("light.gradient", |raw| raw.light.gradient = 1.5),
             ("light.patchiness", |raw| raw.light.patchiness = 1.5),
+            // A hundredth of a world unit per tick, which is a sixth of a cell-width a
+            // second and reads as a perfectly reasonable drift. What excludes it is what the
+            // light can replace rather than the meaning of the setting, exactly as with
+            // `diffusion` below it - see `PATCH_DRIFT_CEILING`.
+            ("light.patch_drift", |raw| raw.light.patch_drift = 0.01),
             ("light.diffusion", |raw| raw.light.diffusion = 0.5),
             ("physics.drag", |raw| raw.physics.drag = 1.5),
             // Past the ceiling rather than below the floor, because the ceiling is the end
@@ -1549,6 +1686,88 @@ mod tests {
         }
     }
 
+    /// ⭐ A patch field told to slide faster than the light can refill what it slides off
+    /// is refused, and nought is still allowed.
+    ///
+    /// [`PATCH_DRIFT_CEILING`] carries the derivation. What this pins is the shape of the
+    /// gate, which is deliberately **not** `light.diffusion`'s even though the two read
+    /// alike from outside:
+    ///
+    /// - **The limit itself is usable.** A limit that cannot be reached is a limit one step
+    ///   lower with nobody able to tell which.
+    /// - **Nought is usable**, and that is the load-bearing end. A drift of nothing is the
+    ///   fixed blotches this project had before, and it is the control experiment for every
+    ///   claim about drifting ones. A gate that quietly required a positive drift would take
+    ///   the control away.
+    /// - **The sentence explains itself.** The failure past the ceiling is a world that
+    ///   empties while SPEC section 5's ledger balances to the last digit throughout, because
+    ///   the energy is *accounted for* on its way out - so a person who widens this bound
+    ///   gets no warning from anything else in the program. That is the same trap
+    ///   `diffusion` sets and it is sprung by a completely different mechanism, which is why
+    ///   the two refusals are separate sentences rather than one with a parameter.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "a drift at the limit must arrive as exactly the drift that was written; \
+                  near enough would let a value be quietly adjusted on its way through"
+    )]
+    fn a_patch_drift_faster_than_the_light_can_replace_is_refused() {
+        let base = spec_defaults();
+
+        for allowed in [0.0, 0.0001, f64::from(PATCH_DRIFT_CEILING)] {
+            let mut fine = base.clone();
+            fine.light.patch_drift = allowed;
+            assert_eq!(
+                fine.validate()
+                    .expect("a drift at or below the ceiling has to be usable")
+                    .light
+                    .patch_drift,
+                narrow("light.patch_drift", allowed).expect("these all narrow"),
+                "a drift of {allowed} did not survive being checked"
+            );
+        }
+
+        for drift in [0.0051, 0.01, 1.0] {
+            let mut too_fast = base.clone();
+            too_fast.light.patch_drift = drift;
+
+            let complaint = too_fast
+                .validate()
+                .expect_err("a drift past the ceiling must stop the run")
+                .to_string();
+
+            assert!(
+                complaint.starts_with("light.patch_drift: "),
+                "a drift of {drift} was refused and the complaint was about something else: \
+                 {complaint}"
+            );
+            assert!(
+                complaint.contains("0..=0.005"),
+                "the complaint about a drift of {drift} does not say what the limit is: \
+                 {complaint}"
+            );
+            assert!(
+                complaint.contains("the energy ledger balances perfectly throughout"),
+                "the complaint about a drift of {drift} does not say that nothing else in \
+                 the program will catch this, which is the whole reason the bound is a gate: \
+                 {complaint}"
+            );
+        }
+
+        // And a negative drift is refused by the same gate rather than quietly running the
+        // field backwards, which would be a perfectly good world and not the one asked for.
+        let mut backwards = base;
+        backwards.light.patch_drift = -0.0006;
+        assert!(
+            backwards
+                .validate()
+                .expect_err("a negative drift must be refused")
+                .to_string()
+                .starts_with("light.patch_drift: "),
+            "a negative drift was refused by something other than its own gate"
+        );
+    }
+
     /// `max_ticks = 0` means "no limit", and that convention stops here.
     ///
     /// SPEC section 3 writes the setting with a comment saying `0 = unbounded`, which is
@@ -1591,7 +1810,7 @@ mod tests {
         );
     }
 
-    /// The seven sentences a person is ever shown, written out in full.
+    /// The eight sentences a person is ever shown, written out in full.
     ///
     /// This is the only test in the module whose subject is the English rather than the
     /// arithmetic, and it is not decoration. The error message is the entire interface
@@ -1623,12 +1842,27 @@ mod tests {
     /// program used to accept, and is refused for a reason nobody could infer from the
     /// word "diffusion" — so the sentence has to carry the reason with it or the refusal
     /// reads as an arbitrary house rule.
+    ///
+    /// **And `patch_drift`'s is as long, for the same reason and a different mechanism.** A
+    /// hundredth of a world unit per tick is a sixth of a cell's width per second; nothing
+    /// about the number looks wrong. What is wrong is invisible from where the person is
+    /// standing — the field would be shedding more energy to `dissipated` than the light
+    /// puts in — and, like `diffusion`, it is a failure the energy ledger cannot see.
     #[test]
     fn errors_name_the_field_in_plain_english() {
-        let sentences: [(&str, Corruption); 7] = [
+        let sentences: [(&str, Corruption); 8] = [
             ("light.gradient: 1.5 is outside 0..=1", |raw| {
                 raw.light.gradient = 1.5;
             }),
+            (
+                "light.patch_drift: 0.01 is outside 0..=0.005. The upper end is what the \
+                 light can replace rather than a preference: a tile's ceiling moving out \
+                 from under it sheds the difference to `dissipated`, so a field dragged \
+                 sideways faster than this destroys more energy per tick than `light.influx` \
+                 delivers, and the world empties while the energy ledger balances perfectly \
+                 throughout",
+                |raw| raw.light.patch_drift = 0.01,
+            ),
             (
                 "light.diffusion: 0.5 is outside 0..=0.25. The upper end is a limit of the \
                  arithmetic rather than a preference: past it energy spreads faster than \

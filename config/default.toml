@@ -21,7 +21,20 @@ influx = 0.001           # energy per grid tile per tick. Measured in Phase 4, n
                          # At 0.001 it settles near 2,200 with the field half eaten. SPEC 3.
 cap = 8.0                # max energy a tile can hold
 gradient = 0.75          # 0 = uniform, 1 = fully top-weighted
-patchiness = 0.15        # spatial noise amplitude
+patchiness = 0.5         # spatial noise amplitude. Enters `relight` exactly linearly, so at
+                         # 0.5 a tile's ceiling runs +-67% of what its depth alone would give
+                         # it and there is something worth crossing the world for. Raised from
+                         # the 0.15 SPEC was first written with in Phase 7, because a field
+                         # drifting under a population is worth nothing if the field is nearly
+                         # flat. SPEC 4.
+patch_drift = 0.0006     # world units per tick the blotches slide sideways. Measured window,
+                         # not guessed: budding disperses a lineage at 0.0003, a tile refills
+                         # over its own width at 0.001, and an anisotropic swimmer manages
+                         # 0.0005 to 0.0025 - so a drift between the first two is followable
+                         # by a body that can swim and not by one that can only bud. That is
+                         # the whole design. It is a coordinate offset and never a reseed:
+                         # the blotches keep their shape and move. Bounded at 0.005, where the
+                         # drift destroys more energy per tick than the light delivers. SPEC 4.
 diffusion = 0.04         # lateral spread per tick
 
 [physics]

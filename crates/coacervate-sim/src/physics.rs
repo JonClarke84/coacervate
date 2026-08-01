@@ -688,7 +688,37 @@ impl Physics {
         self.forces[..cells.len()].fill(Vec2::ZERO);
         self.pull_springs(cells, springs);
         self.push_apart(cells);
+        self.lift(cells);
         self.integrate(cells);
+    }
+
+    /// Let the water carry each cell up or down according to what kind of cell it is.
+    ///
+    /// ⭐⭐ **The one force in this module that does not cancel**, and that is the entire
+    /// point of it. Springs and collisions are `+f` on one cell and `-f` on another, which is
+    /// what makes them honest and is also what makes a free body's total velocity a conserved
+    /// quantity of the integrator - see [`Physics::integrate`]. Buoyancy is *external*, so the
+    /// sum over a body is not zero and the body genuinely moves.
+    ///
+    /// SPEC section 8 explains why that is allowed to be true here and is not a way of making
+    /// a muscle work. A body cannot fight this force - a muscle only ever makes internal
+    /// forces, and a body contracting hard against a uniform pull was measured falling 0.1%
+    /// slower than the same body holding still. It does not have to fight it: the force is a
+    /// sum over the body's own [`CellKind::buoyancy`], so **a lineage changes its depth by
+    /// changing what it is made of**, which is one mutation to one gene's `child_kind`.
+    ///
+    /// # It is added to the forces rather than to the velocity
+    ///
+    /// So that it goes through exactly the same drag every other force does. The consequence
+    /// is worth knowing and is physically right: a cell in the middle of a chain has an axis,
+    /// and a chain lying flat has its axis across the pull, so the body sinks at about half
+    /// the rate a loose cell would. A long flat body settles more slowly than a compact one,
+    /// which is what a long flat body in water actually does, and none of it needed writing
+    /// down separately.
+    fn lift(&mut self, cells: &[Cell]) {
+        for (force, cell) in self.forces[..cells.len()].iter_mut().zip(cells) {
+            force.y += cell.kind.buoyancy();
+        }
     }
 
     /// Turn the flat list of springs inside out, so that a cell's adhesions can be found
@@ -1207,12 +1237,17 @@ mod tests {
              {touching} is expected, and was measured at four units, but this is the \
              repulsion throwing them rather than separating them"
         );
+        // ⚠️ Along the line the pair was pushed apart on, not in every direction. Both cells
+        // are photocytes and a photocyte floats, so each is left drifting upwards at the
+        // terminal velocity of its own [`CellKind::buoyancy`] for ever - which is what it is
+        // for, and which does not separate them because it is the same for both.
+        // `motion_is_viscous_not_ballistic` is where that speed is pinned.
         for (index, cell) in cells.iter().enumerate() {
             assert!(
-                cell.vel.length() < 1e-4,
-                "cell {index} of the separated pair is still moving at {}, so the two are \
-                 sailing apart rather than settling",
-                cell.vel.length()
+                cell.vel.x.abs() < 1e-4,
+                "cell {index} of the separated pair is still moving at {} along the line it \
+                 was pushed on, so the two are sailing apart rather than settling",
+                cell.vel.x
             );
         }
 
@@ -1417,10 +1452,34 @@ mod tests {
             "a shoved cell travelled only {coasted} units, which is less than its own \
              width - the drag is so heavy that nothing could ever move"
         );
+        // ⚠️ **Across the shove, not along every direction**, since Phase 7's Group G. The
+        // shove is horizontal and the claim is that the water absorbs it; what a loose cell is
+        // left with vertically is [`CellKind::buoyancy`], which is a standing external force
+        // and is *supposed* to still be there after six hundred ticks. Asserting the whole
+        // velocity would be asserting that the cell has no composition.
         assert!(
-            cells[0].vel.length() < 1e-4,
-            "the cell is still moving at {} after six hundred ticks of coasting",
-            cells[0].vel.length()
+            cells[0].vel.x.abs() < 1e-4,
+            "the cell is still moving at {} along the shove after six hundred ticks of \
+             coasting",
+            cells[0].vel.x
+        );
+
+        // And what it *is* left with is exactly the terminal velocity SPEC section 8 gives
+        // for a constant force in this water: `f × dt × drag / (1 - drag)`. A photocyte
+        // floats, so it is upward. This is the second half of the same claim - the water
+        // absorbs what was given to the cell and holds it against what is given to it
+        // continuously - and it is what makes buoyancy a *drift* rather than an acceleration.
+        let terminal = f64::from(CellKind::Photocyte.buoyancy())
+            * f64::from(DT)
+            * f64::from(world.physics.drag)
+            / (1.0 - f64::from(world.physics.drag));
+        assert!(
+            (f64::from(cells[0].vel.y) - terminal).abs() < terminal.abs() * 1e-3,
+            "a loose photocyte settled at a vertical speed of {} against the {terminal} a \
+             standing force of {} gives in water of drag {}",
+            cells[0].vel.y,
+            CellKind::Photocyte.buoyancy(),
+            world.physics.drag
         );
 
         // The same shove in water with no drag in it at all.
@@ -1532,8 +1591,16 @@ mod tests {
         );
 
         // Straight down into the floor.
+        //
+        // ⚠️ **A sclerocyte, and the pair of kinds is chosen since Phase 7's Group G.** Each
+        // of these two cases now has a cell whose own [`CellKind::buoyancy`] holds it against
+        // the boundary it was driven into: a photocyte floats and a sclerocyte is the densest
+        // thing in SPEC section 6's table. That is stricter than it was rather than looser -
+        // the shove decays to nothing in a few tens of ticks, so the old version only ever
+        // asked whether a cell that had *stopped* stayed put, and this asks whether a cell
+        // being pushed into the floor for a hundred ticks together goes through it.
         let mut sinking = vec![Cell::new(
-            CellKind::Photocyte,
+            CellKind::Sclerocyte,
             Vec2::new(500.0, height - 5.0),
         )];
         sinking[0].vel = Vec2::new(0.0, 60.0);
@@ -2034,6 +2101,167 @@ mod tests {
     /// The same, at the stroke a myocyte with nothing to sense gives.
     fn swims(anisotropy: f64, count: u8, sag: f32, phase_step: f32, ticks: u32) -> f32 {
         swims_at(anisotropy, count, sag, phase_step, STROKE, ticks)
+    }
+
+    /// A body of one kind of cell, adhered in a line, still, in the middle of the world.
+    ///
+    /// The composition is the only thing that varies between the cases below, which is the
+    /// whole claim: a body's depth follows from *what it is made of*.
+    fn made_of(kinds: &[CellKind]) -> (Vec<Cell>, Vec<Spring>) {
+        let mut cells = Vec::new();
+        let mut springs = Vec::new();
+
+        for (index, kind) in kinds.iter().enumerate() {
+            let along = 8.0 * f32::from(u8::try_from(index).expect("a few cells"));
+            cells.push(Cell::new(*kind, Vec2::new(1_000.0 + along, 576.0)));
+
+            if index > 0 {
+                springs.push(Spring {
+                    a: index - 1,
+                    b: index,
+                    rest_length: 8.0,
+                    stiffness: 10.0,
+                });
+            }
+        }
+
+        (cells, springs)
+    }
+
+    /// How far down a body of this composition drifts over this many ticks, with no muscle
+    /// working and nothing else acting on it. Positive is deeper.
+    fn drifts(kinds: &[CellKind], ticks: u32) -> f32 {
+        let world = config(|raw| {
+            raw.limits.max_organisms = 1;
+            raw.limits.max_cells_per_organism = 64;
+        });
+        let (mut cells, springs) = made_of(kinds);
+        let mut physics = Physics::new(&world);
+        let began = centre(&cells).y;
+
+        for _ in 0..ticks {
+            physics.step(&mut cells, &springs);
+        }
+
+        centre(&cells).y - began
+    }
+
+    /// ⭐⭐ **A body's depth follows from what it is made of**, and the founder's composition
+    /// is neutral.
+    ///
+    /// SPEC section 8 rules out the obvious version of this. Gravity is an *external* force,
+    /// so it moves a body - straight down at a terminal velocity, with nothing a muscle can do
+    /// about it, because a muscle only ever produces internal forces and those still cancel in
+    /// the sum. Measured: a body contracting hard against gravity fell **0.1% slower** than the
+    /// same body holding still, which is rounding rather than swimming.
+    ///
+    /// Buoyancy by `CellKind` is the version that works, and the difference is where the
+    /// number comes from. It is still an external force and a body still cannot fight it - but
+    /// it does not have to, because **the force is a property of the body's own composition**,
+    /// which is a property of its genome, which one mutation to one gene's `child_kind` can
+    /// change. There is no valley: every step towards a different depth is a step a body can
+    /// take and pay for in whatever the cell it grew is bad at.
+    ///
+    /// # The four claims, in the order they matter
+    ///
+    /// **The founder does not move.** SPEC section 6's photocyte and gonocyte sum to nothing,
+    /// so the two-celled body every run in this project starts with sits exactly where it is
+    /// put. That is what makes this change safe to ship into a world that already works: no
+    /// existing body drowns and no existing measurement of depth moves for a reason that is
+    /// not selection.
+    ///
+    /// **A body that is mostly photocyte rises**, because staying in the light is what a
+    /// photocyte is for.
+    ///
+    /// **A body that is mostly devorocyte or mostly sclerocyte sinks**, which is the trade the
+    /// whole table exists to create: teeth and armour are dense, so a lineage that spends its
+    /// cells on either sinks into dimmer water where photosynthesis pays badly.
+    ///
+    /// **And the magnitudes are gentle.** SPEC section 8's diagnostic measured a uniform sink
+    /// of `g ≈ 5` putting a population on the floor in forty generations; nothing here may be
+    /// anywhere near that, because a body that reached the floor in a lifetime would have had
+    /// its depth decided for it rather than by what it is.
+    #[test]
+    fn a_body_floats_or_sinks_according_to_what_it_is_made_of() {
+        // The founder every run in this project is seeded with: SPEC section 7's seed cell,
+        // and the one gonocyte without which nothing can reproduce.
+        let founder = drifts(&[CellKind::Photocyte, CellKind::Gonocyte], 2_000);
+        assert!(
+            founder.abs() < 0.05,
+            "the founding body moved {founder} units in two thousand ticks, so a world seeded \
+             with it is a world whose bodies are sinking or rising before anything has \
+             evolved - and every depth measured in docs/PHASE7.md moved with them"
+        );
+
+        // Mostly photocyte: seven of them and the gonocyte that lets the lineage breed.
+        let sunlit = drifts(
+            &[
+                CellKind::Photocyte,
+                CellKind::Photocyte,
+                CellKind::Photocyte,
+                CellKind::Photocyte,
+                CellKind::Photocyte,
+                CellKind::Photocyte,
+                CellKind::Photocyte,
+                CellKind::Gonocyte,
+            ],
+            2_000,
+        );
+        assert!(
+            sunlit < -0.5,
+            "a body of seven photocytes and a gonocyte moved {sunlit} units in a lifetime, so \
+             being made of the cell that harvests light does not carry a body towards it"
+        );
+
+        // Mostly devorocyte, and mostly sclerocyte: teeth and armour.
+        let toothed = drifts(
+            &[
+                CellKind::Devorocyte,
+                CellKind::Devorocyte,
+                CellKind::Devorocyte,
+                CellKind::Devorocyte,
+                CellKind::Devorocyte,
+                CellKind::Devorocyte,
+                CellKind::Photocyte,
+                CellKind::Gonocyte,
+            ],
+            2_000,
+        );
+        let armoured = drifts(
+            &[
+                CellKind::Sclerocyte,
+                CellKind::Sclerocyte,
+                CellKind::Sclerocyte,
+                CellKind::Sclerocyte,
+                CellKind::Sclerocyte,
+                CellKind::Sclerocyte,
+                CellKind::Photocyte,
+                CellKind::Gonocyte,
+            ],
+            2_000,
+        );
+        assert!(
+            toothed > 0.5 && armoured > toothed,
+            "a devorocyte-heavy body moved {toothed} units in a lifetime and a sclerocyte-heavy \
+             one {armoured}, and both are supposed to sink - the second harder, because armour \
+             is the densest thing in SPEC section 6's table"
+        );
+
+        // ⚠️ And gently. `g = 5` on every cell puts a population on the floor in forty
+        // generations; a body that crossed a tenth of this world in one life would be a body
+        // whose depth was decided by the table rather than by selection acting on it.
+        for (what, moved) in [
+            ("photocyte-heavy", sunlit),
+            ("devorocyte-heavy", toothed),
+            ("sclerocyte-heavy", armoured),
+        ] {
+            assert!(
+                moved.abs() < 20.0,
+                "a {what} body moved {moved} units in a single lifetime, which is more than \
+                 three of its own cells - see SPEC section 8 on why the magnitude is the whole \
+                 risk in this change"
+            );
+        }
     }
 
     /// ⭐⭐ **A body with a wave running down it swims, and in isotropic water it cannot.**

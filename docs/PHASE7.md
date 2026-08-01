@@ -12,13 +12,15 @@
 | | |
 | --- | --- |
 | **Phase 7** | in progress |
-| **Current group** | D — Darwin in the margin (A, B, C and F are done) |
-| **Suite** | green — **252 tests, 111s** |
+| **Current group** | D — Darwin in the margin (A, B, C, F and G are done) |
+| **Suite** | green — **257 tests** |
 
-⚠️ **Group F is out of order and it had to be.** It is the swimming work, taken out of turn
-because Jonathan's live run had reached tick 2.8 million with one myocyte in it and the
-diagnostic found that **nothing in this world could move, and nothing ever could have**. It sits
-in the step ledger below between Groups D and E, which are the two still to do.
+⚠️ **Groups F and G are out of order and both had to be.** F is the swimming work, taken out of
+turn because Jonathan's live run had reached tick 2.8 million with one myocyte in it and the
+diagnostic found that **nothing in this world could move, and nothing ever could have**. G is
+what F's own closing paragraph asked for: swimming was made possible and was still worth
+nothing, because the resource field never moved. They sit in the step ledger below between
+Groups D and E, which are the two still to do.
 
 ---
 
@@ -613,6 +615,10 @@ the change** — before it, the payoff was not small but exactly zero and provab
 where to look next: at the *speed*, which means the beat, the swing, or SPEC section 8's
 buoyancy-by-`CellKind`, and not at the water.
 
+*(Group G below took a third answer that is not in that list — **the field**, which never moved
+— and it produced devorocytes and not myocytes. The reading above is still the reading: what
+myocytes are short of is speed.)*
+
 #### `config/dense.toml`, run the same distance
 
 300,000 ticks, same seed, same eight founders. The dawn is 3,000 ticks rather than 10,000,
@@ -665,6 +671,190 @@ and 300,000 ticks is not that.
   Off the clamp the same mutations are real, so lineages drift faster. **The test was made stronger
   rather than looser**: the counterfactual it rejects is now *measured* on the same population, by
   colouring it from the genome fingerprint instead, rather than being a number in a comment.
+
+### Group G — making swimming *pay*, and making depth a thing a body is — **done**
+
+⚠️ **Out of the phase's plan for the same reason Group F was**, and it is the answer to Group
+F's own last paragraph: *"the mechanism exists now and the payoff does not"*. Two changes,
+landing together because both move every golden vector and there is no sense in doing that
+twice.
+
+- [x] **G1. `the_light_blotches_drift_sideways_without_being_redrawn`** ⭐⭐ — `light.patch_drift`,
+  a new key in `[light]`, shipping at **0.0006** world units per tick. `PatchNoise::at` gains a
+  coordinate offset; the offset advances every tick; the ceilings are re-read every 100 ticks
+  through the same routine a live `[light]` retune uses.
+- [x] **G2. `a_drifting_field_sheds_what_its_ceiling_slides_off`** — what the drift costs,
+  measured rather than argued.
+- [x] **G3. `a_patch_drift_faster_than_the_light_can_replace_is_refused`** — `0..=0.005`, and a
+  fourth kind of refusal because the sentence is a different one.
+- [x] **G4. `light.patchiness` 0.15 → 0.5** — a drifting field is worth following only if there
+  is somewhere better to arrive at.
+- [x] **G5. `buoyancy_is_what_a_kind_is_made_of`** — a sixth number on SPEC section 6's table.
+- [x] **G6. `a_body_floats_or_sinks_according_to_what_it_is_made_of`** — the physics, and the
+  founder's exact neutrality.
+- [x] **G7. `Census` gains `mean_depth` and `kinds`** — every per-kind count in this document
+  and in `docs/PHASE4.md` had been taken by hand off a debugger. A headless run now prints them.
+
+#### ⭐⭐ Three runs, because a global change with a feedback nobody priced is Phase 4's failure shape
+
+310,000 ticks, eight founders, seed 42, release build, measured 1 August 2026. The first
+10,000 ticks are the dawn, so these are directly comparable with Group F's table above.
+
+| | **Group F baseline** | **C** — patchiness only | **B** — buoyancy only | **A** — as shipped |
+| --- | --- | --- | --- | --- |
+| `patchiness` | 0.15 | 0.5 | 0.15 | **0.5** |
+| `patch_drift` | — | 0 | 0 | **0.0006** |
+| buoyancy | — | yes | yes | **yes** |
+| Alive | 650 | 882 | 677 | **777** |
+| Field | 65,755 | 66,319 | 59,668 | **64,303** |
+| Biomass | 33,961 | 33,506 | 35,524 | **33,135** |
+| Detritus | 4,475 | 4,751 | 4,330 | **4,811** |
+| Dissipated | 6,468,877 | 6,651,288 | 6,551,850 | **6,696,681** |
+| Light | 6,573,069 | 6,755,863 | 6,651,373 | **6,798,930** |
+| Mean cells | 8.39 | 6.00 | 8.23 | **6.66** |
+| Mean genes | 8.75 | 5.81 | 7.41 | **4.75** |
+| Mean depth (of 1,152) | 483 | 486 | 476 | **553** |
+| Living cells | 5,467 | 5,292 | 5,574 | **5,177** |
+| Photocytes | 4,797 | 4,365 | 4,889 | **4,371** |
+| Gonocytes | 652 | 889 | 676 | **773** |
+| Sclerocytes | 11 | 27 | 8 | **12** |
+| Sensocytes | 6 | 8 | 0 | **13** |
+| **Myocytes** | **1** | 3 | 1 | **2** |
+| **Devorocytes** | **0** | 0 | 0 | **6** |
+
+The shipped run, over time — the ledger checked itself every thousand ticks of all 310,000 and
+never once disagreed:
+
+| Tick | Alive | Field | Biomass | Mean cells | Mean genes | Mean depth |
+| --- | --- | --- | --- | --- | --- | --- |
+| 20,000 | 467 | 169,494 | 6,527 | 1.98 | 1.08 | 309 |
+| 50,000 | 1,760 | 110,462 | 24,450 | 1.98 | 1.89 | 349 |
+| 100,000 | 2,127 | 88,480 | 29,790 | 2.01 | 2.56 | 427 |
+| 150,000 | 2,138 | 84,504 | 31,362 | 2.10 | 3.02 | 439 |
+| 200,000 | 1,970 | 81,354 | 32,042 | 2.37 | 3.36 | 451 |
+| 250,000 | 1,407 | 74,578 | 32,690 | 3.50 | 4.09 | 531 |
+| **310,000** | **777** | **64,303** | **33,135** | **6.66** | **4.75** | **553** |
+
+Peak population **2,219** against a `limits.max_organisms` of 4,000, and 292,752 organisms
+born against 291,975 dead. **Nothing degenerated**: no extinction, nothing near the arena, and
+mean depth in the *lower* half of the water rather than a mat against the surface.
+
+#### ⭐ Devorocytes appeared, and the drift is the only thing they can be attributed to
+
+**Six at tick 310,000, against a baseline of nought**, and — the reading that makes it a result
+rather than a number — **nought in both of the other two runs**. C differs from A in exactly one
+setting, `patch_drift`, and it has none. Group F's `dense` profile, which was built specifically
+to provoke a feeding split by quadrupling the contact rate, also ended with nought.
+
+The mechanism is the one the two changes were designed to produce together. A drifting field
+takes the *sitting still* strategy off the table for a photocyte; a body that cannot follow the
+light is a body with a reason to eat something that can.
+
+⚠️ **It is one reading of six cells in a population of five thousand.** It says the strategy is
+now reachable, not that it is established. The question of whether it persists belongs to an
+overnight run, which is what `dense` exists to be pointed at.
+
+#### ⚠️ Myocytes did not appear, and that is the honest answer
+
+**Two, against a baseline of one**, with three in the run that had no drift at all. There is no
+signal here. Making the field move has not yet made a muscle worth owning, and the arithmetic
+Group F recorded still stands: a myocyte costs **0.014** a tick against a photocyte's 0.004,
+three and a half times as much, and a full-stroke undulator manages 1.9 units per 1,000 ticks
+against a body that lives 571 to 2,000 of them. A body that grew a perfect undulator and swam
+flat out for its whole life would cover about **four units** — two thirds of one of its own
+cells — while the field it is chasing moves 1.2. The margin is there and it is thin, and
+nothing has found it in 310,000 ticks.
+
+**What that says about where to look next** is that the drift is the right *shape* of pressure
+and the wrong *magnitude* of reward, and the lever is the stroke rather than the water: a body
+that swam two or three times faster would be chasing something it could visibly catch. That is
+`osc_freq`, the 0.4 amplitude coefficient in section 9's controller, and `MAX_REST_LENGTH` —
+none of which this group touched.
+
+#### ⭐ What the drift costs, measured twice
+
+**On a full field with nothing living in it** — the worst case, since a population has already
+eaten most of the field down below the level a falling ceiling can reach — the drift sheds
+**0.0179 a tick** against the 23.04 the light offers the world, which is **0.08%**. That is
+`a_drifting_field_sheds_what_its_ceiling_slides_off`.
+
+**In the living world**, run A against run C, which differ in nothing else: `dissipated` is
+45,393 higher over 310,000 ticks, or **+0.146 a tick** — 0.63% of the world's gross income.
+⭐ And `influx_total` is 43,067 higher, or **+0.139 a tick**, which is the other half of the
+same fact and was not expected: a ceiling that slides *up* under a tile makes room the light
+immediately fills. **The drift very nearly pays for itself**, at a net cost to the world of
+about 0.007 a tick, or three hundredths of one per cent.
+
+**Carrying capacity is untouched.** Living cells 5,177 against C's 5,292, and biomass 33,135
+against 33,506 — both inside 2%. The population count is 12% lower and the bodies are 11%
+larger, which is the same biomass arranged differently.
+
+#### ⚠️ Buoyancy at the shipped magnitude changed nothing measurable, which is what gentle means
+
+Run B is the shipped world with buoyancy and nothing else. Against the baseline: 677 organisms
+against 650, mean depth **476 against 483**, 8.23 cells against 8.39. That is the same world.
+
+The measured drift per lifetime is in SPEC section 6 and the largest figure in it is **2.87
+world units over 2,000 ticks** — half of one cell's width. A lineage crosses this world over
+hundreds of generations or not at all, and 310,000 ticks is about 180 generations.
+
+**This is a deliberate result rather than a disappointment, and it is the half of the change
+that was most likely to break the world.** SPEC section 8's diagnostic measured a uniform sink
+of `g ≈ 5` putting a population on the floor in forty generations; the whole risk in this change
+was magnitude, so it was started an order of magnitude below that and measured. What has been
+established is that the mechanism is in place, the founder is exactly neutral, and no world
+drowned. **If depth is wanted as a live pressure, this column is where the number moves**, and
+the next step is to double it and re-run rather than to add anything.
+
+#### What Group G decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **The drift is a coordinate offset, never a reseed** | `grid.rs`, `PatchNoise::slide` | ⚠️ The load-bearing half. Re-drawing the lattice from a moving seed also makes a field that changes, and it would delete what a lineage had found rather than tow it away - so there would be nothing to follow and no advantage in following it. |
+| **Sideways only** | `grid.rs`, `PatchNoise::at` | The lattice wraps sideways because the world does, so a horizontal drift is seamless at every offset. Downwards it does not wrap, so a vertical drift would push blotches through the floor and invent replacements at the surface - the reseed above, applied at the two edges. |
+| **The offset is accumulated, not `drift × ticks`** | `grid.rs`, `Grid::drift` | `[light]` is live. A `drift × ticks` offset would teleport the whole field sideways the instant somebody turned the dial; adding a step per tick means the dial changes the *speed* and nothing else. |
+| **The ceilings are recomputed every 100 ticks, through `relight`'s own routine** | `grid.rs`, `Grid::retarget` | There must be exactly one place a ceiling is computed, or a drifting world and a retuned one would disagree about what a ceiling is. The interval does not change what the drift costs - the loss per retarget and the retargets per tick are inversely proportional - so it buys smoothness only. |
+| **`PATCH_DRIFT_CEILING` is 0.005, and it is a bound on the *shipped* light** | `config.rs` | Unlike `DIFFUSION_STABILITY_LIMIT`, which is a fact about a stencil at any configuration. Written as one number anyway, because a bound that moved with four other settings is one nobody can reason about and the interesting range is a ninth of it. |
+| **A fourth kind of refusal rather than reusing `Unstable`** | `config.rs`, `OutrunsTheLight` | The arithmetic does not stop working. The *world* empties, while the ledger balances to the last digit throughout, because the loss goes through an account. That is a different sentence and the sentence is the whole value of a refusal. |
+| **Buoyancy is a force, not a velocity** | `physics.rs`, `Physics::lift` | So it goes through the two drags. A cell in a flat chain has its axis across the pull, so a long flat body settles at about half the rate a loose cell does - which is right, and which came out of Group F's anisotropy rather than being written down. |
+| **A myocyte weighs exactly nothing** | `cell.rs` | Chosen against the other five rather than from what the tissue is. A muscle that floated would be a way of changing depth *without swimming*, which is the thing the drifting field exists to make worth doing. |
+| **The founder's two kinds sum to exactly zero** | `cell.rs` | Checked with `==`. Every run begins with one photocyte and one gonocyte; a pair that came to a thousandth would start every world drifting and would have moved every depth in this document for a reason that is not selection. |
+| **`Census` gained the counts rather than reading them off `Sample::biomass_of`** | `census.rs` | Per-kind biomass is apportioned out of each organism's single pool, so it answers "how much energy is held in muscle" and cannot answer "how many myocytes are there". `KINDS` moved to `census.rs` and `series.rs` re-exports it, so the two readings cannot end up with different numbers of columns. |
+
+#### ⚠️ Six tests moved, and none of them was weakened
+
+- **`a_run_produces_what_it_produced_before_group_a`** — re-recorded, deliberately, for the
+  second time. Both previous sets are kept beside the new one. The world it describes is a
+  *richer* one: 14% more organisms born, 18% more biomass, 16% more light fallen, all of which
+  is `patchiness` making the good tiles better.
+- **`energy_is_conserved_over_100k_ticks`** — its four pinned figures re-recorded, both previous
+  sets kept. Three moved in one direction for one reason: deeper blotches mean tiles below the
+  depth average fill sooner and then shed everything reaching them, so the world takes in twice
+  the light, sheds two and a half times as much, and holds *less*. The biological pump running
+  harder, which is what a blotchier ocean is.
+- **`the_field_reaches_a_ceiling`** — three pinned figures re-recorded, and the settling
+  criterion **strengthened**: it now requires a hundred still ticks in a row rather than one.
+  Diffusion carries sub-representable movements to the next tick, so a single still tick can
+  happen on the way to somewhere and does - the first still tick of that world is 2,310 and the
+  last moving one is 2,320. The old form was passing on a coincidence.
+- **`motion_is_viscous_not_ballistic`** and **`overlapping_cells_push_apart`** — the "has it
+  stopped" claim is now about the axis the shove was along, because what a loose cell is left
+  with vertically is its own buoyancy and is *supposed* to still be there. The first gained a
+  new assertion pinning that speed to SPEC section 8's `f × dt × drag / (1 − drag)`, which is
+  strictly more than it checked before.
+- **`the_world_wraps_sideways_and_is_closed_top_and_bottom`** — the sinking case is now a
+  sclerocyte, so each boundary is tested against a cell whose own composition holds it there
+  for the whole hundred ticks rather than against a shove that decays in ten.
+- **`the_live_settings_can_be_changed_while_a_run_is_going`** — `hot > cold × 2` replaced by an
+  exact figure. `dissipated` is dominated by the field's ceiling, not by metabolism, and deeper
+  blotches brought three hundred units of spill into a comparison about two units of upkeep.
+  The two worlds are identical apart from the temperature, so everything else cancels in the
+  *difference* and the test now works out what the retune should have cost from SPEC section 6's
+  table and insists on it to a thousandth.
+- **`a_tick_feeds_the_bodies_in_the_world`** and **`the_drift_can_be_read`** — a longer dawn
+  (the field takes a third longer to reach deeper ceilings) and a body's position read at the
+  tick it died rather than the tick it was seeded (three photocytes float about a unit and a
+  half over a lifetime). Neither claim changed.
 
 ### Group E — looking at one organism
 

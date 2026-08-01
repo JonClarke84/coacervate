@@ -77,7 +77,8 @@ years_per_tick = 1000.0
 influx = 0.001           # energy per grid tile per tick — measured, see below
 cap = 8.0                # max energy a tile can hold
 gradient = 0.75          # 0 = uniform, 1 = fully top-weighted
-patchiness = 0.15        # spatial noise amplitude
+patchiness = 0.5         # spatial noise amplitude
+patch_drift = 0.0006     # world units per tick the patches slide sideways — see section 4
 diffusion = 0.04         # lateral spread per tick
 
 [physics]
@@ -150,6 +151,26 @@ the economy, and it is the single most consequential thing measured in this proj
 — at all, under any parameters. Two is the factor by which a long thin body in water resists
 being pushed sideways rather than lengthways, and it is what makes the shipped world one a
 lineage can swim in. Read section 8 before changing it.
+
+### ⭐⭐ `light.patch_drift` is what makes swimming worth anything, and `patchiness` is what makes it worth following
+
+Section 8's anisotropic water made locomotion *possible*. It did not make it *pay*: a
+310,000-tick run at the shipped configuration, with a working undulator mechanism in the
+physics, still ended with **one myocyte**. The reason is not in the physics and not in the
+economy. It is that the resource field was **worked out once from the seed and never moved
+again**, so the best tile in the world was the best tile in the world for ever, and a lineage
+that could swim had nowhere better to go than where it already was.
+
+`patch_drift` slides the whole pattern of blotches sideways, for ever, at a speed chosen so
+that following it is possible for one kind of body and not another. The full argument, the
+three measured speeds it sits between, and what the drift costs in energy are in section 4.
+**0.0006 world units per tick**, bounded at 0.005.
+
+`patchiness` moved from **0.15 to 0.5** in the same change, and the two go together: a field
+that drifts is worth following only if there is somewhere better to arrive at. It enters
+section 4's formula exactly linearly, so 0.5 puts a tile's ceiling within ±67% of what its
+depth alone would give it. One is the arithmetic bound — above it some tiles' targets go
+negative — and 0.5 was chosen from what a population does rather than from the arithmetic.
 
 ### ⭐⭐ `light.influx` is the one number in this table that was measured rather than chosen
 
@@ -226,7 +247,8 @@ A coarse grid, `grid_cols × grid_rows`, each tile holding a scalar energy value
 Per tick, for each tile:
 
 ```
-target      = cap × light_profile(y) × (1 + patchiness × noise(x, y))
+offset     += patch_drift                                // section 4's drifting field, below
+target      = cap × light_profile(y) × (1 + patchiness × noise(x + offset, y))
 regrowth    = influx × light_profile(y)
 tile        = max(tile, min(tile + regrowth, target))   // light only ever adds
 ```
@@ -292,6 +314,82 @@ missing neighbour as a tile holding nothing — silently drains the whole world 
 the surface and the floor. Measured on an evenly-filled test world: 70% of its energy gone
 in 100 ticks. With pairs there is no route out of the world to write down, so there is none
 to write down wrongly.
+
+### ⭐⭐ The patches drift, and the speed is the whole design
+
+**Swimming is possible without being worth anything.** That is what a 310,000-tick run
+measured after section 8's anisotropic water landed: the mechanism works, a full-stroke
+undulator manages 1.9 world units per 1,000 ticks, and the run still ended with one myocyte in
+a population of 650 bodies. Nothing was wrong with the physics or with the economy. There was
+simply **nowhere better to go**, because the field of blotches above was worked out once from
+the seed and then never moved again. In a static field the optimal strategy is to sit still,
+and sitting still is free.
+
+So the field moves. `PatchNoise::at` takes a **coordinate offset**, the offset advances every
+tick by `patch_drift`, and the tiles' ceilings are re-read off the moved lattice periodically —
+through the same routine a live change to `[light]` uses, because there must be exactly one
+place a ceiling is computed.
+
+**The speed is not a taste.** Three things in this world move, and all three have been
+measured:
+
+| What moves | How fast | |
+| --- | --- | --- |
+| A lineage dispersing by **budding** | **0.0003** units/tick | one ~6-unit bud per ~1,500-tick generation |
+| A tile **refilling** from empty, over its own width | **0.001** units/tick | 8 units in 8,000 ticks |
+| An anisotropic **swimmer** | **0.0005 – 0.0025** units/tick | section 8's table |
+
+A field drifting between the first and the second is **followable by a body that can swim and
+not by one that can only bud**, and it does not outrun the light that has to refill behind it.
+That is the entire design, and 0.0006 sits twice the budding speed and inside the swimming
+band.
+
+#### ⚠️ It must be an offset and never a reseed
+
+Re-drawing the lattice heights from a moving seed also produces a field that changes, and it
+is a completely different world: every blotch would vanish and be replaced somewhere else in a
+single tick, **under a living population**. What a lineage had found would stop existing rather
+than move, so there would be nothing to follow and no advantage whatever in being able to
+follow it. With an offset, a blotch keeps its shape, its size and its neighbours and simply
+arrives somewhere else.
+
+The drift is **sideways only**. The lattice wraps sideways because the world does, so a
+horizontal drift is seamless at every offset. Downwards it does not wrap — the world has a
+surface and a floor — so a vertical drift would push blotches through the floor and invent
+replacements at the surface, which is the reseed above applied at the two edges.
+
+#### ⚠️ A drifting ceiling destroys energy, continuously, and the ledger cannot see it
+
+A tile cannot hold more than its target, and what will not fit is `dissipated`. A drifting
+patch field is a field of ceilings sliding sideways, so **every full tile whose ceiling has
+moved down under it sheds the difference out of the world, every tick, for ever.** The loss
+scales with `patchiness × patch_drift`.
+
+That is accounted for and therefore invisible: energy leaving through `dissipated` keeps
+section 5's invariant balanced to the last digit, so nothing in the program would catch a
+drift set too high. It would simply be a world that was poorer than its `influx` said, with a
+carrying capacity nobody could explain.
+
+**Measured** on a field held full with nothing living in it — the worst case, since a
+population has already eaten most of the field down below the level a falling ceiling can
+reach — at the shipped `patchiness` and `patch_drift`: **0.0179 per tick against the 23.04 the
+light offers, which is 0.08%.** It is negligible, and it is negligible for a reason worth
+recording: a ceiling moves by `patch_drift × d(target)/dx` per tick, which at the shipped
+settings is about a thousandth of a unit per tile, against tiles holding several units.
+
+The bound `light.patch_drift ≤ 0.005` is where that stops being true. `d(target)/dx` is at most
+`cap × patchiness × 0.0234` per world unit — the 0.0234 being the steepest a smoothstep between
+lattice points 128 units apart can be — so at `cap = 8` and `patchiness = 1` the drift costs
+`0.1875` per unit and the light delivers `0.001`, and the two are equal at 0.0053. It is a
+bound on the *shipped* light rather than on any light, which is a real difference from
+`diffusion`'s stability limit, and it is written as one number anyway because the interesting
+range is a ninth of it.
+
+**How often the ceilings are recomputed does not change what the drift costs.** The energy shed
+per recomputation is proportional to how far the field moved since the last one, and the
+recomputations happen in inverse proportion to the same interval. What the interval buys is
+smoothness; the implementation uses 100 ticks, which at the shipped drift is a hundred and
+thirtieth of a tile's width.
 
 **Carrying capacity.** Total influx per tick is fixed, so total living biomass is bounded by
 it. This is the pressure that drives everything else in the simulation and is the reason
@@ -430,20 +528,99 @@ struct Cell {
 The trade-offs matter more than the list. Each kind must be *worth* specialising into under
 some circumstance and not others, or differentiation never evolves.
 
-| Kind | Radius | Upkeep/tick | Function |
-| --- | --- | --- | --- |
-| `Photocyte` | 3.0 | 0.004 | Harvests from the field tile it occupies, rate ∝ local energy × exposure. **Occluded by cells above it** — this is what rewards spread-out, branching body plans over compact blobs. |
-| `Devorocyte` | 2.6 | 0.009 | On contact, drains energy from detritus, or from another organism's cells at a rate reduced by that cell's toughness. |
-| `Myocyte` | 2.8 | 0.014 | Oscillates the rest length of its springs. Costs `movement_cost` × work done. The only source of locomotion. |
-| `Sclerocyte` | 3.4 | 0.002 | High spring stiffness, high toughness. No metabolic function — pure structure and defence. |
-| `Sensocyte` | 2.0 | 0.006 | Samples a local gradient (light, detritus, or foreign biomass — determined by its gene) and emits a scalar signal. |
-| `Gonocyte` | 3.2 | 0.005 | Accumulates energy toward reproduction. An organism with no gonocyte cannot reproduce. |
+| Kind | Radius | Upkeep/tick | Toughness | Buoyancy | Function |
+| --- | --- | --- | --- | --- | --- |
+| `Photocyte` | 3.0 | 0.004 | 0.10 | **−0.50** | Harvests from the field tile it occupies, rate ∝ local energy × exposure. **Occluded by cells above it** — this is what rewards spread-out, branching body plans over compact blobs. |
+| `Devorocyte` | 2.6 | 0.009 | 0.30 | **+0.80** | On contact, drains energy from detritus, or from another organism's cells at a rate reduced by that cell's toughness. |
+| `Myocyte` | 2.8 | 0.014 | 0.30 | **0.00** | Oscillates the rest length of its springs. Costs `movement_cost` × work done. The only source of locomotion. |
+| `Sclerocyte` | 3.4 | 0.002 | 0.90 | **+1.00** | High spring stiffness, high toughness. No metabolic function — pure structure and defence. |
+| `Sensocyte` | 2.0 | 0.006 | 0.00 | **−0.20** | Samples a local gradient (light, detritus, or foreign biomass — determined by its gene) and emits a scalar signal. |
+| `Gonocyte` | 3.2 | 0.005 | 0.10 | **+0.50** | Accumulates energy toward reproduction. An organism with no gonocyte cannot reproduce. |
+
+Toughness was decided in Phase 4 and buoyancy in Phase 7; SPEC gave neither. Both live beside
+the radius and the upkeep because **a kind is a trade-off**, and a trade-off split across
+columns nobody puts next to each other is one nobody can see.
 
 **Design intent:** photocytes want surface area and light, which means being high up and
 spread out. Devorocytes want contact, which means reaching things. Myocytes cost energy but
 are the only way to reach either. Sclerocytes are the answer to predation but contribute
 nothing. Requiring a gonocyte means reproduction has a real structural cost. If in play-
 testing one kind dominates every lineage, the costs are wrong — tune before adding kinds.
+
+### ⭐⭐ Buoyancy, and why depth is a property of composition
+
+Section 8 rules out the obvious way to make depth cost something. A uniform gravity is an
+*external* force, so a body does move — straight down, at a terminal velocity, and **there is
+nothing a muscle can do about it**, because a muscle only ever makes internal forces and those
+cancel in the sum however cleverly they are arranged. Measured: a body contracting hard against
+gravity fell 0.1% slower than the same body holding still.
+
+Buoyancy tied to composition is the version that works, and what changes is not the physics but
+where the number comes from. A body's resting depth becomes a function of **what it is made
+of**, which is a function of its genome; reaching a different depth takes *one* mutation to one
+gene's `child_kind`, which is the smallest step the mutation operators have; and there is no
+valley on the way, because every intermediate composition has an intermediate depth.
+
+**The founder is exactly neutral, and that is a constraint rather than a coincidence.** Every
+run begins with section 7's seed cell — a photocyte — and the one gonocyte without which
+nothing can reproduce. `−0.50 + 0.50 = 0`, so that body sits precisely where it is put, no
+world drowns the moment this column arrives, and every depth recorded before it still means
+what it meant. **What moves a lineage is departing from that composition**, which is exactly
+what selection is being asked to do.
+
+Each row, and the argument for it:
+
+- **A photocyte floats.** It is the cell whose whole function is to be where the light is, and
+  floating is how real phytoplankton stay there — buoyant inclusions rather than work. This is
+  the entry that makes the trade-off exist: **staying shallow means being mostly photocyte**,
+  which competes directly with spending the same cells on muscle, armour or teeth.
+- **A gonocyte sinks by exactly as much.** It is a store of packed reserves, which is dense —
+  and the founder constraint requires it, because the alternatives are a weightless photocyte,
+  which removes the whole effect, or a seventh cell to balance it, which no body has.
+- **A sclerocyte is the densest thing in the world.** Structural, mineralised tissue. A lineage
+  that answers predation with armour sinks away from the light while it does it, which is what
+  stops armour being free to a body nothing was eating.
+- **A devorocyte is dense, a little less so.** ⭐ This is the pairing the column is pointed at:
+  a devorocyte-heavy body sinks into dim water, where photosynthesis pays badly and eating pays
+  well. That is a *reason* for a feeding split to appear rather than a decree that one should,
+  which is the difference the decision log draws about predation being emergent.
+- **A myocyte is exactly nothing**, and it is the one row chosen against the others rather than
+  from what the tissue is. Contractile tissue is close to the density of the water it works in,
+  which is the physical answer; writing it as *zero* is the design one. A muscle that floated
+  or sank would be a way of changing depth **without swimming**, which is precisely the thing
+  section 4's drifting field exists to make worth doing. Muscle still costs a body its lift, by
+  diluting the photocytes it is made of; it does not earn any.
+- **A sensocyte is very slightly buoyant.** The smallest cell in the world, at a radius of 2.0
+  against a sclerocyte's 3.4, with the least of anything in it — a fifth of a photocyte's lift,
+  enough that a light-seeking body is not fighting its own sensors and far too little to be
+  useful as a float.
+
+#### ⚠️ The magnitude is the whole risk
+
+Section 8's diagnostic measured a uniform sink of `g ≈ 5` putting a population on the floor in
+**forty generations**, and `g ≈ 50` in three. Buoyancy is a *net* force from an unbalanced
+composition, so what matters is the mean over a body rather than any figure in the column.
+Measured through the real physics, as the drift of a body's centre over a full 2,000-tick
+lifetime:
+
+| Body | Mean buoyancy | 571 ticks | 2,000 ticks |
+| --- | --- | --- | --- |
+| **Founder** — 1 photocyte, 1 gonocyte | **0.000** | **0.000** | **0.000** |
+| Photocyte-heavy — 7 photocytes, 1 gonocyte | −0.375 | −0.33 | **−1.20** |
+| Devorocyte-heavy — 6 devorocytes, 1 photocyte, 1 gonocyte | +0.600 | +0.67 | **+2.33** |
+| Sclerocyte-heavy — 6 sclerocytes, 1 photocyte, 1 gonocyte | +0.750 | +0.82 | **+2.87** |
+
+Half a cell's width in a lifetime at the extreme, and nothing at all for the body every run
+starts with. **A lineage crosses this world over hundreds of generations or not at all**, which
+is the timescale selection acts on rather than the timescale a body falls on.
+
+Two consequences of implementing it as a *force* rather than a velocity are worth knowing,
+because neither needed writing down separately. It goes through the same drag everything else
+does, so a cell in the middle of a chain — which has a body axis, and whose axis lies across
+the pull when the body lies flat — sinks at about half the rate a loose cell would: **a long
+flat body settles more slowly than a compact one**, which is what a long flat body in water
+does. And a cell held against the surface or the floor stays there, because section 8's
+boundary takes its vertical motion away every tick.
 
 ---
 
@@ -697,16 +874,30 @@ change the body's *shape* while it falls; it cannot change the rate of the fall.
 Measured: a body contracting hard against gravity fell **0.1% slower** than the same body
 holding still. That is not a lineage swimming upwards against a current, it is rounding.
 
-**Buoyancy as a property of `CellKind` is the version of the idea that works**, and it is worth
-recording as the design to reach for rather than the one that was tried. Give each of section
-6's six kinds its own weight — some heavier than water, some lighter — and a body's depth
-follows from *what it is made of*. The consequences are all the right shape: a body's resting
-depth becomes a function of its composition, which is a function of its genome; changing it
-takes **one mutation** to one gene's `child_kind`, which is the smallest step the mutation
-operators have; a lineage that wants to be shallower pays for it in whatever the floaty cell is
-bad at rather than in continuous work; and there is a real trade-off, because the kind that
-harvests and the kind that floats need not be the same kind. Nothing in it asks a muscle to do
-something the integrator forbids.
+**Buoyancy as a property of `CellKind` is the version of the idea that works**, and it is what
+Phase 7 shipped. Each of section 6's six kinds has its own weight — some heavier than water,
+some lighter — and a body's depth follows from *what it is made of*. The consequences are all
+the right shape: a body's resting depth becomes a function of its composition, which is a
+function of its genome; changing it takes **one mutation** to one gene's `child_kind`, which is
+the smallest step the mutation operators have; a lineage that wants to be shallower pays for it
+in whatever the floaty cell is bad at rather than in continuous work; and there is a real
+trade-off, because the kind that harvests and the kind that floats need not be the same kind.
+Nothing in it asks a muscle to do something the integrator forbids.
+
+The column, the argument for each row and the measured drift per lifetime are in **section 6**,
+which is where a kind's trade-offs live. Two things about it belong here, because they are
+facts about *this* section's arithmetic rather than about cells:
+
+- **It is the one force in the module that does not cancel.** That is the entire point of it.
+  Springs and collisions are `+f` on one cell and `−f` on another, which is what makes `Σforce`
+  zero and the total velocity a conserved quantity; buoyancy is external, so the sum over a
+  body is not zero and the body genuinely moves. A body still cannot *fight* it, and does not
+  have to.
+- **It is added to the forces and not to the velocity**, so it goes through the two drags above
+  exactly as everything else does. A cell in the middle of a chain has an axis, and a chain
+  lying flat has its axis across the pull, so it sinks at about half the rate a loose cell
+  would. A long flat body settles more slowly than a compact one — which is correct, and which
+  came out of the anisotropy rather than being written down.
 
 Neighbour queries use a **uniform spatial hash** sized to **twice** the largest cell radius.
 This is the single most important performance decision on the CPU side: it takes collision

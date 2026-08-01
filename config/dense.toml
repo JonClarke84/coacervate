@@ -50,7 +50,12 @@ cap = 8.0
 gradient = 0.75          # Unchanged, so the light still falls by three quarters from surface to
                          # floor — over a quarter of the depth, which makes the gradient a
                          # sensocyte reads four times as steep as the shipped world's.
-patchiness = 0.15
+patchiness = 0.5         # `default.toml`'s, unchanged. The blotches are the same fraction of
+                         # each tile's ceiling here as there.
+patch_drift = 0.0006     # `default.toml`'s, unchanged, and deliberately not scaled with the
+                         # light. It is a *speed a body has to match*, measured against what
+                         # swimming and budding can do, and neither of those got faster when
+                         # the water got shallower.
 diffusion = 0.04
 
 [physics]

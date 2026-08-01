@@ -285,9 +285,51 @@ impl PatchNoise {
         f64::from(sixteen_bits) / 32_767.5 - 1.0
     }
 
-    /// The blotchiness at one tile, between -1 and 1.
-    fn at(&self, col: u32, row: u32) -> f64 {
+    /// Slide a position within the lattice along by `shift` whole-and-fractional cells,
+    /// wrapping.
+    ///
+    /// ⭐ **This is the whole of SPEC section 4's drifting field**, and what makes it a drift
+    /// rather than a new world is that it moves the *coordinate* the noise is read at. The
+    /// lattice heights are still a pure function of the seed, so a blotch keeps its shape,
+    /// its size and its neighbours and merely arrives somewhere else. Redrawing the heights
+    /// instead would rearrange the whole field under a living population in one tick.
+    ///
+    /// Nought is exactly nought: `across` is already inside a cell, so adding zero leaves the
+    /// floor at zero and the cell index alone, and every number that comes out is bit for bit
+    /// the number that came out before this existed. That is what keeps `patch_drift = 0` the
+    /// control experiment rather than an approximation to one.
+    fn slide(cell: u32, across: f64, shift: f64, cells: u32) -> (u32, f64) {
+        let span = f64::from(cells);
+        let along = across + shift.rem_euclid(span);
+        let whole = along.floor();
+
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "`across` is a fraction of a cell and the shift has been wrapped into \
+                      `0..cells`, so the floor is a whole number between nought and `cells` \
+                      inclusive and the conversion is exact and in range"
+        )]
+        let carried = whole as u32;
+
+        ((cell + carried) % cells, along - whole)
+    }
+
+    /// The blotchiness at one tile, between -1 and 1, with the field slid `shift` lattice
+    /// cells to the **west**.
+    ///
+    /// The shift is added to the coordinate being read, so a growing shift reads what used to
+    /// be further east - which is the pattern travelling west. Which way it goes is arbitrary
+    /// in a world that wraps; that it goes one way and keeps going is not.
+    ///
+    /// Sideways only. The lattice wraps sideways because the world does, so a horizontal
+    /// drift has nowhere to come from and nowhere to go and the field is seamless at every
+    /// offset. Downwards it does not wrap - the world has a surface and a floor - so a
+    /// vertical drift would push blotches through the floor and invent replacements at the
+    /// surface, which is the reseed this is written to avoid, applied at the two edges.
+    fn at(&self, col: u32, row: u32, shift: f64) -> f64 {
         let (west, across) = Self::place(col, self.cols, self.lattice_cols);
+        let (west, across) = Self::slide(west, across, shift, self.lattice_cols);
         let (north, down) = Self::place(row, self.rows, self.lattice_rows);
 
         // Sideways the lattice wraps, because the world does. Downwards it does not: the
@@ -369,7 +411,64 @@ pub struct Grid {
 
     /// How readily energy spreads between neighbouring tiles.
     diffusion: f32,
+
+    /// The lattice of blotches, worked out from the world's seed and its shape - both of
+    /// which SPEC section 3 locks at run start, so this is built once and never rebuilt.
+    ///
+    /// ⚠️ It is deliberately **not** rebuilt by [`Grid::relight`]. The pattern of the
+    /// blotches is a fact about the seed; what a live change to `[light]` may move is how
+    /// deep they are and how fast they travel, and nothing else. A retune that re-drew the
+    /// pattern would rearrange the whole field under a running population.
+    noise: PatchNoise,
+
+    /// What the light alone would let each *row* hold: `cap × light_profile(row)`, before the
+    /// blotches are laid over it.
+    ///
+    /// Kept at full width rather than narrowed, because it is a step in an arithmetic rather
+    /// than a quantity anything stores: rounding here and again at the end would round twice.
+    /// One number per row, so it is a few hundred bytes.
+    ceilings: Vec<f64>,
+
+    /// How deep the blotches are, `light.patchiness`, at the width the arithmetic runs at.
+    patchiness: f64,
+
+    /// How far the blotches move each tick, in *lattice cells*.
+    ///
+    /// `light.patch_drift` is in world units per tick, which is what a person can compare
+    /// against a swimming speed. This is that number converted once into the coordinates the
+    /// noise is actually read in, because the conversion is four multiplications and the
+    /// alternative is doing them 36,864 times per retarget.
+    drift_per_tick: f64,
+
+    /// How far the blotches have moved so far, in lattice cells, wrapped.
+    ///
+    /// ⚠️ **Accumulated rather than worked out from a tick count**, and the difference shows
+    /// up exactly once: `[light]` is live, so somebody can turn `patch_drift` up mid-run, and
+    /// a `drift × ticks` offset would jump the whole field sideways the instant they did.
+    /// Adding a step per tick means a change of drift changes the *speed* and nothing else,
+    /// which is what a person turning a dial called "how fast the bright water moves" means.
+    drifted: f64,
+
+    /// How many ticks since the ceilings were last worked out. See [`RETARGET_EVERY`].
+    since_retarget: u64,
 }
+
+/// How many ticks pass between two recomputations of the tiles' ceilings.
+///
+/// The drift is continuous and the field is a grid, so the ceilings have to be re-read off
+/// the moved lattice every so often, and this is how often. At the shipped `patch_drift` of
+/// 0.0006 world units a tick, a hundred ticks is **six hundredths of a world unit** - a
+/// hundred and thirtieth of a tile's width - so what a tile's ceiling does over a run is a
+/// smooth slide with steps far below the resolution of the field it is a ceiling for.
+///
+/// ⭐ **It does not change what the drift costs**, which is the thing worth knowing about it.
+/// The energy a drifting ceiling sheds per retarget is proportional to how far the field moved
+/// since the last one, and the retargets happen in inverse proportion to the same interval, so
+/// the loss per tick is the same at every setting of this number. What it buys is smoothness,
+/// and what it costs is the recomputation: 36,864 tiles of four hashed lattice corners each,
+/// which amortised over a hundred ticks is about fifteen hundred hashes a tick against a
+/// quarter of a million cells of physics.
+const RETARGET_EVERY: u64 = 100;
 
 impl Grid {
     /// Build the field a configuration describes.
@@ -400,6 +499,12 @@ impl Grid {
             regrowth: vec![0.0; rows],
             flux: vec![0.0; tile_count],
             diffusion: 0.0,
+            noise: PatchNoise::new(config.world.seed, cols_across, rows_down),
+            ceilings: vec![0.0; rows],
+            patchiness: 0.0,
+            drift_per_tick: 0.0,
+            drifted: 0.0,
+            since_retarget: 0,
         };
         grid.relight(config);
 
@@ -430,7 +535,6 @@ impl Grid {
     /// failure SPEC section 4's opening paragraphs are about.
     pub fn relight(&mut self, config: &Config) {
         let light = &config.light;
-        let cols_across = config.world.grid_cols.get();
         let rows_down = config.world.grid_rows.get();
 
         for (row, offered) in self.regrowth.iter_mut().enumerate() {
@@ -439,28 +543,65 @@ impl Grid {
                 narrowed(f64::from(light.influx) * light_profile(row, rows_down, light.gradient));
         }
 
-        // Worked out here, once, and then never again until somebody turns the light down:
-        // what the light's blotchiness does to a tile is a fixed feature of the world, not
-        // something that happens to it each tick. See `patchiness_is_stable_across_runs`.
-        //
-        // ⚠️ The noise is seeded from `world.seed`, which is locked, so the *pattern* of the
-        // blotches is the same before and after a change and only its depth moves. A retune
-        // that re-drew the pattern would rearrange the whole field under a running population.
-        let noise = PatchNoise::new(config.world.seed, cols_across, rows_down);
-        let patchiness = f64::from(light.patchiness);
+        for (row, ceiling) in self.ceilings.iter_mut().enumerate() {
+            let row = u32::try_from(row).expect("a grid row fits in the type it was counted in");
+            *ceiling = f64::from(light.cap) * light_profile(row, rows_down, light.gradient);
+        }
+
+        self.patchiness = f64::from(light.patchiness);
+
+        // `light.patch_drift` is world units per tick, because that is what a person can hold
+        // beside a swimming speed. The noise is read in lattice cells, so the conversion
+        // happens once here rather than 36,864 times per retarget: world units to tiles, then
+        // tiles to lattice cells.
+        self.drift_per_tick = f64::from(light.patch_drift)
+            * self.across_per_unit
+            * f64::from(self.noise.lattice_cols)
+            / f64::from(self.noise.cols);
+
+        self.diffusion = light.diffusion;
+
+        // ⚠️ `drifted` is deliberately left where it is. A live change to `[light]` moves how
+        // fast the blotches travel and how deep they are; it does not move them, and a retune
+        // that reset the offset would jump the whole field sideways under a living population
+        // - which is the reseed this design exists to avoid, arrived at through the settings
+        // panel.
+        self.retarget();
+    }
+
+    /// Read every tile's ceiling off the lattice as it now stands.
+    ///
+    /// ⭐ **The one place a target is ever computed**, which is the point of it being a
+    /// method. SPEC section 3 makes `[light]` live, so a person can dim the world mid-run;
+    /// SPEC section 4 makes the blotches move, so the world dims itself a little every
+    /// hundred ticks. Those are two callers for one piece of arithmetic, and the only way to
+    /// be sure the drift computes a ceiling the same way a retune does is for there to be one
+    /// computation. A second copy would be a world whose ceilings changed shape the first time
+    /// somebody touched a slider.
+    ///
+    /// ⚠️ **The tiles are left holding whatever they are holding.** A ceiling that has just
+    /// slid down under a full tile leaves that tile above its target, which is a state SPEC
+    /// section 4 already has an answer for: [`Grid::spill`] moves the excess `field →
+    /// dissipated` at the end of the same tick. So the energy a drifting ceiling takes out of
+    /// the world is *accounted for* rather than deleted, and the ledger goes on balancing
+    /// across every step of the drift. That accounting is also the whole cost of the feature -
+    /// see `a_drifting_field_sheds_what_its_ceiling_slides_off`.
+    fn retarget(&mut self) {
+        let (cols_across, rows_down) = (self.noise.cols, self.noise.rows);
+        let (patchiness, drifted) = (self.patchiness, self.drifted);
 
         for row in 0..rows_down {
-            let ceiling = f64::from(light.cap) * light_profile(row, rows_down, light.gradient);
             let down = usize::try_from(row).expect("a grid row fits in a machine word");
+            let ceiling = self.ceilings[down];
 
             for col in 0..cols_across {
                 let across = usize::try_from(col).expect("a grid column fits in a machine word");
                 self.targets[down * self.cols + across] =
-                    narrowed(ceiling * (1.0 + patchiness * noise.at(col, row)));
+                    narrowed(ceiling * (1.0 + patchiness * self.noise.at(col, row, drifted)));
             }
         }
 
-        self.diffusion = light.diffusion;
+        self.since_retarget = 0;
     }
 
     /// Which tile of the field a point in the world is standing on.
@@ -634,9 +775,43 @@ impl Grid {
     /// several times what it can, so the ceiling is enforced once, after the energy has
     /// finished moving, rather than being defended by every operation that touches a tile.
     pub fn tick(&mut self, ledger: &mut Ledger) {
+        self.drift();
         ledger.light(self.regrow());
         self.diffuse();
         ledger.overflow(self.spill());
+    }
+
+    /// Move the blotches on by one tick, and re-read the ceilings if they have moved far
+    /// enough to be worth re-reading.
+    ///
+    /// SPEC section 4's drifting field. The offset advances every tick and the *targets* are
+    /// recomputed every [`RETARGET_EVERY`] of them, which is the same slide sampled coarsely
+    /// enough to be cheap and far more finely than a tile is wide.
+    ///
+    /// It runs first in the tick, before the light falls, so that a ceiling which has just
+    /// come down under a full tile is the ceiling that tick's [`Grid::spill`] measures
+    /// against, rather than the excess sitting in the field for a hundred ticks with the
+    /// books disagreeing with the grid about whether it is there.
+    ///
+    /// A world told not to drift does nothing here at all: no offset moves, no target is
+    /// recomputed, and the ceilings stay bit for bit the numbers [`Grid::relight`] left. That
+    /// is what makes `light.patch_drift = 0` the control experiment for every claim about a
+    /// drifting field rather than an approximation to one.
+    fn drift(&mut self) {
+        if self.drift_per_tick <= 0.0 {
+            return;
+        }
+
+        // Wrapped every tick rather than allowed to grow, so the offset stays a small number
+        // however long a run goes on and the arithmetic keeps every digit it started with. The
+        // lattice wraps sideways, so this loses nothing whatever.
+        let span = f64::from(self.noise.lattice_cols);
+        self.drifted = (self.drifted + self.drift_per_tick).rem_euclid(span);
+        self.since_retarget += 1;
+
+        if self.since_retarget >= RETARGET_EVERY {
+            self.retarget();
+        }
     }
 
     /// Let the light fall for one tick, and report what it actually put into the world.
@@ -1159,11 +1334,11 @@ mod tests {
         for row in 0..64 {
             for col in 0..96 {
                 assert!(
-                    (once.at(col, row) - again.at(col, row)).abs() < f64::EPSILON,
+                    (once.at(col, row, 0.0) - again.at(col, row, 0.0)).abs() < f64::EPSILON,
                     "the same seed put the light's blotches in two different places at \
                      ({col}, {row}), so no run can ever be replayed"
                 );
-                if (once.at(col, row) - elsewhere.at(col, row)).abs() > 1e-6 {
+                if (once.at(col, row, 0.0) - elsewhere.at(col, row, 0.0)).abs() > 1e-6 {
                     moved_with_the_seed += 1;
                 }
             }
@@ -1193,7 +1368,7 @@ mod tests {
         for row in 0..64u32 {
             let profile = spec_light_profile(row, 64, 0.75);
             for col in 0..96u32 {
-                let expected = 8.0 * profile * (1.0 + 0.15 * once.at(col, row));
+                let expected = 8.0 * profile * (1.0 + 0.5 * once.at(col, row, 0.0));
                 let held = f64::from(
                     world.targets[at(
                         &world,
@@ -1222,6 +1397,195 @@ mod tests {
                 "turning up the light moved the blotches rather than brightening them"
             );
         }
+    }
+
+    /// ⭐⭐ The blotches of light **slide sideways** as the run goes on, and the field that
+    /// arrives is the one that left rather than a new one.
+    ///
+    /// This is the whole of SPEC section 4's drifting field, and both halves of the sentence
+    /// are load-bearing.
+    ///
+    /// # Why it moves at all
+    ///
+    /// Phase 7 made swimming possible and a 310,000-tick run still ended with one myocyte,
+    /// because a body that can swim has nowhere better to go: the blotches were worked out
+    /// once from the seed and never moved again, so the best tile in the world was the best
+    /// tile in the world for ever and sitting still was the whole optimal strategy. A field
+    /// that moves is a reason to be able to follow it.
+    ///
+    /// # ⚠️ Why it must be an offset and not a reseed
+    ///
+    /// Re-drawing the noise from a moving seed would also produce a field that changes, and
+    /// it would be a completely different world: every blotch in it would vanish and be
+    /// replaced somewhere else in one tick, under a living population, so what a lineage had
+    /// found would stop existing rather than move. There would be nothing to follow and no
+    /// advantage to being able to. **The check that separates the two is the rotation**: the
+    /// field 8,000 ticks later is the field at the start, moved one tile west, tile for tile
+    /// across the whole world. A reseed passes no part of that.
+    ///
+    /// # The arithmetic of the numbers chosen
+    ///
+    /// A tile is `2048 / 256 = 8` world units across, and the drift is a thousandth of a unit
+    /// per tick, so 8,000 ticks is one tile exactly. The lattice fits a whole number of times
+    /// across the world, so one tile of drift is exactly one tile of lattice coordinate and
+    /// the comparison is a rotation rather than an approximation - the tolerance below is for
+    /// `light.patch_drift` being narrowed to 32 bits on its way through the gate, which is
+    /// worth about four parts in ten million of a tile.
+    ///
+    /// # And nought really is still
+    ///
+    /// A world told not to drift holds the same ceilings, to the last bit, for as long as it
+    /// is run. That is the control experiment for everything above, and a drift that was
+    /// quietly always on would take it away.
+    #[test]
+    fn the_light_blotches_drift_sideways_without_being_redrawn() {
+        // A tile is 8 world units across, so a thousandth of a unit per tick moves the field
+        // one whole tile in 8,000 ticks.
+        let mut world = Grid::new(&config(|raw| raw.light.patch_drift = 0.001));
+        let mut ledger = Ledger::new(world.total_energy());
+        let before = world.targets.clone();
+
+        for _ in 0..8_000 {
+            world.tick(&mut ledger);
+        }
+
+        let cols = world.cols();
+        let mut moved = 0;
+        for row in 0..world.rows() {
+            for col in 0..cols {
+                let here = f64::from(world.targets[at(&world, col, row)]);
+                let came_from = f64::from(before[at(&world, (col + 1) % cols, row)]);
+                assert!(
+                    (here - came_from).abs() < 1e-4,
+                    "the tile at ({col}, {row}) can hold {here}, and one tile east of it \
+                     could hold {came_from} eight thousand ticks ago - so the field has been \
+                     redrawn rather than moved, and a lineage that had found somewhere good \
+                     has had it deleted rather than towed away"
+                );
+                if (here - f64::from(before[at(&world, col, row)])).abs() > 1e-4 {
+                    moved += 1;
+                }
+            }
+        }
+
+        // ...and it is genuinely somewhere else, rather than a field so smooth that any
+        // rotation of it matches. A patch is sixteen tiles across, so a shift of one moves
+        // most tiles by a real amount.
+        assert!(
+            moved > cols * world.rows() / 2,
+            "only {moved} of the {} tiles hold a different amount from eight thousand ticks \
+             ago, so the drift is not reaching the field",
+            cols * world.rows()
+        );
+
+        // ⚠️ And the ceiling rule of SPEC section 4 still holds against a ceiling that is
+        // moving. `the_field_reaches_a_ceiling` states it on a still field, because a
+        // drifting world never comes to rest and cannot be asked to; this is the same rule
+        // under the conditions the world actually ships in.
+        for (tile, (standing, ceiling)) in world.tiles.iter().zip(&world.targets).enumerate() {
+            assert!(
+                standing <= ceiling,
+                "tile {tile} holds {standing} against a ceiling of {ceiling}, so a ceiling \
+                 that slid down under a full tile left the excess in the water"
+            );
+        }
+
+        // The control: nought is nought, bit for bit, over the same distance.
+        let mut still = Grid::new(&config(|raw| raw.light.patch_drift = 0.0));
+        let mut books = Ledger::new(still.total_energy());
+        let fixed = still.targets.clone();
+        for _ in 0..8_000 {
+            still.tick(&mut books);
+        }
+        assert!(
+            still
+                .targets
+                .iter()
+                .zip(&fixed)
+                .all(|(now, then)| now.to_bits() == then.to_bits()),
+            "a world with `light.patch_drift = 0` moved its blotches anyway, so the control \
+             experiment for every claim about a drifting field no longer exists"
+        );
+    }
+
+    /// ⭐ What the drift costs, which is a real quantity of energy and is measured here
+    /// rather than reasoned about.
+    ///
+    /// SPEC section 4: a tile cannot hold more than its ceiling, and what will not fit is
+    /// **dissipated**. A drifting patch field is a field of ceilings sliding sideways, so
+    /// every tick, every full tile whose ceiling has moved down under it sheds the difference
+    /// out of the world. **The drift therefore destroys energy continuously**, and the loss
+    /// scales with `patchiness × patch_drift`, which is what `PATCH_DRIFT_CEILING` is derived
+    /// from.
+    ///
+    /// The world here is deliberately the worst case: full to its ceiling everywhere and with
+    /// nothing living in it to have eaten a tile down below the level where a falling ceiling
+    /// can reach it. What a real run pays is less, in proportion to how much of the field a
+    /// population has already drawn down.
+    ///
+    /// Two claims, and the second is the one that matters:
+    ///
+    /// - the drift costs something, so a run that shows no extra dissipation is a run where
+    ///   the drift is not reaching the tiles;
+    /// - and it costs **less than the light delivers**, at the shipped settings, by a wide
+    ///   enough margin that the world is not being run down. That is the claim
+    ///   `PATCH_DRIFT_CEILING` exists to keep true, and it is checked here at the shipped
+    ///   value rather than only argued at the bound.
+    #[test]
+    fn a_drifting_field_sheds_what_its_ceiling_slides_off() {
+        let spent = |drift: f64| {
+            let mut grid = Grid::new(&config(|raw| raw.light.patch_drift = drift));
+            let mut ledger = Ledger::new(grid.total_energy());
+
+            // Fill the world to its ceilings first, so that every tile is one a falling
+            // ceiling can take something from. `cap / influx` ticks at the shipped light.
+            for _ in 0..10_000 {
+                grid.tick(&mut ledger);
+            }
+            let (shed, lit) = (ledger.dissipated(), ledger.influx_total());
+
+            for _ in 0..10_000 {
+                grid.tick(&mut ledger);
+            }
+            (
+                (ledger.dissipated() - shed) / 10_000.0,
+                (ledger.influx_total() - lit) / 10_000.0,
+            )
+        };
+
+        let (still, _) = spent(0.0);
+        let (drifting, _) = spent(0.0006);
+        let extra = drifting - still;
+
+        // What the world is *offered* per tick, which is the figure the cost has to be
+        // compared against. The number the ledger reports as influx at a full field is much
+        // smaller than this and is not the right comparison: at rest the light only replaces
+        // what has spilled, so comparing the two would be comparing the drift's loss with the
+        // loss it is part of.
+        //
+        // `grid_cols × grid_rows × influx × mean light_profile`, and the mean profile of
+        // `1 - gradient × (y / height)` over the whole depth is `1 - gradient / 2`.
+        let offered = 256.0 * 144.0 * 0.001 * (1.0 - 0.75 / 2.0);
+
+        assert!(
+            extra > 0.005,
+            "a full field drifting at the shipped 0.0006 loses {drifting} a tick against a \
+             still one's {still}, a difference of {extra} - which is nothing at all, so the \
+             ceilings are not moving"
+        );
+        assert!(
+            extra < offered * 0.1,
+            "the drift destroys {extra} a tick on top of what a still field loses, against \
+             the {offered} the light offers this world - so more than a tenth of the world's \
+             income is being dragged out of it by the weather, and the carrying capacity of \
+             SPEC section 4 is set by `patch_drift` rather than by `influx`"
+        );
+
+        // Measured 1 August 2026, Windows 11 x86-64, release build, on a field held full with
+        // nothing living in it: **0.0179 a tick** against the 23.04 the light offers, which is
+        // **0.08%**. A living world pays less again, because a population has already eaten
+        // most of the field down below the level a falling ceiling can reach. See
+        // `docs/PHASE7.md` for the figure taken off the 300,000-tick run.
     }
 
     /// The noise makes *patches*, which is what SPEC section 4's word "patchiness" means.
@@ -1257,11 +1621,13 @@ mod tests {
         let mut across_the_seam = 0.0;
         for row in 0..144 {
             for col in 0..256 {
-                between_neighbours += (noise.at(col, row) - noise.at((col + 1) % 256, row)).abs();
-                across_a_patch +=
-                    (noise.at(col, row) - noise.at((col + NOISE_LATTICE_SPACING) % 256, row)).abs();
+                between_neighbours +=
+                    (noise.at(col, row, 0.0) - noise.at((col + 1) % 256, row, 0.0)).abs();
+                across_a_patch += (noise.at(col, row, 0.0)
+                    - noise.at((col + NOISE_LATTICE_SPACING) % 256, row, 0.0))
+                .abs();
             }
-            across_the_seam += (noise.at(255, row) - noise.at(0, row)).abs();
+            across_the_seam += (noise.at(255, row, 0.0) - noise.at(0, row, 0.0)).abs();
         }
 
         let tiles = f64::from(256 * 144);
@@ -1967,6 +2333,20 @@ mod tests {
             raw.light.influx = 0.012;
             raw.world.grid_cols = 32;
             raw.world.grid_rows = 9;
+            // ⚠️ **A still field, and the claim below is about a still field.** SPEC section
+            // 4's drifting blotches move a tile's ceiling every hundred ticks for ever, so a
+            // world with `patch_drift` on never comes to rest and never can - that is the
+            // whole purpose of the setting. What this test is about is the *ceiling rule*:
+            // that a tile cannot hold more than its target and that the field therefore keeps
+            // a depth structure instead of filling until it is level. Asserting stillness
+            // against a moving ceiling would be asserting something that is not true of the
+            // shipped world rather than something the model promises.
+            //
+            // The rule itself is not left untested under drift.
+            // `the_light_blotches_drift_sideways_without_being_redrawn` checks that no tile
+            // finishes above its ceiling after eight thousand ticks of a moving one, and
+            // `energy_is_conserved_over_a_long_run` runs the shipped configuration.
+            raw.light.patch_drift = 0.0;
         }));
         let ceilings = world.targets.clone();
 
@@ -1983,13 +2363,27 @@ mod tests {
                 .all(|(now, then)| (*now - *then).abs() <= *now * 1e-6)
         };
 
+        // ⚠️ **A hundred still ticks in a row, not one.** Diffusion carries the part of a
+        // movement too small to write into a tile over to the next tick, so a tile can sit
+        // unchanged for a while and then jump when enough of them have piled up together -
+        // which means a single still tick can happen on the way to somewhere and does. At the
+        // shipped `patchiness` of 0.5 the first still tick of this world is **2,310** and the
+        // last moving one is **2,320**; taking the first would declare the world settled ten
+        // ticks before it is, and the twenty thousand ticks below would then, correctly,
+        // catch it moving. Asking for a stretch is stricter than asking for an instant.
+        let mut unbroken = 0u32;
         for tick in 1..=200_000u32 {
             world.tick(&mut ledger);
             ledger.check(world.total_energy());
 
             if still(&world.tiles, &previous) {
-                settled_at = Some(tick);
-                break;
+                unbroken += 1;
+                if unbroken == 100 {
+                    settled_at = Some(tick - 99);
+                    break;
+                }
+            } else {
+                unbroken = 0;
             }
             previous.copy_from_slice(&world.tiles);
         }
@@ -2102,17 +2496,33 @@ mod tests {
         // behaviour something that has to be argued for rather than absorbed.
         //
         // Recorded 31 July 2026, Windows 11 x86-64.
+        // ⚠️ **Re-recorded in Phase 7, Group G, and the old figures are kept beside the new
+        // ones** so that a reading taken before today can still be identified. `patchiness`
+        // moved from 0.15 to 0.5, which is the depth of the blotches this world's ceilings
+        // are made of, so all three of these had to move and a set that survived would have
+        // meant the change had not landed. What it was, at 0.15:
+        //
+        // ```text
+        // came to rest on tick 1,724, holding 1,477.4486, top row 3.260245 x bottom row
+        // ```
+        //
+        // The world it describes is the same *kind* of world - it fills, it stops, and it
+        // keeps a depth structure - which is what every claim above this line is about. It
+        // now takes about a third longer to settle and comes to rest holding 7% more, because
+        // deeper blotches mean more tiles with ceilings above the depth average and the light
+        // has further to go before the world stops filling; and the surface-to-floor ratio is
+        // steeper for the same reason.
         assert_eq!(
-            settled, 1_724,
-            "the world came to rest on tick {settled} rather than the 1724 recorded here"
+            settled, 2_321,
+            "the world came to rest on tick {settled} rather than the 2321 recorded here"
         );
         assert!(
-            (held - 1_477.448_6).abs() < 1e-3,
-            "the world came to rest holding {held} rather than the 1477.4486 recorded here"
+            (held - 1_583.581_2).abs() < 1e-3,
+            "the world came to rest holding {held} rather than the 1583.5812 recorded here"
         );
         assert!(
-            (surface / floor - 3.260_245).abs() < 1e-4,
-            "the top row holds {} times what the bottom row does, against the 3.260245 \
+            (surface / floor - 3.601_976).abs() < 1e-4,
+            "the top row holds {} times what the bottom row does, against the 3.601976 \
              recorded here",
             surface / floor
         );
@@ -2166,19 +2576,19 @@ mod tests {
 
         // And five readings off it: one on a lattice point, one in the middle of a cell,
         // one a whole cell along, and two well inside the world.
-        assert_eq!(noise.at(0, 0), 0.307_423_514_152_742_8);
-        assert_eq!(noise.at(8, 8), 0.220_538_643_472_953_32);
-        assert_eq!(noise.at(16, 0), 0.718_410_009_918_364_1);
-        assert_eq!(noise.at(100, 50), -0.300_683_068_476_052_9);
-        assert_eq!(noise.at(255, 143), -0.448_059_758_283_621_43);
+        assert_eq!(noise.at(0, 0, 0.0), 0.307_423_514_152_742_8);
+        assert_eq!(noise.at(8, 8, 0.0), 0.220_538_643_472_953_32);
+        assert_eq!(noise.at(16, 0, 0.0), 0.718_410_009_918_364_1);
+        assert_eq!(noise.at(100, 50, 0.0), -0.300_683_068_476_052_9);
+        assert_eq!(noise.at(255, 143, 0.0), -0.448_059_758_283_621_43);
 
         assert_eq!(
-            noise.at(0, 0),
+            noise.at(0, 0, 0.0),
             noise.corner(0, 0),
             "the first tile is no longer sitting on the first lattice point"
         );
         assert_eq!(
-            noise.at(NOISE_LATTICE_SPACING, 0),
+            noise.at(NOISE_LATTICE_SPACING, 0, 0.0),
             noise.corner(1, 0),
             "the lattice is no longer exactly {NOISE_LATTICE_SPACING} tiles wide on the \
              default grid, so the blotches have changed size"
@@ -2225,7 +2635,7 @@ mod tests {
             let noise = PatchNoise::new(seed, cols, rows);
             for row in 0..rows {
                 for col in 0..cols {
-                    let value = noise.at(col, row);
+                    let value = noise.at(col, row, 0.0);
                     prop_assert!(
                         (-1.0..=1.0).contains(&value),
                         "the noise at ({col}, {row}) is {value}, which is outside the \

@@ -35,7 +35,11 @@
 //! a population that is not "a single clone filling the world", and a standard deviation is
 //! the plainest number that can say so.
 
+use coacervate_sim::cell::CellKind;
 use coacervate_sim::world::World;
+
+/// How many kinds of cell a census counts, which is every kind there is.
+pub const KINDS: usize = CellKind::ALL.len();
 
 /// A reading of the living population at one moment.
 pub struct Census {
@@ -59,6 +63,30 @@ pub struct Census {
 
     /// How far genome lengths vary about that mean, as a standard deviation.
     pub gene_spread: f64,
+
+    /// ⭐ How deep the living are, on average, in world units, with the surface at nought.
+    ///
+    /// Added in Phase 7's Group G, and the reason is that it became a *measurement* rather
+    /// than a curiosity. SPEC section 8's buoyancy makes a body's depth a function of what it
+    /// is made of, and SPEC section 4's drifting field is what a body would swim across - so
+    /// where the population is has become the plainest reading of whether either is doing
+    /// anything, and it is the reading that says whether a world has degenerated into a mat
+    /// against its own surface.
+    ///
+    /// It is a mean over *bodies* rather than over cells, so a large body counts once, and it
+    /// is a mean of each body's own cells' depths. Nought when nothing is alive.
+    pub mean_depth: f64,
+
+    /// How many living cells there are of each kind, in [`CellKind::ALL`]'s order.
+    ///
+    /// ⭐ Also Phase 7's Group G, and it is the other half of the same argument.
+    /// `series.rs`'s [`crate::series::Sample`] already carries a per-kind *biomass*, which is
+    /// apportioned by cell count out of each organism's single pool - so it answers "how much
+    /// of the world's energy is held in muscle" and cannot answer "how many myocytes are
+    /// there", which is the question `docs/PHASE4.md` and `docs/PHASE7.md` have been asking of
+    /// every long run since the phase began. Those figures had to be counted by hand each
+    /// time; this is where they come from now.
+    pub kinds: [usize; KINDS],
 }
 
 impl Census {
@@ -68,11 +96,30 @@ impl Census {
         let mut population = 0usize;
         let mut cells = Tally::new();
         let mut genes = Tally::new();
+        let mut depth = 0.0f64;
+        let mut kinds = [0usize; KINDS];
 
-        for organism in world.organisms().iter().flatten() {
+        for (slot, organism) in world.organisms().iter().enumerate() {
+            let Some(organism) = organism.as_ref() else {
+                continue;
+            };
             population += 1;
             cells.add(organism.cells());
             genes.add(organism.genome().genes().len());
+
+            let body = world.cells_of(slot);
+            let mut below = 0.0f64;
+            for cell in body {
+                below += f64::from(cell.pos.y);
+                // `CellKind::ALL`'s order, which is SPEC section 6's table's, exactly as
+                // `series.rs`'s per-kind biomass indexes it. Phase 3 forbids inserting a kind
+                // into the middle of that list for its own reasons.
+                kinds[cell.kind as usize] += 1;
+            }
+            // A body has at least one cell - development starts from SPEC section 7's seed
+            // cell and cannot remove it - so this cannot divide by nothing.
+            depth += below
+                / f64::from(u32::try_from(body.len()).expect("a body is not four billion cells"));
         }
 
         Self {
@@ -82,6 +129,12 @@ impl Census {
             cell_spread: cells.spread(),
             mean_genes: genes.mean(),
             gene_spread: genes.spread(),
+            mean_depth: if population == 0 {
+                0.0
+            } else {
+                depth / f64::from(u32::try_from(population).expect("a population fits in a word"))
+            },
+            kinds,
         }
     }
 

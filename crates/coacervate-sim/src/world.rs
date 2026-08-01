@@ -1631,11 +1631,21 @@ mod tests {
         world
             .seed(a_chain(3, &limits), Vec2::new(100.0, 100.0), 0.02)
             .expect("a lit world has room and water for a three-celled body");
-        let body: Vec<Vec2> = world.cells_of(0).iter().map(|cell| cell.pos).collect();
+        let mut body: Vec<Vec2> = world.cells_of(0).iter().map(|cell| cell.pos).collect();
         assert_eq!(body.len(), 3);
 
+        // ⚠️ **Where the body was on the tick it died, not where it was seeded.** SPEC section
+        // 8's buoyancy makes a body's depth a function of what it is made of, and three
+        // photocytes float - about a unit and a half over the two thousand ticks this one
+        // lives. The claim below is that a corpse leaves a grain *at each of its cells*, which
+        // is a claim about the body's last moment; comparing against the seeding position
+        // would be quietly asserting that nothing in this world can move.
         let mut ticks = 0;
         while world.drift().is_empty() && ticks < 6_000 {
+            let alive = world.cells_of(0);
+            if !alive.is_empty() {
+                body = alive.iter().map(|cell| cell.pos).collect();
+            }
             world.tick();
             ticks += 1;
         }
@@ -2021,7 +2031,17 @@ mod tests {
         let limits = world.config().limits.clone();
 
         // The field fills under the light first. A world starts dark.
-        for _ in 0..1_000 {
+        //
+        // ⚠️ **Three thousand rather than one, since Phase 7's Group G**, and the reason is
+        // the claim below rather than the length of the dawn. What is asserted is that the
+        // field paid for what the organism gained, which is only a statement about the
+        // organism if the light is not *also* putting energy into the same tiles during the
+        // tick being measured - and a tile at its ceiling takes nothing. `light.patchiness`
+        // moved from 0.15 to 0.5, so the world's ceilings are further apart and it takes
+        // about a third longer to reach them; at a thousand ticks this world was still
+        // filling, the light added 0.0078 to the tiles under the body during the measured
+        // tick, and the subtraction came out on the wrong side by exactly that.
+        for _ in 0..3_000 {
             world.tick();
         }
 
@@ -3761,29 +3781,46 @@ mod tests {
         // machine computes differently from the one they were recorded on - which is a larger
         // finding than a stale test. Pasting in the new numbers destroys the evidence.
         //
-        // They have been re-measured exactly once, by Group D, and only because the thing they
-        // describe was changed on purpose: `light.influx` went from 0.012 to 0.001 and this
-        // test is deliberately one of the two that read the shipped configuration. The
-        // superseded figures are kept here so the change is visible rather than silent -
-        // 1.739e-10, 184,030.35, 793,407.70 and 609,377.35.
+        // They have been re-measured twice, and each time only because the thing they describe
+        // was changed on purpose. This test is deliberately one of the two that read the
+        // shipped configuration, so every superseded set is kept here and the change is
+        // visible rather than silent.
+        //
+        //   Phase 7, Group G   `light.patchiness` 0.15 -> 0.5 and `light.patch_drift` 0 -> 0.0006
+        //                      superseding 1.433e-9, 183,837.38, 748,044.02 and 564,206.64
+        //   Phase 4, Group D   `light.influx` 0.012 -> 0.001
+        //                      superseding 1.739e-10, 184,030.35, 793,407.70 and 609,377.35
+        //
+        // ⭐ **Group G moved three of the four in the same direction and for one reason**, and
+        // it is worth reading rather than absorbing. Deeper blotches mean a wider spread of
+        // ceilings at every depth: the tiles above the average hold more, and the tiles below
+        // it fill sooner and then shed everything that reaches them for the rest of the run.
+        // So the world takes in **twice** the light (1,582,148 against 748,044) and sheds two
+        // and a half times as much (1,406,403 against 564,207), while the standing field ends
+        // up **lower** than before (175,746 against 183,837) rather than higher. That is the
+        // biological pump running harder, which is what a blotchier ocean is.
+        //
+        // The error came *down* by a factor of fifteen, to 9.466e-11, and that is the same
+        // fact once more: the drift keeps recomputing the ceilings, and a tile cut back to a
+        // freshly written ceiling is a tile whose rounding has just been reset.
         assert!(
-            (1.0e-9..2.0e-9).contains(&final_error),
-            "the run finished {final_error} out in relative terms, against the 1.433e-9 \
+            (5.0e-11..2.0e-10).contains(&final_error),
+            "the run finished {final_error} out in relative terms, against the 9.466e-11 \
              recorded here"
         );
         assert!(
-            (held - 183_837.38).abs() < 0.01,
-            "the field came to rest holding {held} rather than the 183,837.38 recorded here"
+            (held - 175_745.80).abs() < 0.01,
+            "the field came to rest holding {held} rather than the 175,745.80 recorded here"
         );
         assert!(
-            (ledger.influx_total() - 748_044.02).abs() < 0.01,
-            "the world took in {} units of light rather than the 748,044.02 recorded here",
+            (ledger.influx_total() - 1_582_148.47).abs() < 0.01,
+            "the world took in {} units of light rather than the 1,582,148.47 recorded here",
             ledger.influx_total()
         );
         assert!(
-            (ledger.dissipated() - 564_206.64).abs() < 0.01,
+            (ledger.dissipated() - 1_406_402.67).abs() < 0.01,
             "the world shed {} units through tiles that could not hold them, rather than \
-             the 564,206.64 recorded here",
+             the 1,406,402.67 recorded here",
             ledger.dissipated()
         );
     }
@@ -4303,16 +4340,20 @@ mod tests {
 
         // Something alive in both, or "the warmer world spends more" is a claim about nothing.
         let limits = settled.limits.clone();
+        let mut seeded = None;
         for world in [&mut unchanged, &mut warmed] {
             let middle = Vec2::new(
                 world.config().world.width * 0.5,
                 world.config().world.height * 0.5,
             );
             let purse = a_quarter_of_the_tile(world, middle);
-            world
-                .seed(a_chain(3, &limits), middle, purse)
-                .expect("a lit world can afford one body");
+            seeded = Some(
+                world
+                    .seed(a_chain(3, &limits), middle, purse)
+                    .expect("a lit world can afford one body"),
+            );
         }
+        let slot = seeded.expect("both worlds were seeded");
 
         // The weather turns.
         let warmer = config(|raw| {
@@ -4332,11 +4373,50 @@ mod tests {
         let cold = unchanged.ledger().dissipated() - spent_before.0;
         let hot = warmed.ledger().dissipated() - spent_before.1;
 
+        // ⭐ **The difference between the two, against what the retune bought, rather than the
+        // ratio of their totals.** This used to read `hot > cold * 2`, and Phase 7's Group G
+        // is what showed that to be the wrong instrument rather than merely a loose one.
+        //
+        // `dissipated` is everything the world spends, and the largest part of it here is not
+        // metabolism at all: it is SPEC section 4's ceiling, shedding what will not fit out of
+        // tiles near the floor. When `light.patchiness` went from 0.15 to 0.5 the deepest
+        // ceilings in this world dropped from about 1.7 to about 1.0, so tiles that used to
+        // reach them after the measurement window began reaching them inside it - and three
+        // hundred units of spill arrived on both sides of a comparison about two units of
+        // upkeep. The old assertion had been passing on a world where no tile had yet filled.
+        //
+        // Everything except the cost of living cancels in the *difference*, and cancels
+        // exactly, because SPEC section 2's determinism makes these two the same world: the
+        // same light falls on the same tiles, the same tiles spill, and the same body earns
+        // the same income, since what an organism harvests depends on the tile and the body
+        // and not on what it happens to be holding. So `hot - cold` is precisely the three
+        // extra multiples of upkeep the retune bought, and that is a figure this test can work
+        // out for itself from SPEC section 6's table rather than compare against a threshold.
+        let body: f64 = warmed
+            .cells_of(slot)
+            .iter()
+            .map(|cell| f64::from(cell.kind.upkeep()))
+            .sum();
+        let genes = f64::from(
+            u32::try_from(
+                warmed.organisms()[slot]
+                    .as_ref()
+                    .expect("the body seeded above is still alive")
+                    .genome()
+                    .genes()
+                    .len(),
+            )
+            .expect("a genome cap fits in a word"),
+        );
+        let bought = 3.0 * 200.0 * (body + genes * f64::from(warmer.metabolism.gene_cost));
+
         assert!(
-            hot > cold * 2.0,
+            (hot - cold - bought).abs() < bought * 1e-3,
             "two hundred ticks cost the world at upkeep_scale 1.0 {cold} and the same world at \
-             4.0 {hot}, so raising the temperature mid-run changed what the panel says and not \
-             what living costs - which means `metabolism.rs` is still charging the old number"
+             4.0 {hot}, a difference of {}. Going from 1.0 to 4.0 on a body of {body} a tick \
+             plus {genes} genes should have cost exactly {bought} more, so `metabolism.rs` is \
+             not charging the number the panel is showing",
+            hot - cold
         );
 
         // And the panel's copy agrees with the one that is being charged.

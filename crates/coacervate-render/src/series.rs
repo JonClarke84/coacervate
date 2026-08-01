@@ -101,7 +101,6 @@
 //! *other* periodic observer of a run - see [`Series::observe`], which is handed one.
 
 use crate::census::Census;
-use coacervate_sim::cell::CellKind;
 use coacervate_sim::species::Taxonomy;
 use coacervate_sim::world::World;
 
@@ -112,7 +111,12 @@ use coacervate_sim::world::World;
 pub const EVERY: u64 = 100;
 
 /// How many kinds of cell a sample carries a biomass figure for.
-pub const KINDS: usize = CellKind::ALL.len();
+///
+/// ⭐ Moved to `census.rs` in Phase 7's Group G, where the *count* of each kind is now taken,
+/// and re-exported here rather than written out a second time: a record whose per-kind biomass
+/// had a different number of columns from the census's per-kind counts would be two readings of
+/// one world that could not be laid beside each other.
+pub use crate::census::KINDS;
 
 /// How many records the series holds, for the whole life of a run.
 ///

@@ -389,9 +389,9 @@ struct Condition {
 /// changes made by the user"* among the things worth recording beside a mass extinction.
 ///
 /// The four tables here are exactly the ones [`World::retune`] will accept a change to, and
-/// exactly `settings.rs`'s twenty-two sliders less `run.max_ticks_per_second` — which is not a
+/// exactly `settings.rs`'s twenty-three sliders less `run.max_ticks_per_second` — which is not a
 /// fact about the world at all, but about how fast a person is watching it.
-const CONDITIONS: [Condition; 21] = [
+const CONDITIONS: [Condition; 22] = [
     Condition {
         table: "light",
         label: "influx",
@@ -415,6 +415,12 @@ const CONDITIONS: [Condition; 21] = [
         label: "patchiness",
         phrase: "how unevenly the light falls",
         read: |config| config.light.patchiness,
+    },
+    Condition {
+        table: "light",
+        label: "patch_drift",
+        phrase: "how fast the bright water moves",
+        read: |config| config.light.patch_drift,
     },
     Condition {
         table: "light",

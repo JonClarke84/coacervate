@@ -242,6 +242,102 @@ impl CellKind {
         }
     }
 
+    /// Which way the water carries this kind of cell, and how hard: positive sinks, negative
+    /// floats, in the same force units `physics.rs`'s springs and collisions are written in.
+    ///
+    /// ⭐⭐ **SPEC section 8 says why this is a property of a *kind* and not a gravity.** The
+    /// obvious idea - a small constant downward pull on every cell, so that staying in the
+    /// light costs work - does not work, and it fails on the same conservation law that made
+    /// swimming impossible before Phase 7. Gravity is an *external* force, so a body does
+    /// move; it moves straight down at a terminal velocity, and there is nothing a muscle can
+    /// do about it, because a muscle only ever makes internal forces and those cancel in the
+    /// sum however cleverly they are arranged. Measured: a body contracting hard against
+    /// gravity fell **0.1% slower** than the same body holding still.
+    ///
+    /// Buoyancy tied to composition is the version that works, and what changes is not the
+    /// physics but where the number comes from. A body's resting depth becomes a function of
+    /// **what it is made of**, which is a function of its genome; changing it takes *one*
+    /// mutation to one gene's `child_kind`, which is the smallest step the mutation operators
+    /// have; and there is no valley on the way, because every intermediate composition has an
+    /// intermediate depth. A lineage that wants to be shallower does not have to work
+    /// continuously for it - it pays in whatever the floaty cell is bad at.
+    ///
+    /// It lives here for the reason [`CellKind::toughness`] does: **a kind is a trade-off**,
+    /// and a trade-off split across files is one nobody can see. A sclerocyte is the widest
+    /// cell in the world, the cheapest to run, contributes nothing, is nine times harder to
+    /// eat than a photocyte - and is the densest thing there is, so a body that armours itself
+    /// sinks. Those five numbers only mean anything together.
+    ///
+    /// # ⭐ The founder is neutral, and that is a constraint rather than a coincidence
+    ///
+    /// Every run in this project is seeded with SPEC section 7's seed cell - a photocyte - and
+    /// the one gonocyte without which nothing can reproduce. **A photocyte and a gonocyte sum
+    /// to exactly nothing**, so that body sits precisely where it is put, no world drowns the
+    /// moment this table arrives, and every depth recorded in `docs/PHASE7.md` still means what
+    /// it meant. What moves a lineage is *departing* from that composition, which is what
+    /// selection is being asked to do.
+    ///
+    /// # Why each kind is where it is
+    ///
+    /// **A photocyte floats.** It is the cell whose whole function is to be where the light
+    /// is, and floating is how real phytoplankton stay there - lipid and gas-filled inclusions
+    /// rather than work. This is the one that makes the trade-off exist: staying shallow means
+    /// being *mostly photocyte*, which competes directly with spending the same cells on
+    /// muscle, armour or teeth.
+    ///
+    /// **A gonocyte sinks, by exactly as much.** It is a store of packed energy reserves,
+    /// which is dense; and the arithmetic above requires it, because the alternative ways to
+    /// make the founder neutral are to have the photocyte weigh nothing - which removes the
+    /// whole effect - or to add a seventh number to balance it, which no body has.
+    ///
+    /// **A sclerocyte is the densest thing in the world**, at twice a gonocyte. It is
+    /// structural, mineralised tissue; nothing about armour is buoyant. A lineage that answers
+    /// predation with sclerocytes sinks away from the light while it does it, which is the
+    /// cost that stops armour being free to a body that was not being eaten anyway.
+    ///
+    /// **A devorocyte is dense**, a little less so. It is feeding machinery, and a body that
+    /// lives on other bodies has no reason to be where the light is. ⭐ This is the pairing
+    /// the whole table is pointed at: a devorocyte-heavy body sinks into dim water, where
+    /// photosynthesis pays badly and eating pays well. That is a *reason* for a feeding split
+    /// to appear rather than a decree that one should - which is the difference SPEC's
+    /// decision log draws about predation being emergent.
+    ///
+    /// **A myocyte is exactly neutral**, and it is the one entry chosen against the others
+    /// rather than from what the tissue is. Contractile tissue is close to the density of the
+    /// water it works in, which is the physical answer; the reason it is written as *zero*
+    /// rather than nearly zero is the design one. A myocyte is the only cell whose function is
+    /// to move the body deliberately, and giving it a weight would make growing one a way of
+    /// changing depth **without swimming** - which is precisely the thing SPEC section 4's
+    /// drifting field was added to make worth doing. Muscle still costs a body its lift, by
+    /// diluting the photocytes it is made of; it does not earn any.
+    ///
+    /// **A sensocyte is very slightly buoyant.** It is the smallest cell in the world, at a
+    /// radius of 2.0 against a sclerocyte's 3.4, with the least of anything in it - so a fifth
+    /// of a photocyte's lift, which is enough that a light-seeking body is not fighting its own
+    /// sensors and far too little for a sensocyte to be useful as a float.
+    ///
+    /// # ⚠️ The magnitude is the whole risk, and it is deliberately small
+    ///
+    /// SPEC section 8's diagnostic measured a uniform sink of `g ≈ 5` putting a population on
+    /// the floor in **forty generations**, and `g ≈ 50` in three. Buoyancy is a *net* force
+    /// from an unbalanced composition, so what matters is the mean over a body rather than the
+    /// figure in any row here. A body of seven photocytes and a gonocyte averages **-0.375**,
+    /// which is a thirteenth of that `g`, and moves about **1.5 world units in a full
+    /// lifetime** - a quarter of one of its own cells. A lineage crosses the world over
+    /// hundreds of generations or not at all, which is the timescale selection acts on rather
+    /// than the timescale a body falls on.
+    #[must_use]
+    pub const fn buoyancy(self) -> f32 {
+        match self {
+            Self::Photocyte => -0.50,
+            Self::Devorocyte => 0.80,
+            Self::Myocyte => 0.00,
+            Self::Sclerocyte => 1.00,
+            Self::Sensocyte => -0.20,
+            Self::Gonocyte => 0.50,
+        }
+    }
+
     /// How much of a cell's own upkeep it is reckoned to have cost to build.
     ///
     /// See [`CellKind::construction`]. A thousand ticks is a little under seventeen simulated
@@ -560,6 +656,121 @@ mod tests {
             "the two cells that hold a lineage's energy are armoured, so there is nothing \
              in the world worth the trouble of eating"
         );
+    }
+
+    /// ⭐⭐ A kind of cell has a weight, the founder's two sum to nothing, and nothing in the
+    /// table is anywhere near heavy enough to decide where a body lives.
+    ///
+    /// SPEC section 8 records buoyancy-by-`CellKind` as *"the version of the idea that works"*,
+    /// against a uniform gravity that does not - a muscle cannot oppose an external force,
+    /// measured at 0.1% of the rate of fall. See [`CellKind::buoyancy`] for the reasoning
+    /// behind each of these six numbers. This is where they are written down, and where the
+    /// three relationships the model rests on are checked rather than eyeballed off the table.
+    ///
+    /// # The founder is the load-bearing one
+    ///
+    /// A photocyte and a gonocyte sum to **exactly** nothing. Not nearly: every run in this
+    /// project is founded with that two-celled body, so a table where the pair came to a
+    /// thousandth would be a table that started every world drifting, and `docs/PHASE7.md`'s
+    /// mean depths would have moved for a reason that is not selection. It is checked with
+    /// `==` for the same reason the radii above are.
+    ///
+    /// # And the magnitude
+    ///
+    /// SPEC section 8's diagnostic measured a uniform sink of `g ≈ 5` putting a population on
+    /// the floor in forty generations. Nothing here may be within reach of that, because
+    /// buoyancy is a *net* over a whole body: the heaviest cell in the world is a fifth of
+    /// that `g`, and the heaviest plausible body - all sclerocyte, which is a body that
+    /// harvests nothing and cannot breed - is still a fifth of it. A real body, which has to
+    /// contain photocytes to eat and a gonocyte to breed, is a good deal less again.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "these six numbers were chosen rather than measured, so the comparison has \
+                  to be with the number itself; and the founder's pair must sum to exactly \
+                  nothing, which is a claim a tolerance would hide rather than check"
+    )]
+    fn buoyancy_is_what_a_kind_is_made_of() {
+        let chosen = [
+            (CellKind::Photocyte, -0.50),
+            (CellKind::Devorocyte, 0.80),
+            (CellKind::Myocyte, 0.00),
+            (CellKind::Sclerocyte, 1.00),
+            (CellKind::Sensocyte, -0.20),
+            (CellKind::Gonocyte, 0.50),
+        ];
+
+        assert_eq!(
+            CellKind::ALL.len(),
+            chosen.len(),
+            "a kind has been added without deciding which way the water carries it, so it has \
+             silently taken whatever the match arm's fallback gives it"
+        );
+
+        for (kind, buoyancy) in chosen {
+            assert_eq!(
+                kind.buoyancy(),
+                buoyancy,
+                "Phase 7 gives {kind:?} a buoyancy of {buoyancy}"
+            );
+        }
+
+        // ⭐ The founder. SPEC section 7's seed cell is a photocyte and nothing can reproduce
+        // without a gonocyte, so this pair is the body every run in this project begins with.
+        assert_eq!(
+            CellKind::Photocyte.buoyancy() + CellKind::Gonocyte.buoyancy(),
+            0.0,
+            "a photocyte and a gonocyte come to {}, so the two-celled body every world is \
+             seeded with is sinking or rising before anything has evolved",
+            CellKind::Photocyte.buoyancy() + CellKind::Gonocyte.buoyancy()
+        );
+
+        // ⭐ The trade-off the table exists to create: the cell that harvests light is the one
+        // that floats, and the cells a body spends on defence and on eating are dense. Without
+        // this, staying in the light would not compete with anything and there would be no
+        // reason for a feeding split to appear.
+        assert!(
+            CellKind::Photocyte.buoyancy() < 0.0,
+            "the cell whose whole function is to be where the light is does not float"
+        );
+        for dense in [
+            CellKind::Devorocyte,
+            CellKind::Sclerocyte,
+            CellKind::Gonocyte,
+        ] {
+            assert!(
+                dense.buoyancy() > 0.0,
+                "{dense:?} does not sink, so a body that spends its cells on it pays nothing \
+                 in depth for them"
+            );
+        }
+        assert!(
+            CellKind::Sclerocyte.buoyancy() > CellKind::Devorocyte.buoyancy(),
+            "armour is not the densest thing in the world"
+        );
+
+        // ⭐ A myocyte weighs exactly nothing, and that is a decision rather than an omission.
+        // A muscle that floated or sank would be a way of changing depth *without swimming*,
+        // which is the thing SPEC section 4's drifting field was added to make worth doing.
+        assert_eq!(
+            CellKind::Myocyte.buoyancy(),
+            0.0,
+            "a myocyte weighs {}, so growing one moves a body up or down without it having \
+             to swim anywhere",
+            CellKind::Myocyte.buoyancy()
+        );
+
+        // ⚠️ And the magnitude, against the `g = 5` SPEC section 8 measured putting a
+        // population on the floor in forty generations.
+        for kind in CellKind::ALL {
+            assert!(
+                kind.buoyancy().abs() <= 1.0,
+                "{kind:?} weighs {}, which is a fifth of the uniform sink that puts a world \
+                 on its floor in forty generations - and a body made mostly of it would have \
+                 its depth decided by this table rather than by anything acting on it",
+                kind.buoyancy()
+            );
+        }
     }
 
     /// The seven pieces of arithmetic `physics.rs` is built out of do what they say.

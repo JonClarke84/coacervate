@@ -45,7 +45,7 @@
 
 use coacervate_sim::config::{
     Config, ConfigError, DIFFUSION_STABILITY_LIMIT, DRAG_ANISOTROPY_CEILING, DRAG_ANISOTROPY_FLOOR,
-    RawConfig,
+    PATCH_DRIFT_CEILING, RawConfig,
 };
 
 /// One setting a person may turn while the run is going.
@@ -122,6 +122,7 @@ impl std::fmt::Debug for Dial {
 /// | Setting | Ends | Why |
 /// | --- | --- | --- |
 /// | `light.influx` | `0 – 0.02` | SPEC section 3's measured table runs 0.0001 to 0.012, and 0.012 is the shipped `bloom` profile. A dark world is a legitimate experiment, so the low end is nought |
+/// | `light.patch_drift` | `0 – 0.005` | ⭐ [`PATCH_DRIFT_CEILING`] itself, for the same reason. Nought is the fixed field this project had before Phase 7, which is the control for every claim about a drifting one |
 /// | `light.diffusion` | `0 – 0.25` | ⭐ [`DIFFUSION_STABILITY_LIMIT`] itself. See this module's header |
 /// | `physics.drag_anisotropy` | `1 - 3` | ⭐ [`DRAG_ANISOTROPY_FLOOR`] and [`DRAG_ANISOTROPY_CEILING`] themselves. One is isotropic water, which is the world in which nothing can swim; three is where the arithmetic stopped computing |
 /// | `metabolism.upkeep_scale` | `0.01 – 8` | SPEC section 3: *"`3` and `4` both go extinct with the founder's death"*. A dial that stopped at 2 could not reach the one environmental event that measurement describes. Its low end is not nought because the gate calls it positive |
@@ -163,6 +164,19 @@ pub const DIALS: &[Dial] = &[
         places: Some(2),
         read: |raw| raw.light.patchiness,
         write: |raw, value| raw.light.patchiness = value,
+    },
+    Dial {
+        table: "light",
+        // ⭐ Not `0.0 - 0.005`. The far end is `PATCH_DRIFT_CEILING`, imported for exactly the
+        // reason `light.diffusion` imports its own: it is where the field starts shedding more
+        // energy than the light delivers rather than a preference, and a copy of the number
+        // written out here would be silently wrong the day somebody moves it.
+        label: "patch_drift",
+        least: 0.0,
+        most: PATCH_DRIFT_CEILING as f64,
+        places: Some(5),
+        read: |raw| raw.light.patch_drift,
+        write: |raw, value| raw.light.patch_drift = value,
     },
     Dial {
         table: "light",
@@ -720,7 +734,7 @@ mod tests {
         // And the four tables SPEC calls "the rest" are here in full. Counted per table, so a
         // setting dropped out of one of them is a number that changes.
         for (table, settings) in [
-            ("light", 5),
+            ("light", 6),
             ("physics", 4),
             ("metabolism", 5),
             ("mutation", 7),
@@ -735,7 +749,7 @@ mod tests {
         }
         assert_eq!(
             DIALS.len(),
-            22,
+            23,
             "the dials do not add up to the tables above"
         );
 

@@ -1139,19 +1139,37 @@ mod tests {
     /// `world.rs` gives about its own comparisons: a tolerance would wave through a difference
     /// in the last place, which is exactly how a determinism failure starts.
     ///
-    /// # ⚠️ **They were re-recorded in Phase 7, Group F, and that is the one time it is allowed**
+    /// # ⚠️ **They have been re-recorded twice, and both times it was the one time it is allowed**
     ///
     /// The header above says not to paste in new numbers, and this is the exception it exists
-    /// to be argued with. Group F changed three things about *what the simulation does*, on
-    /// purpose, each of them measured: the water became anisotropic
+    /// to be argued with.
+    ///
+    /// **Phase 7, Group G** changed three more things about what the simulation does, on
+    /// purpose and each measured: `light.patchiness` from 0.15 to 0.5, a new `light.patch_drift`
+    /// of 0.0006 that slides the field sideways for ever, and `CellKind::buoyancy`, which puts
+    /// a standing external force on every cell in the world. Any one of those moves every draw
+    /// in every stream after the first birth.
+    ///
+    /// **Phase 7, Group F** changed three before that: the water became anisotropic
     /// (`physics.drag_anisotropy`, defaulting to 2.0, so a body can swim at all),
     /// `metabolism.movement_cost` went from 0.15 to 0.0001, and `MAX_SENSOR_GAIN` went from 1
-    /// to 8. Any one of those moves every draw in every stream after the first birth, so this
-    /// vector could not possibly have survived, and a vector that survived would have meant the
-    /// changes had not landed.
+    /// to 8.
     ///
-    /// **What it was, at the end of Phase 4 and through Phases 5 and 6**, so that a recording
-    /// made before today can still be identified:
+    /// A vector that survived either of those would have meant the changes had not landed.
+    ///
+    /// **What it was, through Group F**, so that a recording made between then and now can
+    /// still be identified:
+    ///
+    /// ```text
+    /// 4,000 ticks, 510 born, 472 alive
+    /// field       0x40c5_00ee_58ab_0000   10,753.862
+    /// biomass     0x40b9_e2c0_2eb4_762c    6,626.751
+    /// detritus    0x406b_362a_1e42_a7ea      217.693
+    /// dissipated  0x40b6_2fe3_11a1_7494    5,679.887
+    /// influx      0x40d6_bb8c_50c7_2000   23,278.192
+    /// ```
+    ///
+    /// **And at the end of Phase 4 and through Phases 5 and 6:**
     ///
     /// ```text
     /// 4,000 ticks, 508 born, 470 alive
@@ -1162,10 +1180,17 @@ mod tests {
     /// influx      0x40d6_bb19_4711_2000   23,276.395
     /// ```
     ///
-    /// The world it describes is recognisably the same world - two more births, three units
-    /// more biomass, a field a half-unit lower - which is what a change to the *physics* rather
-    /// than to the *economy* looks like from this distance. `docs/PHASE4.md`'s figures were
-    /// measured on the run above and not on this one.
+    /// The world Group G describes is a **richer** one rather than merely a different one, and
+    /// that is worth reading off the numbers rather than only noticing that they moved.
+    /// Fourteen per cent more organisms have been born, the field holds 0.7% more and the
+    /// living hold 18% more, and 16% more light has fallen. All of that is `light.patchiness`:
+    /// the blotches are three times as deep, so the good tiles are much better than they were
+    /// while the bad ones are worse, and a body standing on a good one earns more than the
+    /// same body on an average one used to. The extra light is the same fact seen from the
+    /// other side - a world of deeper blotches takes longer to fill, so more of what falls on
+    /// it is still being absorbed at tick 4,000 rather than spilling straight back out.
+    ///
+    /// `docs/PHASE4.md`'s figures were measured on the oldest of the three.
     ///
     /// # Why the field's total is the sensitive one
     ///
@@ -1214,19 +1239,19 @@ mod tests {
             [
                 // 4,000 ticks: a dawn of 2,000 and the 2,000 the run was allowed.
                 4_000,
-                // 510 organisms have ever lived here; 472 of them are still alive.
-                510,
-                472,
+                // 583 organisms have ever lived here; 541 of them are still alive.
+                583,
+                541,
                 // The field, then SPEC section 5's four accounts, as bit patterns. The
                 // quantities they stand for are written beside them so that a failure can be
                 // read as a change in the world rather than only as a change in a number:
-                // 10,753.862 in the water, 6,626.751 held by the living, 217.693 lying in the
-                // drift, 5,679.887 spent for good, and 23,278.192 fallen as light.
-                0x40c5_00ee_58ab_0000,
-                0x40b9_e2c0_2eb4_762c,
-                0x406b_362a_1e42_a7ea,
-                0x40b6_2fe3_11a1_7494,
-                0x40d6_bb8c_50c7_2000,
+                // 10,830.771 in the water, 7,829.251 held by the living, 251.058 lying in the
+                // drift, 8,145.112 spent for good, and 27,056.192 fallen as light.
+                0x40c5_2762_ae79_0000,
+                0x40be_9540_3bda_7bce,
+                0x406f_61db_e12c_9ca0,
+                0x40bf_d11c_ba5a_1f50,
+                0x40da_6c0c_4c88_2000,
             ],
             "this run no longer produces what it produced at the end of Phase 4. Something \
              changed what the simulation *does* rather than only what it can be asked about, \
