@@ -1192,6 +1192,23 @@ mod tests {
     ///
     /// `docs/PHASE4.md`'s figures were measured on the oldest of the three.
     ///
+    /// # ⭐⭐ Group H did **not** move it, and that is a result rather than a relief
+    ///
+    /// Phase 7's Group H multiplied the swing of every muscle in the world by nearly seven, and
+    /// this vector is unchanged to the last bit. It is the first change in this project not to
+    /// move it, and the reason is the whole of Group H's finding: **in four thousand ticks not
+    /// one muscle anywhere fires.** A myocyte is only heard if some gene in its own genome names
+    /// its `state` as a `trigger_state`, a state is one of sixty-four, and a young genome holds
+    /// about three genes - almost all of which still trigger on the founder's state 0 while
+    /// development scatters daughters across the whole range. Measured over 120,000 ticks of the
+    /// shipped world: 56,903 spring-ticks with a myocyte on one end and no gene answering it,
+    /// 874 with a gene whose `osc_freq` and `osc_phase` are both still exactly nought, and
+    /// **nought in which a spring's rest length moved at all**.
+    ///
+    /// So a golden vector that survived a change this large is not a change that failed to
+    /// land. It is the cheapest possible statement that the code path was never taken - and it
+    /// was the first sign of where the real problem is. See `docs/PHASE7.md`, Group H.
+    ///
     /// # Why the field's total is the sensitive one
     ///
     /// It is a 64-bit sum over every tile in the world, and every body in the world has been

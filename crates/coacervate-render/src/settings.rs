@@ -237,6 +237,28 @@ pub const DIALS: &[Dial] = &[
         write: |raw, value| raw.physics.spring_damping = value,
     },
     Dial {
+        table: "behaviour",
+        label: "resting_amplitude",
+        least: 0.0,
+        most: 1.0,
+        places: Some(2),
+        read: |raw| raw.behaviour.resting_amplitude,
+        write: |raw, value| raw.behaviour.resting_amplitude = value,
+    },
+    Dial {
+        table: "behaviour",
+        // ⚠️ One is not a tidy round end. It is exactly where the shortest a spring asks to be -
+        // `base_rest × (1 - stroke)` - reaches nought, and past it the rest length is negative:
+        // the spring pulls at every phase of its cycle instead of oscillating about anything.
+        // The gate refuses above it for that reason, so the dial stops there.
+        label: "stroke",
+        least: 0.0,
+        most: 1.0,
+        places: Some(2),
+        read: |raw| raw.behaviour.stroke,
+        write: |raw, value| raw.behaviour.stroke = value,
+    },
+    Dial {
         table: "metabolism",
         label: "upkeep_scale",
         least: 0.01,
@@ -731,11 +753,12 @@ mod tests {
             );
         }
 
-        // And the four tables SPEC calls "the rest" are here in full. Counted per table, so a
+        // And the five tables SPEC calls "the rest" are here in full. Counted per table, so a
         // setting dropped out of one of them is a number that changes.
         for (table, settings) in [
             ("light", 6),
             ("physics", 4),
+            ("behaviour", 2),
             ("metabolism", 5),
             ("mutation", 7),
             ("run", 1),
@@ -749,7 +772,7 @@ mod tests {
         }
         assert_eq!(
             DIALS.len(),
-            23,
+            25,
             "the dials do not add up to the tables above"
         );
 

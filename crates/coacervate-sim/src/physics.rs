@@ -1983,17 +1983,32 @@ mod tests {
     /// How far a myocyte's contraction moves its spring's rest length, either way, at the
     /// resting amplitude.
     ///
-    /// `behaviour.rs`'s `BASE_AMPLITUDE × AMPLITUDE_SWING`, which is SPEC section 9's
-    /// `0.3 × 0.4`. Written out here rather than imported because those two are private to
-    /// the behaviour pass and this module must not learn that a myocyte exists - what is
-    /// being measured is the *water*, and the controller is only how the water is stirred.
-    const STROKE: f32 = 0.3 * 0.4;
+    /// SPEC section 3's `behaviour.resting_amplitude × behaviour.stroke`, read off the shipped
+    /// document rather than written out - Phase 7's Group H made both of them settings, and a
+    /// copy of their product here would be a second, silent stroke that a retune leaves behind.
+    ///
+    /// Nothing in this module knows what a myocyte is and nothing here needs to: what is being
+    /// measured is the *water*, and the controller is only how the water is stirred.
+    fn stroke() -> f32 {
+        let shipped = spec_defaults()
+            .validate()
+            .expect("the shipped configuration is one the program accepts");
+
+        shipped.behaviour.resting_amplitude * shipped.behaviour.stroke
+    }
 
     /// How fast a hand-built body beats, in radians of the controller's sine per second.
     ///
     /// `genome.rs`'s `MAX_OSC_FREQ`, which is the fastest a gene may be drawn with. A tick is
     /// a sixtieth of a second, so this is a stroke every seventy-five ticks and every cycle
     /// is sampled a dozen times over.
+    ///
+    /// ⚠️ It is the top of the range and **not** the fastest a body swims. Group H measured the
+    /// distance covered against the beat and it peaks between two and three and a half radians
+    /// a second, falling away either side - a fast flutter in thick water moves a body less
+    /// than a slow stroke does, which `genome.rs` warned about at the point the bound was set
+    /// and which is now a figure. So a gene drawn uniformly out of `0..=5` lands in the useful
+    /// band about half the time, and the *range* was never what was holding swimming back.
     const BEAT: f32 = 5.0;
 
     /// A body built by hand: a run of cells in a line or a zig-zag, adhered end to end.
@@ -2100,7 +2115,83 @@ mod tests {
 
     /// The same, at the stroke a myocyte with nothing to sense gives.
     fn swims(anisotropy: f64, count: u8, sag: f32, phase_step: f32, ticks: u32) -> f32 {
-        swims_at(anisotropy, count, sag, phase_step, STROKE, ticks)
+        swims_at(anisotropy, count, sag, phase_step, stroke(), ticks)
+    }
+
+    /// How far a body of this shape travels at this stroke and this beat, and what the work
+    /// costs, meaned over nine body shapes.
+    ///
+    /// ⚠️ **Meaned, and that is the whole reason this exists beside [`swims_at`].** The distance
+    /// a hand-built undulator covers is strongly *resonant*: at one stroke and one beat, an
+    /// eight-celled body kinked three units either way can travel three times what the same
+    /// body kinked four units does, because the shape it settles into under its own springs is
+    /// not the shape it was built in. Group H's first reading of the stroke was taken on one
+    /// shape and had a factor of five of noise in it. Three lengths and three kinks is enough
+    /// for the mean to be about the *stroke* rather than about one accident of geometry.
+    ///
+    /// What comes back is the distance in world units per two thousand ticks - which is a
+    /// lifetime, SPEC section 10, so it is directly the number a lineage lives or dies by - and
+    /// the mean work per tick, which is what `metabolism.movement_cost` multiplies.
+    fn swims_and_works(stroke: f32, beat: f32) -> (f32, f64) {
+        let world = config(|raw| {
+            raw.limits.max_organisms = 1;
+            raw.limits.max_cells_per_organism = 64;
+        });
+        let (mut distance, mut work, mut shapes) = (0.0f32, 0.0f64, 0.0f32);
+
+        for count in [6u8, 8, 12] {
+            for sag in [2.0f32, 3.0, 4.0] {
+                let apart = 8.0;
+                let (mut cells, base) = body(count, apart, sag, Vec2::new(1_000.0, 576.0));
+                let mut springs = base.clone();
+                let mut physics = Physics::new(&world);
+
+                let began = centre(&cells);
+                let mut seconds = 0.0f32;
+
+                for _ in 0..2_000 {
+                    let before = seconds - DT;
+
+                    for (index, spring) in springs.iter_mut().enumerate() {
+                        let phase = f32::from(u8::try_from(index).expect("a few springs"))
+                            * std::f32::consts::FRAC_PI_2;
+                        let rest = base[index].rest_length;
+                        let now = 1.0 + stroke * seconds.mul_add(beat, phase).sin();
+                        let then = 1.0 + stroke * before.mul_add(beat, phase).sin();
+                        spring.rest_length = rest * now;
+
+                        // `behaviour.rs`'s charge, exactly: force through distance, where the
+                        // force is the tension already in the spring and the distance is how
+                        // far this tick's contraction moved its rest length.
+                        let apart = wrapped_offset(
+                            cells[spring.a].pos,
+                            cells[spring.b].pos,
+                            world.world.width,
+                        )
+                        .length();
+                        let tension =
+                            f64::from(spring.stiffness) * f64::from(apart - spring.rest_length);
+                        work += (tension * f64::from(rest) * f64::from(now - then)).abs();
+                    }
+
+                    physics.step(&mut cells, &springs);
+                    seconds += DT;
+                }
+
+                assert!(
+                    cells
+                        .iter()
+                        .all(|cell| cell.pos.x.is_finite() && cell.pos.y.is_finite()),
+                    "a body of {count} cells kinked {sag} units, at a stroke of {stroke} and a \
+                     beat of {beat}, left the numbers behind entirely"
+                );
+
+                distance += (centre(&cells) - began).length();
+                shapes += 1.0;
+            }
+        }
+
+        (distance / shapes, work / f64::from(shapes) / 2_000.0)
     }
 
     /// A body of one kind of cell, adhered in a line, still, in the middle of the world.
@@ -2326,12 +2417,128 @@ mod tests {
 
         // And the same body at the stroke a myocyte gives with nothing to sense, which is the
         // one every body in the shipped world starts with.
+        //
+        // ⚠️ Re-recorded in Group H: 0.154 at the 0.12 stroke SPEC section 9 was written with,
+        // 2.3 at the shipped `[behaviour]` table's 0.8. See
+        // `a_bigger_stroke_is_what_makes_swimming_worth_doing`.
         let unsensed = swims(2.0, 8, 3.0, wave, ticks);
         assert!(
-            unsensed > 0.05,
-            "with nothing to sense the same body travelled {unsensed} units, and 0.15 was \
+            unsensed > 1.0,
+            "with nothing to sense the same body travelled {unsensed} units, and 2.3 was \
              measured. A lineage that cannot move at all until it has already grown a sensor \
              has nothing for selection to act on in between"
+        );
+    }
+
+    /// ⭐⭐ **Phase 7, Group H, and the whole of it: how far a muscle works its spring is the
+    /// only lever in the project that makes swimming worth doing.**
+    ///
+    /// Group F made locomotion arithmetically possible - before it, a free body's total
+    /// velocity was a conserved quantity of the integrator and *nothing could move under any
+    /// parameters*. Group G gave a body somewhere better to be, by setting the light drifting.
+    /// Neither produced a myocyte. The reading at the end of Group G was that the drift was the
+    /// right shape of pressure and the wrong magnitude of reward: **a perfect undulator driven
+    /// flat out for a whole two-thousand-tick lifetime covered about four world units**, against
+    /// a body eight units long, a patch lattice 128 units across, and a field that moved 1.2 in
+    /// the same time. The margin existed and nothing found it in 310,000 ticks.
+    ///
+    /// # What the sensitivity measurement said, which is why this is the stroke and not the water
+    ///
+    /// Every lever, meaned over the same nine body shapes, in world units per lifetime:
+    ///
+    /// | Lever | Range walked | Distance | Work per tick |
+    /// | --- | --- | --- | --- |
+    /// | **`behaviour.stroke × resting_amplitude`** | 0.12 → 0.8 | **0.3 → 11.7** | ×24 |
+    /// | **the same, sensor-driven** | 0.4 → 1.0 | **3.7 → 41.1** | ×2.8 |
+    /// | `physics.drag_anisotropy` | 2 → 3 | 41.1 → 46.2 | ×1.0 |
+    /// | `osc_freq` | 1 → 5 | 6.0 → 15.5, peaking near 3 | ×12 |
+    /// | segment length | 8 → 13.6 | ×1.7 | ×2.9 |
+    /// | `physics.drag` | 0.92 → 0.99 | ×9 | ×1.7 |
+    ///
+    /// **Distance goes as roughly the cube of the stroke and as the square root of everything
+    /// else**, which is what makes it the lever rather than one of six. Two of the others were
+    /// rejected on their own terms rather than on their size: `physics.drag` at 0.99 lets a cell
+    /// coast a hundred units off one shove, and SPEC section 8 is explicit that *momentum is not
+    /// a strategy here*; and `osc_freq`'s range already contains its own optimum, so widening it
+    /// would only add draws that are worse.
+    ///
+    /// # The three claims
+    ///
+    /// **A body driven by a sensor covers enough ground to matter.** Forty-one units in a
+    /// lifetime, against four before - five body lengths rather than half of one, and about a
+    /// third of the distance between one patch of light and the next.
+    ///
+    /// **A body with no sensor at all covers enough to be *selected on*, which is the harder
+    /// half.** SPEC section 9's resting amplitude is what a lineage's *first* myocyte is worth,
+    /// before there is any sensocyte to drive it, and at 0.3 it was worth 0.3 units in a whole
+    /// lifetime - a twentieth of one of its own cells. It is now worth about twelve.
+    ///
+    /// **⚠️ And the cost did not eat the gain**, which is the failure this could have been. Work
+    /// is force through distance and both halves of it scale with the stroke, so a stroke seven
+    /// times larger costs about twenty-four times as much - and the *ratio* is what matters:
+    /// distance per unit of work is **higher** at the shipped stroke than at the old one, not
+    /// lower. A body that swims well now pays less per unit travelled than one that twitched.
+    #[test]
+    fn a_bigger_stroke_is_what_makes_swimming_worth_doing() {
+        // SPEC section 9 as it was written until Group H: a resting amplitude of 0.3 and a
+        // stroke of 0.4, so 0.12 of the rest length with nothing to sense and 0.4 with a
+        // sensocyte driving the clamp.
+        let (was_unsensed, was_unsensed_work) = swims_and_works(0.12, 3.0);
+        let (was_driven, was_driven_work) = swims_and_works(0.4, 3.0);
+
+        let shipped = spec_defaults()
+            .validate()
+            .expect("the shipped configuration is one the program accepts");
+        let (unsensed, unsensed_work) = swims_and_works(
+            shipped.behaviour.resting_amplitude * shipped.behaviour.stroke,
+            3.0,
+        );
+        let (driven, driven_work) = swims_and_works(shipped.behaviour.stroke, 3.0);
+
+        assert!(
+            driven > 30.0,
+            "a body with a sensocyte driving it covered {driven} world units in a lifetime, \
+             and 41 was measured. The lattice of light is 128 units across and the field \
+             drifts 1.2 in the same time - below about thirty this is a rounding error \
+             against the distance a lineage would have to cross to find better water"
+        );
+        assert!(
+            was_driven < 6.0 && driven > was_driven * 8.0,
+            "the same body at SPEC section 9's original stroke covered {was_driven} units \
+             and at the shipped one {driven}. Four and forty-one are the measured figures, \
+             and if they are not an order of magnitude apart then the [behaviour] table is \
+             not doing the thing the whole of Group H exists to do"
+        );
+        assert!(
+            unsensed > 5.0 && was_unsensed < 1.0,
+            "a body with no sensocyte anywhere in it covered {unsensed} units in a lifetime, \
+             against {was_unsensed} before. That is the number a lineage's *first* myocyte is \
+             worth, with nothing yet evolved to drive it, and it has to be something \
+             selection can see or nothing ever gets as far as growing a sensor"
+        );
+
+        // ⚠️ The cost side. Not "it costs little" - it costs twenty-four times more - but that
+        // the distance bought per unit of work went *up* rather than down.
+        let before = f64::from(was_driven) / was_driven_work;
+        let after = f64::from(driven) / driven_work;
+        assert!(
+            after > before,
+            "a lifetime of swimming bought {after} units per unit of work at the shipped \
+             stroke and {before} at the old one. A stroke that doubles the speed and \
+             quadruples the price has moved the problem rather than solved it"
+        );
+        // And the absolute price, against the only thing it can be judged against: what the
+        // same cells cost simply to be alive. `metabolism.movement_cost` is 1e-4, a myocyte's
+        // upkeep is 0.014 a tick (SPEC section 6), and the smallest body meaned over above has
+        // six of them - so the muscles of the whole body must not cost a quarter of what
+        // keeping the body alive costs, or a lineage that swims is a lineage that starves.
+        let upkeep = 6.0 * 0.014;
+        let paid = spec_defaults().metabolism.movement_cost * driven_work;
+        assert!(
+            paid < upkeep * 0.25 && was_unsensed_work < unsensed_work,
+            "a body driven flat out pays {paid} a tick for the work its muscles do, against \
+             the {upkeep} the smallest of these bodies pays simply to be alive. Group H's \
+             whole risk was moving the problem rather than solving it"
         );
     }
 

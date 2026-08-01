@@ -141,21 +141,6 @@ const SHADOW_DEPTH: f32 = 2.0 * MAX_REST_LENGTH;
 /// Whether any lineage ever discovers either strategy is not decided here and must not be.
 const DEVOUR_RATE: f64 = 0.05;
 
-/// SPEC section 9's `0.3`: how hard a myocyte works with nothing telling it otherwise.
-///
-/// A myocyte with no sensocyte wired to it, or one whose sensors read nothing, still contracts,
-/// at a little under a third of its strength. That matters more than it looks: a body with no
-/// sensing at all still swims, so locomotion is reachable by mutation *before* sensing is,
-/// rather than the two having to appear together.
-const BASE_AMPLITUDE: f32 = 0.3;
-
-/// SPEC section 9's `0.4`: how much of its rest length a myocyte at full amplitude works
-/// through, either way.
-///
-/// A fully-driven muscle therefore swings its spring between 0.6 and 1.4 of the length its
-/// gene asked for, and an undriven one between 0.88 and 1.12.
-const AMPLITUDE_SWING: f32 = 0.4;
-
 /// How far a sensocyte's world extends.
 ///
 /// **The longest limb a genome can grow**, from `genome.rs`. A sensocyte senses about as far
@@ -506,6 +491,16 @@ pub struct Behaviour {
     /// SPEC section 3's `metabolism.movement_cost`: what a unit of work costs to do.
     movement_cost: f64,
 
+    /// SPEC section 3's `[behaviour]` table: how hard a muscle works with nothing telling it
+    /// otherwise, and how much of its rest length a fully-driven one works through.
+    ///
+    /// ⭐⭐ Both were constants in this file until Phase 7's Group H, and the second of them was
+    /// **the** number deciding whether a muscle was worth owning: a body's speed goes as
+    /// roughly the cube of it. See [`crate::config::BehaviourConfig`] for the measurement and
+    /// for why the stroke stops at one.
+    resting_amplitude: f32,
+    stroke: f32,
+
     /// How wide the world is, for measuring the short way round it.
     width: f32,
 
@@ -575,6 +570,8 @@ impl Behaviour {
 
         Self {
             movement_cost: f64::from(config.metabolism.movement_cost),
+            resting_amplitude: config.behaviour.resting_amplitude,
+            stroke: config.behaviour.stroke,
             width: config.world.width,
             hash: Neighbourhood::new(config, cells),
             drift: Neighbourhood::new(config, cells),
@@ -590,13 +587,15 @@ impl Behaviour {
         }
     }
 
-    /// Take `metabolism.movement_cost` again, on a running world.
+    /// Take `metabolism.movement_cost` and the `[behaviour]` table again, on a running world.
     ///
-    /// The one number in this module that a configuration decides and SPEC section 3 does not
-    /// lock. `width` is `[world]`'s and every array here was sized from `[limits]`, so neither
-    /// moves. See [`crate::world::World::retune`].
+    /// The three numbers in this module that a configuration decides and SPEC section 3 does
+    /// not lock. `width` is `[world]`'s and every array here was sized from `[limits]`, so
+    /// neither moves. See [`crate::world::World::retune`].
     pub fn retune(&mut self, config: &Config) {
         self.movement_cost = f64::from(config.metabolism.movement_cost);
+        self.resting_amplitude = config.behaviour.resting_amplitude;
+        self.stroke = config.behaviour.stroke;
     }
 
     /// Let every cell do what its kind does, for one tick.
@@ -762,6 +761,8 @@ impl Behaviour {
         let Self {
             width,
             movement_cost,
+            resting_amplitude,
+            stroke,
             signal,
             sensed,
             sensors,
@@ -770,6 +771,10 @@ impl Behaviour {
             ..
         } = self;
         let (width, movement_cost) = (*width, *movement_cost);
+        let drive = Drive {
+            resting: *resting_amplitude,
+            stroke: *stroke,
+        };
 
         // SPEC section 9's "mean of connected Sensocyte outputs, or 0 if none". Connected
         // means **adhered**, one spring away and no further: a myocyte hears the sensocytes it
@@ -827,8 +832,8 @@ impl Behaviour {
                 };
                 let (freq, phase) = (f64::from(gene.osc_freq), f64::from(gene.osc_phase));
 
-                now += contraction(gene, heard, seconds.mul_add(freq, phase));
-                a_moment_ago += contraction(gene, heard, a_tick_ago.mul_add(freq, phase));
+                now += contraction(drive, gene, heard, seconds.mul_add(freq, phase));
+                a_moment_ago += contraction(drive, gene, heard, a_tick_ago.mul_add(freq, phase));
                 muscles += 1;
             }
 
@@ -1355,17 +1360,32 @@ fn light_gradient(grid: &Grid, at: Vec2) -> f32 {
     Vec2::new((east - west) * 0.5, (under - over) * 0.5).length()
 }
 
+/// The two numbers SPEC section 9's controller is driven by, carried together so they cannot
+/// be read from different configurations.
+///
+/// ⭐⭐ **Phase 7's Group H.** Both were written into this file as constants - the 0.3 an
+/// unsensed muscle contracts at and the 0.4 of its rest length a driven one works through - and
+/// the second was measured to be the only lever in the project that makes swimming worth doing.
+/// See [`crate::config::BehaviourConfig`].
+#[derive(Clone, Copy)]
+struct Drive {
+    resting: f32,
+    stroke: f32,
+}
+
 /// SPEC section 9's controller, for one myocyte at one moment: what its spring's rest length
 /// is a multiple of.
 ///
 /// ```text
-/// amplitude = clamp(0.3 + sensor_gain × signal, 0.0, 1.0)
-/// rest_len  = base_rest × (1 + amplitude × 0.4 × sin(t × osc_freq + osc_phase))
+/// amplitude = clamp(resting_amplitude + sensor_gain × signal, 0.0, 1.0)
+/// rest_len  = base_rest × (1 + amplitude × stroke × sin(t × osc_freq + osc_phase))
 /// ```
 ///
-/// Written out from the specification rather than rearranged. The `angle` is the whole of
-/// SPEC's `t × osc_freq + osc_phase`, worked out by the caller at 64 bits because `t` is a
-/// running total over the life of a run and the phase of a long run would otherwise be noise.
+/// Written out from the specification rather than rearranged; the two coefficients are SPEC
+/// section 3's `[behaviour]` table, which shipped as the constants 0.3 and 0.4 until Phase 7's
+/// Group H. The `angle` is the whole of SPEC's `t × osc_freq + osc_phase`, worked out by the
+/// caller at 64 bits because `t` is a running total over the life of a run and the phase of a
+/// long run would otherwise be noise.
 ///
 /// # `sensor_gain` is the **myocyte's**, not the sensocyte's
 ///
@@ -1381,12 +1401,12 @@ fn light_gradient(grid: &Grid, at: Vec2) -> f32 {
 /// signal - so a body can have one side excited and the other inhibited by one sensor, which
 /// is a turn. With the gain on the sensocyte, every muscle hearing it would respond the same
 /// way and a body could only speed up and slow down.
-fn contraction(gene: &Gene, signal: f32, angle: f64) -> f32 {
+fn contraction(drive: Drive, gene: &Gene, signal: f32, angle: f64) -> f32 {
     let amplitude = signal
-        .mul_add(gene.sensor_gain, BASE_AMPLITUDE)
+        .mul_add(gene.sensor_gain, drive.resting)
         .clamp(0.0, 1.0);
 
-    amplitude.mul_add(AMPLITUDE_SWING * narrowed(angle.sin()), 1.0)
+    amplitude.mul_add(drive.stroke * narrowed(angle.sin()), 1.0)
 }
 
 /// Which gene answers to each developmental state: the first one that names it, or
@@ -2492,6 +2512,96 @@ mod tests {
         }
     }
 
+    /// ⭐⭐ **Phase 7, Group H.** How far a myocyte works its spring is a setting, and both ends
+    /// of it come out of the document rather than out of this file.
+    ///
+    /// SPEC section 9's controller used to have two numbers written into it - the 0.3 an
+    /// unsensed muscle contracts at, and the 0.4 of its rest length a fully-driven one works
+    /// through - and Group H's measurement is that **the second of them is the only lever in
+    /// the project that makes swimming worth doing.** Speed goes as roughly the cube of that
+    /// coefficient and as the square root of everything else, so a number nobody could reach
+    /// from a settings file was the number that decided whether a muscle was worth owning.
+    ///
+    /// Three claims, and the third is the one that makes this a test rather than a restatement:
+    ///
+    /// **The shipped settings give the shipped swing.** `resting_amplitude × stroke` is
+    /// `0.8 × 1.0`, so a spring asked to be eight units long is worked between 1.6 and 14.4.
+    ///
+    /// **A document that says otherwise is obeyed.** The same body under a `[behaviour]` table
+    /// holding SPEC's original 0.3 and 0.4 is worked between 7.04 and 8.96, which is what
+    /// `a_myocyte_oscillates_its_springs_and_pays_for_the_work` measured before this group -
+    /// so the old world is still reachable, and it is reachable *as a configuration* rather
+    /// than as a version of the source.
+    ///
+    /// **⚠️ And at the top of the range a rest length reaches nothing and does not pass it.**
+    /// A stroke of one is exactly where `base × (1 − stroke)` hits zero; `config.rs` refuses
+    /// anything above, and the reason is that a negative rest length is a spring that pulls at
+    /// every phase of its cycle instead of oscillating - a body hauling itself through its own
+    /// cells, which looks like very fast swimming and is not swimming at all.
+    #[test]
+    fn a_myocyte_works_through_the_stroke_the_settings_give_it() {
+        let worked = |resting: f64, stroke: f64| {
+            let mut settings = evenly_lit();
+            settings.behaviour.resting_amplitude = narrowed(resting);
+            settings.behaviour.stroke = narrowed(stroke);
+
+            let mut scene = Scene::new(&settings);
+            scene.fill_with_light();
+
+            let genome = Genome::new(
+                vec![a_behaviour_gene(1, 3.0, 0.0, 0.0, SensorTarget::Light)],
+                &settings.limits,
+            );
+            scene.add(
+                genome,
+                4.0,
+                &[
+                    (CellKind::Myocyte, Vec2::new(40.0, 72.0), 1),
+                    (CellKind::Sclerocyte, Vec2::new(48.0, 72.0), 0),
+                ],
+            );
+            scene.adhere(0, 1, 8.0, 10.0);
+
+            let (mut longest, mut shortest) = (0.0f32, f32::MAX);
+            for _ in 0..130 {
+                scene.run();
+                longest = longest.max(scene.springs[0].rest_length);
+                shortest = shortest.min(scene.springs[0].rest_length);
+            }
+
+            (shortest, longest)
+        };
+
+        let shipped = spec_defaults().behaviour;
+        let (shortest, longest) = worked(shipped.resting_amplitude, shipped.stroke);
+        assert!(
+            (shortest - 1.6).abs() < 0.01 && (longest - 14.4).abs() < 0.01,
+            "at the shipped `behaviour` table a spring asked to be eight units long was \
+             worked between {shortest} and {longest}, against the 1.6 to 14.4 that a resting \
+             amplitude of 0.8 and a stroke of 1.0 give"
+        );
+
+        // SPEC section 9 as it was written before Group H, reachable as a configuration.
+        let (was_shortest, was_longest) = worked(0.3, 0.4);
+        assert!(
+            (was_shortest - 7.04).abs() < 0.01 && (was_longest - 8.96).abs() < 0.01,
+            "the world as it shipped until Group H worked the same spring between \
+             {was_shortest} and {was_longest}, and 7.04 to 8.96 is what it measured - so the \
+             old world is no longer reachable from a settings file"
+        );
+
+        // The top of the range, where the rest length reaches nothing exactly.
+        let (bottom, _) = worked(1.0, 1.0);
+        assert!(
+            (0.0..0.01).contains(&bottom),
+            "at the top of both settings the shortest a spring asked to be was {bottom}, and \
+             a stroke of one is defined as the point where that reaches nought without \
+             passing it - anything below is a spring that pulls at every phase of its own \
+             cycle. (It stops a thousandth short because the sine is sampled sixty times a \
+             second and never lands exactly on its trough.)"
+        );
+    }
+
     /// ⭐ **A5.** A myocyte works the rest length of its springs up and down, and its organism
     /// pays for the work it does.
     ///
@@ -2499,13 +2609,16 @@ mod tests {
     ///
     /// ```text
     /// signal    = mean of connected Sensocyte outputs, or 0 if none
-    /// amplitude = clamp(0.3 + sensor_gain × signal, 0.0, 1.0)
-    /// rest_len  = base_rest × (1 + amplitude × 0.4 × sin(t × osc_freq + osc_phase))
+    /// amplitude = clamp(resting_amplitude + sensor_gain × signal, 0.0, 1.0)
+    /// rest_len  = base_rest × (1 + amplitude × stroke × sin(t × osc_freq + osc_phase))
     /// ```
     ///
     /// This is that with no sensocytes anywhere, so the signal is nought and the amplitude is
-    /// the bare 0.3 - which makes the swing `0.3 × 0.4 = 0.12` of the rest length either way.
-    /// `a_sensocyte_reports_a_gradient_towards_its_target` is where the signal starts moving.
+    /// the bare `behaviour.resting_amplitude` - which at the shipped 0.8 and a `stroke` of 1.0
+    /// makes the swing 0.8 of the rest length either way.
+    /// `a_sensocyte_reports_a_gradient_towards_its_target` is where the signal starts moving,
+    /// and `a_myocyte_works_through_the_stroke_the_settings_give_it` is where the two
+    /// coefficients themselves are pinned.
     ///
     /// # The cost has to be a real quantity, and this is most of what the test is about
     ///
@@ -2590,13 +2703,21 @@ mod tests {
             );
         }
 
-        // The swing is `amplitude × 0.4` of the rest length either way, and with no sensocyte
-        // the amplitude is SPEC's bare 0.3 - so 0.12 of eight units, which is 0.96.
+        // The swing is `amplitude × behaviour.stroke` of the rest length either way, and with
+        // no sensocyte the amplitude is `behaviour.resting_amplitude` - so at the shipped
+        // 0.8 and 1.0 that is 0.8 of eight units, which is 6.4.
+        //
+        // ⚠️ **Re-recorded in Phase 7's Group H, and both previous figures are kept.** It read
+        // **7.04 to 8.96** while SPEC section 9's two coefficients were the constants 0.3 and
+        // 0.4, which is a swing of 0.96 - about a seventh of one cell's width, worked by a
+        // muscle costing three and a half times what a photocyte costs to keep. Group H
+        // measured that a body's speed goes as roughly the **cube** of that swing, and the
+        // whole of Group H is this number.
         assert!(
-            (longest - 8.96).abs() < 0.01 && (shortest - 7.04).abs() < 0.01,
-            "the spring was worked between {shortest} and {longest}, against the 7.04 to \
-             8.96 SPEC section 9's controller gives a rest length of eight at the bare \
-             amplitude"
+            (longest - 14.4).abs() < 0.01 && (shortest - 1.6).abs() < 0.01,
+            "the spring was worked between {shortest} and {longest}, against the 1.6 to \
+             14.4 SPEC section 9's controller gives a rest length of eight at the shipped \
+             resting amplitude"
         );
 
         let spent = 4.0 - scene.energy(swimmer);
@@ -2617,9 +2738,18 @@ mod tests {
         // It is still an *upper* bound on what a real muscle pays: nothing moves in this scene,
         // so the spring never gets to relieve its own tension the way it would with the physics
         // running.
+        //
+        // ⚠️ **Re-recorded a second time in Group H, and both earlier figures are kept above.**
+        // 0.00186 → **0.0827** over the same hundred and thirty ticks, which is the swing
+        // going from 0.12 of the rest length to 0.8: work is force through distance and both
+        // halves of it scale with the swing, so a stroke 6.7 times larger costs 44 times as
+        // much. **That is the cost side of Group H and it is affordable**, which is the whole
+        // question the number is here to answer: 6.4e-4 a tick against a myocyte's own upkeep
+        // of 0.014 is **four and a half per cent** of what the cell costs to keep, for the
+        // hardest-worked spring in the scene, with nothing allowed to move.
         assert!(
-            (spent - 0.00186).abs() < 1e-5,
-            "a myocyte spent {spent} over a hundred and thirty ticks, against the 0.00186 \
+            (spent - 0.0827).abs() < 1e-4,
+            "a myocyte spent {spent} over a hundred and thirty ticks, against the 0.0827 \
              recorded here"
         );
         assert!(
@@ -2713,8 +2843,13 @@ mod tests {
 
         // A rest length that is held rather than worked is held at what the gene asked for,
         // shifted once by the phase and then left there.
+        //
+        // ⚠️ Worked out from the settings rather than written down. Phase 7's Group H moved
+        // both coefficients into `[behaviour]`, and a number here would have been a second,
+        // silent copy of the shipped stroke that a retune would leave behind.
+        let swing = scene.config.behaviour.resting_amplitude * scene.config.behaviour.stroke;
         assert!(
-            (scene.springs[0].rest_length - 8.0 * (1.0 + 0.12 * 1.0_f32.sin())).abs() < 1e-4,
+            (scene.springs[0].rest_length - 8.0 * (1.0 + swing * 1.0_f32.sin())).abs() < 1e-4,
             "a myocyte at a standstill is holding its spring at {} rather than at the one \
              length its phase puts it at",
             scene.springs[0].rest_length
@@ -2846,8 +2981,29 @@ mod tests {
     /// can be seeded holding nothing and the field is left exactly as the light made it. That
     /// matters for the light-sensing case, where a tile the body had eaten out of would be a
     /// gradient the test put there by accident.
-    fn a_body_that_senses(target: SensorTarget, gain: f32) -> Scene {
-        let settings = evenly_lit();
+    /// ⚠️ **`resting` is a parameter rather than the shipped setting**, and Phase 7's Group H
+    /// made it one. What these scenes measure is the *signal*, read back through the one thing
+    /// in the world that shows it - a myocyte's amplitude - and SPEC section 9 clamps that
+    /// amplitude into `0..=1`. So a scene built at the shipped resting amplitude of 0.8 has only
+    /// two tenths of room above it, and every reading strong enough to matter would come back
+    /// flattened against the top of the clamp: a body four units from a neighbour and one eight
+    /// units away would read *the same number*, and the test would be measuring the clamp.
+    ///
+    /// Each caller therefore says what it needs. Nought, for the tests about what a sensocyte
+    /// reports, so the amplitude read back **is** the signal times the gain with nothing else in
+    /// it; a half, for the test about the sign, so both directions have exactly the same room.
+    fn a_body_that_senses(resting: f64, target: SensorTarget, gain: f32) -> Scene {
+        let settings = config(|raw| {
+            raw.world.width = 256.0;
+            raw.world.height = 144.0;
+            raw.world.grid_cols = 32;
+            raw.world.grid_rows = 18;
+            raw.light.gradient = 0.0;
+            raw.light.patchiness = 0.0;
+            raw.limits.max_organisms = 8;
+            raw.limits.max_cells_per_organism = 8;
+            raw.behaviour.resting_amplitude = resting;
+        });
         let mut scene = Scene::new(&settings);
         scene.fill_with_light();
 
@@ -2872,8 +3028,12 @@ mod tests {
     }
 
     /// How hard the myocyte in [`a_body_that_senses`] is working, read back off its spring.
+    ///
+    /// Divided by the scene's own `behaviour.stroke` rather than by a constant, so that what
+    /// comes back is SPEC section 9's *amplitude* whatever the settings do - which is what every
+    /// claim below is about.
     fn amplitude(scene: &Scene) -> f32 {
-        (scene.springs[0].rest_length / 8.0 - 1.0) / AMPLITUDE_SWING
+        (scene.springs[0].rest_length / 8.0 - 1.0) / scene.config.behaviour.stroke
     }
 
     /// ⭐ **A6.** A sensocyte reports how lopsided its surroundings are in whatever it is tuned
@@ -2908,18 +3068,18 @@ mod tests {
     /// the same thing for all three targets would satisfy every other claim.
     #[test]
     fn a_sensocyte_reports_a_gradient_towards_its_target() {
-        // Nothing to sense: SPEC's bare amplitude, and no more.
-        let mut empty = a_body_that_senses(SensorTarget::ForeignBiomass, 1.0);
+        // Nothing to sense: nothing read. Every scene here is built at a resting amplitude of
+        // nought, so what comes back is the signal itself - see `a_body_that_senses`.
+        let mut empty = a_body_that_senses(0.0, SensorTarget::ForeignBiomass, 1.0);
         empty.run();
         assert!(
-            (amplitude(&empty) - BASE_AMPLITUDE).abs() < 1e-5,
-            "a sensocyte in empty water drove its myocyte to {} rather than SPEC's bare \
-             {BASE_AMPLITUDE}",
+            amplitude(&empty).abs() < 1e-5,
+            "a sensocyte in empty water read {} rather than nothing",
             amplitude(&empty)
         );
 
         // A foreign body to one side.
-        let mut nearby = a_body_that_senses(SensorTarget::ForeignBiomass, 1.0);
+        let mut nearby = a_body_that_senses(0.0, SensorTarget::ForeignBiomass, 1.0);
         let stranger = nearby.no_genome();
         nearby.add(
             stranger,
@@ -2928,15 +3088,15 @@ mod tests {
         );
         nearby.run();
         assert!(
-            amplitude(&nearby) > BASE_AMPLITUDE + 0.05,
-            "a sensocyte eight units from a foreign body drove its myocyte to {}, against \
-             the {BASE_AMPLITUDE} it gives in empty water - so either it cannot smell a \
-             neighbour or the signal is too faint to select on",
+            amplitude(&nearby) > 0.05,
+            "a sensocyte eight units from a foreign body read {}, against the nothing it \
+             reads in empty water - so either it cannot smell a neighbour or the signal is \
+             too faint to select on",
             amplitude(&nearby)
         );
 
         // Closer is stronger.
-        let mut closer = a_body_that_senses(SensorTarget::ForeignBiomass, 1.0);
+        let mut closer = a_body_that_senses(0.0, SensorTarget::ForeignBiomass, 1.0);
         let stranger = closer.no_genome();
         closer.add(
             stranger,
@@ -2953,7 +3113,7 @@ mod tests {
         );
 
         // ⭐ And a gradient has a direction: the same body on both sides cancels.
-        let mut surrounded = a_body_that_senses(SensorTarget::ForeignBiomass, 1.0);
+        let mut surrounded = a_body_that_senses(0.0, SensorTarget::ForeignBiomass, 1.0);
         let stranger = surrounded.no_genome();
         surrounded.add(
             stranger.clone(),
@@ -2967,7 +3127,7 @@ mod tests {
         );
         surrounded.run();
         assert!(
-            (amplitude(&surrounded) - BASE_AMPLITUDE).abs() < 1e-5,
+            amplitude(&surrounded).abs() < 1e-5,
             "a sensocyte with a foreign body equally either side of it read {} rather than \
              nothing, so it is reporting how much is nearby rather than which way it is - \
              and a body cannot steer on that",
@@ -2975,50 +3135,50 @@ mod tests {
         );
 
         // Detritus, and a sensocyte tuned to light that is unmoved by it.
-        let mut smelling = a_body_that_senses(SensorTarget::Detritus, 1.0);
+        let mut smelling = a_body_that_senses(0.0, SensorTarget::Detritus, 1.0);
         smelling.drop_detritus(Vec2::new(54.0, 72.0), 1.0);
         smelling.run();
         assert!(
-            amplitude(&smelling) > BASE_AMPLITUDE + 0.05,
+            amplitude(&smelling) > 0.05,
             "a sensocyte tuned to detritus, eight units from a grain of it, read {}",
             amplitude(&smelling)
         );
 
-        let mut looking = a_body_that_senses(SensorTarget::Light, 1.0);
+        let mut looking = a_body_that_senses(0.0, SensorTarget::Light, 1.0);
         looking.drop_detritus(Vec2::new(54.0, 72.0), 1.0);
         looking.run();
         assert!(
-            (amplitude(&looking) - BASE_AMPLITUDE).abs() < 1e-5,
+            amplitude(&looking).abs() < 1e-5,
             "a sensocyte tuned to light read {} beside a grain of detritus, so the target on \
              its gene is not deciding what it senses",
             amplitude(&looking)
         );
 
         // Light, off the resource grid. Even water first, then a tile eaten out beside it.
-        let mut even = a_body_that_senses(SensorTarget::Light, 1.0);
+        let mut even = a_body_that_senses(0.0, SensorTarget::Light, 1.0);
         even.run();
         assert!(
-            (amplitude(&even) - BASE_AMPLITUDE).abs() < 1e-5,
+            amplitude(&even).abs() < 1e-5,
             "a sensocyte in water that is the same everywhere read {}, and there is no \
              gradient there to read",
             amplitude(&even)
         );
 
-        let mut patchy = a_body_that_senses(SensorTarget::Light, 1.0);
+        let mut patchy = a_body_that_senses(0.0, SensorTarget::Light, 1.0);
         patchy.eat_out(Vec2::new(36.0, 72.0), 7.0);
         patchy.run();
         assert!(
-            amplitude(&patchy) > BASE_AMPLITUDE + 0.05,
+            amplitude(&patchy) > 0.05,
             "a sensocyte with the next tile along eaten nearly empty read {}, so it cannot \
              see the light gradient it is standing in",
             amplitude(&patchy)
         );
 
-        let mut unmoved = a_body_that_senses(SensorTarget::ForeignBiomass, 1.0);
+        let mut unmoved = a_body_that_senses(0.0, SensorTarget::ForeignBiomass, 1.0);
         unmoved.eat_out(Vec2::new(36.0, 72.0), 7.0);
         unmoved.run();
         assert!(
-            (amplitude(&unmoved) - BASE_AMPLITUDE).abs() < 1e-5,
+            amplitude(&unmoved).abs() < 1e-5,
             "a sensocyte tuned to foreign biomass read {} beside a tile that had been eaten \
              out, so all three targets are sensing the same thing",
             amplitude(&unmoved)
@@ -3054,8 +3214,14 @@ mod tests {
     /// will have found it by growing a shape that turns the right way, not by being told to.
     #[test]
     fn both_attraction_and_avoidance_are_reachable_for_a_sensocyte() {
+        // Half way up SPEC section 9's clamp, so the two directions have exactly the same
+        // room. At the shipped resting amplitude of 0.8 the positive direction would flatten
+        // against the top of the clamp and this test would be measuring that rather than the
+        // sign - see `a_body_that_senses`.
+        let resting = 0.5;
+
         let drawn_to = {
-            let mut scene = a_body_that_senses(SensorTarget::ForeignBiomass, 1.0);
+            let mut scene = a_body_that_senses(resting, SensorTarget::ForeignBiomass, 1.0);
             let stranger = scene.no_genome();
             scene.add(
                 stranger,
@@ -3066,7 +3232,7 @@ mod tests {
             amplitude(&scene)
         };
         let put_off = {
-            let mut scene = a_body_that_senses(SensorTarget::ForeignBiomass, -1.0);
+            let mut scene = a_body_that_senses(resting, SensorTarget::ForeignBiomass, -1.0);
             let stranger = scene.no_genome();
             scene.add(
                 stranger,
@@ -3077,18 +3243,19 @@ mod tests {
             amplitude(&scene)
         };
 
+        let resting = 0.5f32;
         assert!(
-            drawn_to > BASE_AMPLITUDE && put_off < BASE_AMPLITUDE,
+            drawn_to > resting && put_off < resting,
             "a positive gain drove the muscle to {drawn_to} and a negative one to {put_off}, \
-             either side of {BASE_AMPLITUDE} - and if they are not either side of it then one \
-             of the two directions is unreachable however long a lineage mutates"
+             either side of {resting} - and if they are not either side of it then one of the \
+             two directions is unreachable however long a lineage mutates"
         );
         assert!(
-            ((drawn_to - BASE_AMPLITUDE) - (BASE_AMPLITUDE - put_off)).abs() < 1e-5,
+            ((drawn_to - resting) - (resting - put_off)).abs() < 1e-5,
             "the two gains moved the muscle by {} and {} respectively, so one direction \
              responds more strongly than the other and selection would find it first",
-            drawn_to - BASE_AMPLITUDE,
-            BASE_AMPLITUDE - put_off
+            drawn_to - resting,
+            resting - put_off
         );
         assert!(
             put_off > 0.0 && drawn_to < 1.0,

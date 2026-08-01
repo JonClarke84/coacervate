@@ -64,6 +64,10 @@ drag_anisotropy = 2.0
 collision_stiffness = 40.0
 spring_damping = 0.35
 
+[behaviour]
+resting_amplitude = 0.8  # `default.toml`'s, unchanged. What a muscle is worth is not a
+stroke = 1.0             # property of how much water there is.
+
 [metabolism]
 upkeep_scale = 1.0
 gene_cost = 0.0001

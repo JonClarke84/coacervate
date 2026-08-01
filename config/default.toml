@@ -51,6 +51,29 @@ drag_anisotropy = 2.0    # the power `drag` is raised to across a cell's own bod
 collision_stiffness = 40.0
 spring_damping = 0.35
 
+[behaviour]
+resting_amplitude = 0.8  # how hard a myocyte contracts with nothing telling it otherwise —
+                         # SPEC section 9's `clamp(resting_amplitude + sensor_gain × signal)`.
+                         # This is what a lineage's *first* myocyte is worth, before it has a
+                         # sensocyte to drive it, so it is the number selection has to see
+                         # first. Raised from the 0.3 SPEC was first written with in Phase 7:
+                         # at 0.3 an unsensed undulator covered 0.3 world units in a whole
+                         # lifetime, a twentieth of one of its own cells. The price is that a
+                         # sensor now has 0.2 of room above and 0.8 below — deliberate, since
+                         # `sensor_gain` is signed and a body with one side inhibited is a
+                         # turn, which is what a swimmer needs. SPEC 9.
+stroke = 1.0             # how much of its rest length a myocyte at full amplitude works
+                         # through, either way. Measured in Phase 7, not guessed: a body's
+                         # speed goes as roughly the CUBE of this and as the square root of
+                         # every other lever, so at the 0.4 SPEC was first written with a
+                         # perfect undulator covered 4 world units in a 2,000-tick lifetime
+                         # against a field drifting 1.2, and nothing found that margin in
+                         # 310,000 ticks. At 1.0 the same body covers about 41. Bounded at
+                         # 1.0, which is exactly where the shortest a spring asks to be —
+                         # `base × (1 - stroke)` — reaches nought; above it the rest length
+                         # is negative, the spring pulls at every phase instead of
+                         # oscillating, and a body hauls itself through its own cells. SPEC 9.
+
 [metabolism]
 upkeep_scale = 1.0       # global multiplier on all cell upkeep ("temperature")
 gene_cost = 0.0001       # per gene, per tick — keeps genomes off the max_genes ceiling so

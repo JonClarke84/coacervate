@@ -12,15 +12,23 @@
 | | |
 | --- | --- |
 | **Phase 7** | in progress |
-| **Current group** | D — Darwin in the margin (A, B, C, F and G are done) |
-| **Suite** | green — **257 tests** |
+| **Current group** | D — Darwin in the margin (A, B, C, F, G and H are done) |
+| **Suite** | green — **260 tests** |
 
-⚠️ **Groups F and G are out of order and both had to be.** F is the swimming work, taken out of
-turn because Jonathan's live run had reached tick 2.8 million with one myocyte in it and the
-diagnostic found that **nothing in this world could move, and nothing ever could have**. G is
+⚠️ **Groups F, G and H are out of order and all three had to be.** F is the swimming work, taken
+out of turn because Jonathan's live run had reached tick 2.8 million with one myocyte in it and
+the diagnostic found that **nothing in this world could move, and nothing ever could have**. G is
 what F's own closing paragraph asked for: swimming was made possible and was still worth
-nothing, because the resource field never moved. They sit in the step ledger below between
-Groups D and E, which are the two still to do.
+nothing, because the resource field never moved. H is what G's asked for: the field moved and
+swimming was still too slow to catch it, so the stroke was measured and made seven times bigger.
+They sit in the step ledger below between Groups D and E, which are the two still to do.
+
+⚠️⚠️ **Group H is a negative result, and it is the most useful thing in this document.** The
+stroke was the right lever and it was not the binding constraint. The diagnostic that went with
+it found that a myocyte is only heard if some gene in its own genome names its `state`, that a
+state is one of sixty-four against a genome of about three genes, and that **over 120,000 ticks
+of the shipped world not one muscle anywhere moved a spring**. Three phases of work on the
+*payoff* have all acted on a code path the world essentially never takes. See Group H.
 
 ---
 
@@ -855,6 +863,194 @@ the next step is to double it and re-run rather than to add anything.
   (the field takes a third longer to reach deeper ceilings) and a body's position read at the
   tick it died rather than the tick it was seeded (three photocytes float about a unit and a
   half over a lifetime). Neither claim changed.
+
+### Group H — making the stroke big enough to matter — **done, and the result is negative**
+
+⚠️ **Out of the phase's plan for the third time, and it is the answer to Group G's own last
+paragraph**: *"the lever is the stroke rather than the water"*. It is. The stroke was measured,
+moved, and shipped, and **it did not produce myocytes**, because the diagnostic that went with
+it found that the controller the stroke belongs to is almost never executed at all.
+
+- [x] **H1. `a_bigger_stroke_is_what_makes_swimming_worth_doing`** ⭐⭐ — the sensitivity
+  measurement, meaned over nine body shapes, and the three claims it supports.
+- [x] **H2. `[behaviour]`, a new table in SPEC section 3** — `resting_amplitude` at **0.8**
+  (was a constant 0.3) and `stroke` at **1.0** (was a constant 0.4). Both `fraction`-gated.
+- [x] **H3. `the_stroke_cannot_take_a_rest_length_below_nothing`** — why one is the ceiling.
+- [x] **H4. `a_myocyte_works_through_the_stroke_the_settings_give_it`** — the controller obeys
+  the document, and SPEC's original 0.3 and 0.4 are still reachable *as a configuration*.
+- [x] **H5. The 310,000-tick run**, and the diagnostic that explains it.
+
+#### ⭐ The sensitivity table, which is the part worth keeping
+
+Nine hand-built bodies — 6, 8 and 12 cells by 2, 3 and 4 units of kink — driven by a travelling
+wave through the real physics for a **2,000-tick lifetime**, and meaned. Meaned because a single
+undulator is strongly resonant: at one stroke and one beat the same body kinked three units
+travels three times what it does kinked four, since the shape it settles into under its own
+springs is not the shape it was built in. The first reading of the stroke was taken on one shape
+and had a factor of five of noise in it.
+
+| Lever | Walked from → to | Units per lifetime | Work per tick | Verdict |
+| --- | --- | --- | --- | --- |
+| **the stroke, unsensed** | 0.12 → 0.8 | **0.3 → 11.7** | ×24 | ⭐⭐ shipped |
+| **the stroke, driven** | 0.4 → 1.0 | **3.7 → 41.1** | ×2.8 | ⭐⭐ shipped |
+| `physics.drag_anisotropy` | 2.0 → 2.5 → 3.0 | 41.1 → 44.4 → 46.2 | ×1.0 | not taken |
+| `osc_freq` | 1 → 2.5 → 5 rad/s | 6.0 → 31.9 → 15.5 | ×12 | range already right |
+| segment length | 8 → 13.6 → 27.2 | ×1.7 → ×3.4 | ×2.9 → ×11.6 | reachable already |
+| `physics.drag` | 0.92 → 0.95 → 0.99 | ×2.7 → ×9 | ×1.7 | rejected |
+| spring stiffness | 10 → 40 → 144 | ×1.0 → ×0.65 | ×2.8 | already near optimum |
+
+**Distance goes as roughly the cube of the stroke and as the square root of everything else.**
+Nothing else is close, and that is the whole of the argument for `[behaviour]`.
+
+Three levers were rejected on their own terms rather than on their size. **`physics.drag` at
+0.99** buys a factor of nine and lets a cell coast a hundred units off one shove, and SPEC
+section 8 is explicit that momentum is not a strategy here — that is a different world, not a
+faster one. **`osc_freq`** peaks between two and three and a half radians a second and falls away
+either side, so `MAX_OSC_FREQ` of 5 already contains the optimum and widening it would only add
+draws that are worse; a gene drawn uniformly lands in the useful band about half the time.
+**Segment length** is already reachable — a gene may draw `rest_length` up to `MAX_REST_LENGTH`
+of 13.6 without anything changing — and raising the bound would eat the seam headroom SPEC
+section 8 warns about (64 cells at 13.6 is 870 units against a half-world of 1,024).
+
+⚠️ **And the cost is not the constraint, which was the thing most likely to make this pointless.**
+A body driven flat out does about 95 units of work a tick across six to twelve springs; at
+`movement_cost` of 1e-4 that is **0.0095 a tick**, against the **0.084** the same six myocytes
+pay simply to be alive. Swimming costs about a ninth of standing still. And the ratio moved the
+right way: distance per unit of work is *higher* at the shipped stroke than at the old one, so a
+body that swims well now pays less per unit travelled than one that twitched.
+
+#### ⚠️ `drag_anisotropy`'s NaN at three does not reproduce, and the ceiling is not where SPEC says
+
+Group F recorded `DRAG_ANISOTROPY_CEILING` as *"where the arithmetic stopped: at a
+`collision_stiffness` of 5,000 a pile of cells produced not-a-number within a few hundred
+ticks."* Re-measured, on a pile of 64 cells **bonded into chains so that every interior cell has
+an axis** — the plain pile-up has no springs at all, so no cell has an axis and the anisotropy is
+arithmetically absent from it:
+
+| `k` | 40 | 1,000 | 3,000 | 5,000 | 12,000 |
+| --- | --- | --- | --- | --- | --- |
+| 1.0 | settles | settles | settles | settles | **jitters** |
+| 2.0 | settles | settles | settles | settles | **jitters** |
+| 3.0 | settles | settles | settles | settles | **jitters** |
+
+Nothing produced a not-a-number at any of them, and the edge is the same at every anisotropy, so
+**it is the collision stiffness and not the anisotropy**. Higher anisotropy in fact settles the
+pile *harder*: at `k = 3` the crowd's peak motion is 22% below `k = 1`'s, which is what thicker
+water sideways ought to do. The ceiling was left at 3.0 anyway, because nothing wants to go above
+it — the whole range from 2 to 3 is worth 12% — but the *reason* written beside it is wrong and
+is now recorded as such.
+
+#### ⭐⭐ The 310,000-tick run, and why it is a negative result
+
+Eight founders, seed 42, `config/default.toml` as it now ships, against Group G's run of the
+same length.
+
+| | **Group G** | **Group H** |
+| --- | --- | --- |
+| Alive | 777 | **812** |
+| Field | 64,303 | **67,271** |
+| Biomass | 33,135 | **32,548** |
+| Mean cells | 6.66 | **6.28** |
+| Mean genes | 4.75 | **5.46** |
+| Mean depth (of 1,152) | 553 | **534** |
+| Living cells | 5,177 | **5,096** |
+| **Myocytes** | **2** | **1** |
+| **Devorocytes** | **6** | **0** |
+
+**The world survived and nothing degenerated** — no extinction, a peak population far below
+`max_organisms`, biomass inside 2% of every run since Phase 4, and mean depth in the lower half
+of the water rather than a mat against the surface. **And there is no myocyte signal, and no
+devorocyte signal.** One against two, and nought against six, are both single readings of single
+figures in a population of five thousand cells.
+
+⚠️ **The run is bit-identical to Group G's for its first 200,000 ticks** — 467, 1,760, 2,127,
+2,138 and 1,970 organisms at the five checkpoints, and every one of the five accounts equal to
+the last digit. A change that made every muscle in the world eleven times stronger left the world
+*exactly* where it was for two thirds of the run. That is not a change failing to matter. It is a
+change never being applied.
+
+#### ⭐⭐ What the diagnostic found: the muscle is disconnected, not weak
+
+Counted over 120,000 ticks of the shipped world, every spring with a myocyte on one end:
+
+| | Spring-ticks |
+| --- | --- |
+| A myocyte on a spring, and **no gene in its genome names its state** | **56,903** |
+| A gene answers it, but that gene's `osc_freq` and `osc_phase` are both still exactly nought | 874 |
+| **A muscle that moved a spring by any amount at all** | **0** |
+
+`behaviour.rs`'s `first_match` maps a cell's `state` to the first gene whose `trigger_state` is
+that state, and a myocyte with no such gene is skipped entirely. A state is one of **64**. A
+genome at that age holds about **three genes**, and the probe shows their trigger states are
+almost all `[0]`, `[0, 0]`, `[0, 0, 0]` — because zero is the founder's and `trigger_state` is
+not where mutation spends its time. Meanwhile development scatters daughters across the whole
+state space through `child_state`: the silent myocytes are sitting in states 1, 5, 8, 11, 20, 44,
+46, 51.
+
+So a myocyte is grown into a state nothing in its own genome is listening to. It is
+**anatomically present and behaviourally disconnected** — a muscle with no nerve to it — and it
+pays a myocyte's 0.014 a tick, three and a half times a photocyte's, to do absolutely nothing.
+The 1.5% that do find a gene meet a second gate immediately: that gene is a copy of the
+founder's, whose `osc_freq` and `osc_phase` are both zero, so `sin(0)` is zero and the rest
+length is multiplied by exactly one.
+
+**This is why three separate changes to the payoff have come back null.** Group F made
+locomotion arithmetically possible, Group G gave it somewhere to go, Group H made it eleven times
+faster, and all three act on a code path this world takes about once in every two hundred
+thousand spring-ticks. Each was necessary; none could have been sufficient; and the shipped
+stroke is correct and stays, because on the rare occasion the path *is* taken it now moves a body
+five body-lengths in a lifetime instead of half of one.
+
+#### What to try next, in the order of what it costs
+
+**The wiring, not the reward.** Three candidates, and the first is much the smallest:
+
+1. **A mutation operator that moves a gene's `trigger_state` onto a state some cell in the body
+   actually occupies.** `mutation.rs` mutates `trigger_state` as one field among fifteen and to a
+   uniformly random state; nothing biases it towards the states development produces. This is one
+   operator and it does not change what anything means.
+2. **A smaller state space.** 64 states against three genes is what makes the miss near-certain.
+   This is a one-line change with a very wide blast radius: every genetic distance, every species
+   boundary and every golden vector moves.
+3. **A myocyte with no gene answering it falls back to the gene that built it.** This is the most
+   direct and it changes what a *state* means, so it should be argued before it is written.
+
+The measurement to take first is the cheapest one: **what fraction of cells in the shipped world
+sit in a state their own genome names?** If that number is low for photocytes too, then it is not
+a fact about muscle at all — it is a fact about the genome, and it has been quietly shaping
+everything since Phase 3.
+
+#### What Group H decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **The two coefficients are one table, not two settings in two places** | `config.rs`, `RawBehaviour` | They multiply together into a single stroke, and a resting amplitude read from one configuration against a stroke read from another is a muscle nobody specified. `behaviour.rs` carries them as one `Drive`. |
+| **`fraction` rather than a fifth kind of refusal** | `config.rs` | ⚠️ `stroke`'s ceiling of one *is* the fraction bound, and that is not a coincidence: `base_rest × (1 − stroke)` reaches nought at exactly one. A `stable`-style gate would have said the arithmetic stops working, and it does not — the arithmetic works perfectly and the model stops meaning what it says. |
+| **The measurement is meaned over nine shapes** | `physics.rs`, `swims_and_works` | A hand-built undulator is strongly resonant and a single shape gave a factor of five of noise. Three lengths by three kinks is enough for the mean to be about the stroke. |
+| **`drag_anisotropy` stays at 2.0** | not changed | It is worth 12% across its whole remaining range and 2.0 is where slender-body theory puts a real slender body. Buying 8% by leaving the physical justification behind is a bad trade. |
+| **`physics.drag` was rejected despite being the second-largest lever** | not changed | ×9 at 0.99, and a cell then coasts a hundred units off one shove. SPEC section 8: *momentum is not a strategy here.* That is a different world, not a faster one. |
+| **`a_body_that_senses` takes its resting amplitude as a parameter** | `behaviour.rs` | ⚠️ At the shipped 0.8 there are two tenths of room below the clamp, so a body four units from a neighbour and one eight units away would read *the same number* and the tests would be measuring the clamp. Nought for the tests about what a sensocyte reports, a half for the test about the sign. Both got stronger. |
+| **The golden vector did not move, and that is reported rather than assumed** | `run.rs` | It runs 4,000 ticks, and in 4,000 ticks no muscle anywhere fires. The one change in this project so far that did not move it — which, read against the diagnostic above, was the first sign of what was wrong. |
+
+#### ⚠️ Three tests moved, and none of them was weakened
+
+- **`a_myocyte_oscillates_its_springs_and_pays_for_the_work`** — the swing re-recorded from
+  **7.04–8.96 to 1.6–14.4** on a spring asked to be eight units long, and the cost from
+  **0.00186 to 0.0827** over the same 130 ticks. Both previous figures are kept beside the new
+  ones. The cost is 44 times higher because work is force through distance and both halves scale
+  with the swing; it is 4.5% of a myocyte's own upkeep, which is the number that says the change
+  is affordable.
+- **`a_travelling_wave_carries_a_body_through_the_water`** — the unsensed row re-recorded from
+  **0.154 to 2.3** units per 1,000 ticks. The driven row is unchanged, because it passes its
+  stroke in explicitly.
+- **`a_myocyte_that_does_nothing_pays_nothing`** — the held rest length is now worked out from
+  the settings rather than written down. A number there would have been a second, silent copy of
+  the shipped stroke that a retune leaves behind.
+- **`a_sensocyte_reports_a_gradient_towards_its_target`** and
+  **`both_attraction_and_avoidance_are_reachable_for_a_sensocyte`** — both now build their scenes
+  at a stated resting amplitude instead of the shipped one, for the reason in the table above.
+  The first reads the signal directly rather than through an offset, and the second sits exactly
+  half way up the clamp so the two directions have identical room.
 
 ### Group E — looking at one organism
 

@@ -89,6 +89,14 @@ pub struct RawPhysics {
     pub spring_damping: f64,
 }
 
+/// The `[behaviour]` table as written: how hard SPEC section 9's controller drives a muscle.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawBehaviour {
+    pub resting_amplitude: f64,
+    pub stroke: f64,
+}
+
 /// The `[metabolism]` table as written: what living costs, and what reproducing costs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -145,6 +153,7 @@ pub struct RawConfig {
     pub world: RawWorld,
     pub light: RawLight,
     pub physics: RawPhysics,
+    pub behaviour: RawBehaviour,
     pub metabolism: RawMetabolism,
     pub mutation: RawMutation,
     pub limits: RawLimits,
@@ -186,6 +195,10 @@ pub fn spec_defaults() -> RawConfig {
             drag_anisotropy: 2.0,
             collision_stiffness: 40.0,
             spring_damping: 0.35,
+        },
+        behaviour: RawBehaviour {
+            resting_amplitude: 0.8,
+            stroke: 1.0,
         },
         metabolism: RawMetabolism {
             upkeep_scale: 1.0,
@@ -827,6 +840,53 @@ pub struct PhysicsConfig {
     pub spring_damping: f32,
 }
 
+/// The checked `[behaviour]` table: how hard SPEC section 9's controller drives a muscle.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BehaviourConfig {
+    /// How hard a myocyte works with nothing telling it otherwise: SPEC section 9's
+    /// `amplitude = clamp(resting_amplitude + sensor_gain × signal, 0, 1)`.
+    ///
+    /// ⭐ **This is the number a lineage's *first* myocyte is worth**, which is the one that
+    /// has to pay before any of the others can. A muscle with no sensocyte adhered to it, or
+    /// one whose sensors read nothing, still contracts - so locomotion is reachable by mutation
+    /// before sensing is, rather than the two having to appear together. SPEC section 9 shipped
+    /// this at **0.3** until Phase 7's Group H, and at 0.3 an unsensed eight-celled undulator
+    /// covered **0.3 world units in a two-thousand-tick lifetime**: a twentieth of one of its
+    /// own cells, which is nothing for selection to see.
+    ///
+    /// What it costs to raise it is the room a sensor has to work in *upwards*: at 0.8 a
+    /// sensocyte can add 0.2 and take away 0.8. That asymmetry is deliberate. `sensor_gain` is
+    /// signed, so inhibition was always half of what a sensor is for, and a body with one side
+    /// inhibited and the other not is a **turn** - which is the thing a swimmer needs and a
+    /// pulse is not.
+    pub resting_amplitude: f32,
+
+    /// How much of its rest length a myocyte at full amplitude works through, either way: SPEC
+    /// section 9's `rest_len = base_rest × (1 + amplitude × stroke × sin(...))`.
+    ///
+    /// ⭐⭐ **Phase 7's Group H, and the whole of it.** Group F made swimming possible and
+    /// Group G gave a body somewhere to swim *to*; neither made swimming worth anything,
+    /// because at the **0.4** SPEC was first written with a perfect undulator driven flat out
+    /// covered about four world units in a lifetime while the field it was chasing moved 1.2.
+    /// The margin existed and nothing found it in 310,000 ticks.
+    ///
+    /// The measurement that decided this is in `docs/PHASE7.md`, and its shape is the reason
+    /// this is the lever rather than the water: **speed goes as roughly the cube of the
+    /// stroke** and only as the *square root* of anything else. Doubling the stroke from 0.4
+    /// to 0.8 multiplies the distance a body covers by eleven while multiplying the work it
+    /// does by four; sharpening `physics.drag_anisotropy` from 2 to 3 multiplies it by 1.1.
+    ///
+    /// **One is the end of it, and the reason is arithmetic rather than taste.** The amplitude
+    /// above is clamped into `0..=1`, so the shortest a spring ever asks to be is
+    /// `base_rest × (1 − stroke)` - and past one that is *negative*, which is a spring that
+    /// pulls at every phase of its cycle instead of oscillating about anything. It is not a
+    /// slower failure than it sounds: measured, a body at 1.5 travels twenty-four times
+    /// further than one at 1.0, by hauling itself through its own cells. So the bound a
+    /// fraction gets is the bound this needs, and the two numbers being the same is not a
+    /// coincidence.
+    pub stroke: f32,
+}
+
 /// The checked `[metabolism]` table: what living costs, and what reproducing costs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MetabolismConfig {
@@ -916,6 +976,7 @@ pub struct Config {
     pub world: WorldConfig,
     pub light: LightConfig,
     pub physics: PhysicsConfig,
+    pub behaviour: BehaviourConfig,
     pub metabolism: MetabolismConfig,
     pub mutation: MutationConfig,
     pub limits: LimitsConfig,
@@ -1012,6 +1073,25 @@ impl RawConfig {
                     "physics.spring_damping",
                     self.physics.spring_damping,
                 )?,
+            },
+            behaviour: BehaviourConfig {
+                // SPEC section 9 clamps the amplitude into `0..=1` on the line after this
+                // one is read, so a resting amplitude outside that range is one the clamp
+                // silently undoes. Nought is a muscle that does nothing until a sensor tells
+                // it to, which is a coherent world and the control for whether the resting
+                // stroke is doing any work.
+                resting_amplitude: fraction(
+                    "behaviour.resting_amplitude",
+                    self.behaviour.resting_amplitude,
+                )?,
+                // ⚠️ The bound here reads like tidiness and is not. A spring's rest length is
+                // `base_rest × (1 + amplitude × stroke × sin)` and the amplitude is clamped
+                // into `0..=1`, so one is exactly where the shortest the spring ever asks to
+                // be reaches nought. Past it the rest length is negative: the spring pulls at
+                // every phase of its cycle rather than oscillating, and a body hauls itself
+                // through its own cells - measured at twenty-four times the distance, which
+                // is how a wrong model looks like a working one. See `BehaviourConfig`.
+                stroke: fraction("behaviour.stroke", self.behaviour.stroke)?,
             },
             metabolism: MetabolismConfig {
                 // The document calls it a "temperature": scale it to zero and nothing
@@ -1126,6 +1206,11 @@ mod tests {
                 raw.physics.collision_stiffness,
             ),
             ("physics.spring_damping", raw.physics.spring_damping),
+            (
+                "behaviour.resting_amplitude",
+                raw.behaviour.resting_amplitude,
+            ),
+            ("behaviour.stroke", raw.behaviour.stroke),
             ("metabolism.upkeep_scale", raw.metabolism.upkeep_scale),
             ("metabolism.gene_cost", raw.metabolism.gene_cost),
             ("metabolism.movement_cost", raw.metabolism.movement_cost),
@@ -1169,8 +1254,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            26,
-            "SPEC section 3 has twenty-six decimal settings; this list has {}, so one has \
+            28,
+            "SPEC section 3 has twenty-eight decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );
@@ -1463,6 +1548,67 @@ mod tests {
                 complaint.starts_with("physics.drag_anisotropy: "),
                 "{outside} was refused and the complaint was about something else: {complaint}"
             );
+        }
+    }
+
+    /// ⭐⭐ **Phase 7, Group H.** Both ends of `behaviour.stroke` are reachable, and the upper
+    /// one is not the tidy bound it looks like.
+    ///
+    /// SPEC section 9 builds a myocyte's spring as
+    /// `rest_len = base_rest × (1 + amplitude × stroke × sin(...))`, with `amplitude` clamped
+    /// into `0..=1` immediately above it. So the smallest a spring's rest length ever gets is
+    /// `base_rest × (1 − stroke)`, and **one is exactly the point at which that reaches zero**.
+    /// Past it a rest length is *negative*: the spring pulls its two cells together at every
+    /// phase of the cycle rather than oscillating about anything, which is no longer a rest
+    /// length and no longer a stroke. The arithmetic carries on perfectly - measured, a body at
+    /// `stroke = 1.5` travels twenty-four times further than one at 1.0 - and what it is doing
+    /// is hauling itself through its own cells, which is why the number this is bounded at
+    /// happens to be the same one a fraction is bounded at. That is not a coincidence and it is
+    /// not tidiness.
+    ///
+    /// `behaviour.resting_amplitude` is bounded for the plainer reason: SPEC section 9 clamps
+    /// the amplitude into `0..=1`, so a resting amplitude outside that is one the clamp on the
+    /// next line silently undoes.
+    #[test]
+    fn the_stroke_cannot_take_a_rest_length_below_nothing() {
+        for (field, set) in [
+            (
+                "behaviour.stroke",
+                (|raw: &mut RawConfig, value: f64| {
+                    raw.behaviour.stroke = value;
+                }) as fn(&mut RawConfig, f64),
+            ),
+            (
+                "behaviour.resting_amplitude",
+                |raw: &mut RawConfig, value: f64| {
+                    raw.behaviour.resting_amplitude = value;
+                },
+            ),
+        ] {
+            for reachable in [0.0, 0.5, 1.0] {
+                let mut raw = spec_defaults();
+                set(&mut raw, reachable);
+                assert!(
+                    raw.validate().is_ok(),
+                    "{field} = {reachable} is inside the range SPEC section 9 describes and \
+                     the gate refused it"
+                );
+            }
+
+            for outside in [-0.01, 1.01] {
+                let mut raw = spec_defaults();
+                set(&mut raw, outside);
+                let complaint = raw
+                    .validate()
+                    .expect_err("a stroke outside 0..=1 must stop the run")
+                    .to_string();
+
+                assert!(
+                    complaint.starts_with(&format!("{field}: ")),
+                    "{field} = {outside} was refused and the complaint was about something \
+                     else: {complaint}"
+                );
+            }
         }
     }
 

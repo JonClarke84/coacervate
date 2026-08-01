@@ -88,6 +88,13 @@ drag_anisotropy = 2.0    # power `drag` is raised to across a cell's body axis �
 collision_stiffness = 40.0
 spring_damping = 0.35
 
+[behaviour]
+resting_amplitude = 0.8  # how hard a myocyte contracts with nothing telling it otherwise —
+                         # measured, see section 9
+stroke = 1.0             # how much of its rest length a myocyte at full amplitude works
+                         # through, either way — measured, see section 9. Bounded at 1.0,
+                         # where a spring's shortest rest length reaches nought
+
 [metabolism]
 upkeep_scale = 1.0       # global multiplier on all cell upkeep ("temperature")
 gene_cost = 0.0001       # per gene, per tick — see section 7
@@ -944,9 +951,13 @@ Each `Myocyte` oscillates its springs' rest length:
 
 ```
 signal    = mean of connected Sensocyte outputs, or 0 if none
-amplitude = clamp(0.3 + sensor_gain × signal, 0.0, 1.0)
-rest_len  = base_rest × (1 + amplitude × 0.4 × sin(t × osc_freq + osc_phase))
+amplitude = clamp(resting_amplitude + sensor_gain × signal, 0.0, 1.0)
+rest_len  = base_rest × (1 + amplitude × stroke × sin(t × osc_freq + osc_phase))
 ```
+
+⭐⭐ **The two coefficients were written here as `0.3` and `0.4` and are now section 3's
+`[behaviour]` table, shipping at 0.8 and 1.0.** The measurement that moved them, and the
+measurement that says it was not enough, are immediately below.
 
 Each `Sensocyte` outputs a normalised gradient magnitude toward its `sensor_target`,
 sampled from the resource grid or from nearby foreign biomass.
@@ -956,6 +967,94 @@ by mutation, and phototaxis, detritus-seeking and predator-avoidance are all *di
 rather than coded. Undulating locomotion falls out of neighbouring myocytes evolving
 compatible `osc_phase` values — and, section 8 adds, out of the body being **bent**, which is
 the part that is not obvious.
+
+### ⭐⭐ The stroke is a setting, and it is the only lever that makes swimming worth doing
+
+Section 8 records that until Phase 7 **nothing in this world could move at all** — a free
+body's total velocity was a conserved quantity of the integrator — and that anisotropic water
+fixed it. Section 4 records that the light then began to drift, so that there was somewhere
+better to be. Neither produced a muscle. The reading at the end of both was that the payoff was
+too thin to climb: **a perfect undulator driven flat out for a whole 2,000-tick lifetime covered
+about four world units**, against a body eight units long, a lattice of light 128 units across,
+and a field that slid 1.2 in the same time.
+
+So every lever was measured against the same nine hand-built bodies — three lengths by three
+kinks, meaned, because a single undulator is strongly resonant and the first reading taken on
+one shape had a factor of five of noise in it. World units covered per 2,000-tick lifetime:
+
+| Lever | Walked from → to | Distance | Work per tick |
+| --- | --- | --- | --- |
+| **the stroke, unsensed** (`resting_amplitude × stroke`) | 0.12 → 0.8 | **0.3 → 11.7** | ×24 |
+| **the stroke, sensor-driven** (`stroke`) | 0.4 → 1.0 | **3.7 → 41.1** | ×2.8 |
+| `physics.drag_anisotropy` | 2.0 → 3.0 | 41.1 → 46.2 | ×1.0 |
+| `osc_freq` | 1 → 5 rad/s | 6.0 → 15.5, peaking near 3 | ×12 |
+| segment length (`MAX_REST_LENGTH`) | 8 → 13.6 | ×1.7 | ×2.9 |
+| `physics.drag` | 0.92 → 0.99 | ×9 | ×1.7 |
+| spring stiffness | 10 → 144 | ×0.65 | ×2.8 |
+
+**Distance goes as roughly the cube of the stroke and as the square root of everything else.**
+That is what makes it the lever rather than one of seven, and it is why `[behaviour]` exists.
+
+Three of the others were rejected on their own terms rather than on their size. **`physics.drag`
+at 0.99 lets a cell coast a hundred units off one shove**, and section 8 is explicit that
+momentum is not a strategy here — that is a different world, not a faster one. **`osc_freq`'s
+range already contains its own optimum**: a body is fastest between two and three and a half
+radians a second and falls away either side, so `MAX_OSC_FREQ` of 5 covers it and widening the
+range would only add draws that are worse. And **`drag_anisotropy` is nearly spent**: 2.0 is
+where slender-body theory puts a real slender body, and the whole of the range above it is worth
+12%.
+
+⚠️ **`stroke` stops at one, and that is arithmetic rather than tidiness.** The amplitude above is
+clamped into `0..=1`, so the shortest a spring ever asks to be is `base_rest × (1 − stroke)` —
+and one is exactly where that reaches nought. Past it the rest length is *negative*: the spring
+pulls at every phase of its cycle instead of oscillating about anything, and the body hauls
+itself through its own cells. It does not fail loudly. Measured, a body at `stroke = 1.5`
+travels **twenty-four times further** than one at 1.0, which is what a broken model looks like
+from the outside.
+
+`resting_amplitude` is bounded for the plainer reason: the clamp on the line above would
+silently undo anything outside `0..=1`. Raising it from 0.3 to 0.8 leaves a sensor two tenths of
+room upwards and eight tenths downwards, and that asymmetry is deliberate — `sensor_gain` is
+signed, so inhibition was always half of what a sensor is for, and a body with one side
+inhibited and the other not is a **turn**, which is the thing a swimmer needs and a pulse is not.
+
+### ⚠️ And it did not produce myocytes, because the controller above almost never runs
+
+The honest result, and it is worth more than the table. A 310,000-tick run at the shipped
+settings ended with **one myocyte and no devorocytes**, against the previous run's two and six.
+No signal, and the world was otherwise unchanged: 812 organisms against 777, 6.28 cells against
+6.66, mean depth 534 of 1,152.
+
+What the diagnostic found is that the stroke was never the binding constraint, and neither was
+the water or the field. **Counted over 120,000 ticks of the shipped world, every spring in it
+with a myocyte on one end:**
+
+| | Spring-ticks |
+| --- | --- |
+| A myocyte on a spring, and **no gene in its genome names its state** | **56,903** |
+| A gene answers, but its `osc_freq` and `osc_phase` are both still exactly nought | 874 |
+| **A muscle that actually moved a spring** | **0** |
+
+A cell's state is one of **64**; a genome at that age holds about **three genes**, and nearly
+every one of them triggers on state 0, because that is the founder's and `trigger_state` is not
+where mutation spends its time. Meanwhile development scatters daughters across the whole state
+space through `child_state`. So a myocyte is grown into a state nothing in its own genome is
+listening to, and it is **anatomically present and behaviourally disconnected** — a muscle with
+no nerve to it. The 1.5% that do find a gene then meet the second gate: that gene is a copy of
+the founder's, whose `osc_freq` and `osc_phase` are both zero, so `sin(0)` is zero and the rest
+length is multiplied by exactly one.
+
+**This is why three separate changes to the payoff have all come back null.** Group F made
+locomotion possible, Group G gave it somewhere to go, and Group H made it eleven times faster,
+and all three acted on a code path the world takes about once in every two hundred thousand
+spring-ticks. Every one of them was necessary and none of them could have been sufficient.
+
+Where to look next is therefore **the wiring rather than the reward**, and the measurement above
+names three candidates in the order of how much they cost: a `trigger_state` mutation operator
+that moves a gene onto a state some cell actually occupies; a much smaller state space, since 64
+against three genes is what makes the miss near-certain; or a rule that a myocyte with no gene
+answering it falls back to the gene that built it. The first is the smallest and the third
+changes what a state *means*, so it should be argued before it is written.
 
 ### ⭐ What a light sensor is normalised against — measured in Phase 7
 

@@ -388,10 +388,10 @@ struct Condition {
 /// not a settings change, it is the weather turning, and SPEC section 11 lists *"environmental
 /// changes made by the user"* among the things worth recording beside a mass extinction.
 ///
-/// The four tables here are exactly the ones [`World::retune`] will accept a change to, and
-/// exactly `settings.rs`'s twenty-three sliders less `run.max_ticks_per_second` — which is not a
+/// The five tables here are exactly the ones [`World::retune`] will accept a change to, and
+/// exactly `settings.rs`'s twenty-five sliders less `run.max_ticks_per_second` — which is not a
 /// fact about the world at all, but about how fast a person is watching it.
-const CONDITIONS: [Condition; 22] = [
+const CONDITIONS: [Condition; 24] = [
     Condition {
         table: "light",
         label: "influx",
@@ -451,6 +451,18 @@ const CONDITIONS: [Condition; 22] = [
         label: "spring_damping",
         phrase: "how quickly an adhesion stops springing",
         read: |config| config.physics.spring_damping,
+    },
+    Condition {
+        table: "behaviour",
+        label: "resting_amplitude",
+        phrase: "how hard a muscle works with nothing telling it otherwise",
+        read: |config| config.behaviour.resting_amplitude,
+    },
+    Condition {
+        table: "behaviour",
+        label: "stroke",
+        phrase: "how far a muscle works the adhesion it holds",
+        read: |config| config.behaviour.stroke,
     },
     Condition {
         table: "metabolism",

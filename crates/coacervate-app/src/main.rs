@@ -660,6 +660,9 @@ mod tests {
         assert_eq!(raw.physics.collision_stiffness, 40.0);
         assert_eq!(raw.physics.spring_damping, 0.35);
 
+        assert_eq!(raw.behaviour.resting_amplitude, 0.8);
+        assert_eq!(raw.behaviour.stroke, 1.0);
+
         assert_eq!(raw.metabolism.upkeep_scale, 1.0);
         assert_eq!(raw.metabolism.gene_cost, 0.0001);
         assert_eq!(raw.metabolism.movement_cost, 0.0001);
@@ -817,6 +820,7 @@ mod tests {
                 "[world]",
                 "[light]",
                 "[physics]",
+                "[behaviour]",
                 "[metabolism]",
                 "[mutation]",
                 "[limits]",
