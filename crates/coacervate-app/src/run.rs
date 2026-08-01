@@ -1252,6 +1252,32 @@ mod tests {
     /// had a few hundred point mutations between them, so almost nothing has yet been addressed
     /// differently. What it does over three hundred thousand ticks is in `docs/PHASE7.md`.
     ///
+    /// # ⭐⭐ Group K moved exactly two of the eight numbers, by exactly the same amount
+    ///
+    /// A myocyte's upkeep went from 0.014 to 0.005 — `cell.rs`'s six-run sweep. **What it moved
+    /// here is 1.458 units, out of `dissipated` and back into `biomass`, and nothing else at
+    /// all.** The tick count, the 584 born, the 542 alive, the field's total and the light that
+    /// fell are unchanged to the last bit.
+    ///
+    /// **What it was through Group J:**
+    ///
+    /// ```text
+    /// 4,000 ticks, 584 born, 542 alive
+    /// field       0x40c5_12d3_fabb_0000   10,789.656
+    /// biomass     0x40be_a7ab_fc8d_20e9    7,847.672
+    /// detritus    0x4070_5251_a3c1_ce4f      261.145
+    /// dissipated  0x40bf_e53a_ca68_c230    8,165.230
+    /// influx      0x40da_6dec_f5a7_2000   27,063.702
+    /// ```
+    ///
+    /// That shape is the whole content of a pure upkeep change and is worth reading rather than
+    /// merely accepting. Upkeep is the one movement in SPEC section 5 that goes `biomass →
+    /// dissipated` and touches nothing else, so a world charged less for the same cells keeps
+    /// the difference and every *decision* in it — who ate, who was born, who died, in what
+    /// order — comes out the same. At 0.009 a tick saved per myocyte, 1.458 units is about **162
+    /// myocyte-ticks** in four thousand ticks of a 542-body world, which is the cheapest
+    /// available statement of how rare a muscle still is.
+    ///
     /// # Why the field's total is the sensitive one
     ///
     /// It is a 64-bit sum over every tile in the world, and every body in the world has been
@@ -1305,12 +1331,12 @@ mod tests {
                 // The field, then SPEC section 5's four accounts, as bit patterns. The
                 // quantities they stand for are written beside them so that a failure can be
                 // read as a change in the world rather than only as a change in a number:
-                // 10,789.656 in the water, 7,847.672 held by the living, 261.145 lying in the
-                // drift, 8,165.230 spent for good, and 27,063.702 fallen as light.
+                // 10,789.656 in the water, 7,849.130 held by the living, 261.145 lying in the
+                // drift, 8,163.772 spent for good, and 27,063.702 fallen as light.
                 0x40c5_12d3_fabb_0000,
-                0x40be_a7ab_fc8d_20e9,
+                0x40be_a921_3c0b_88e9,
                 0x4070_5251_a3c1_ce4f,
-                0x40bf_e53a_ca68_c230,
+                0x40bf_e3c5_8aea_5a30,
                 0x40da_6dec_f5a7_2000,
             ],
             "this run no longer produces what it produced at the end of Phase 4. Something \

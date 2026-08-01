@@ -2529,13 +2529,23 @@ mod tests {
         );
         // And the absolute price, against the only thing it can be judged against: what the
         // same cells cost simply to be alive. `metabolism.movement_cost` is 1e-4, a myocyte's
-        // upkeep is 0.014 a tick (SPEC section 6), and the smallest body meaned over above has
-        // six of them - so the muscles of the whole body must not cost a quarter of what
-        // keeping the body alive costs, or a lineage that swims is a lineage that starves.
-        let upkeep = 6.0 * 0.014;
+        // upkeep is 0.005 a tick (SPEC section 6), and the smallest body meaned over above has
+        // six of them - so the muscles of the whole body must not cost half of what keeping the
+        // body alive costs, or a lineage that swims is a lineage that starves.
+        //
+        // ⚠️ **Both numbers on this line were re-recorded when a myocyte's upkeep moved from
+        // 0.014 to 0.005** - `cell.rs`'s six-run sweep - and the fraction went from a quarter
+        // to a half. **That is the change rather than a concession to it.** Group H measured
+        // swimming flat out at about a ninth of what the same muscles cost to stand still,
+        // which is a world where a muscle is priced almost entirely by being owned and hardly
+        // at all by being worked; SPEC section 3 records that the standing cost was set when
+        // `movement_cost` was 0.15 and using a muscle was arithmetically impossible, and was
+        // never revisited when that moved by a thousandfold. Working a muscle now costs about
+        // a third of owning it, which is the split the two settings were always meant to have.
+        let upkeep = 6.0 * 0.005;
         let paid = spec_defaults().metabolism.movement_cost * driven_work;
         assert!(
-            paid < upkeep * 0.25 && was_unsensed_work < unsensed_work,
+            paid < upkeep * 0.5 && was_unsensed_work < unsensed_work,
             "a body driven flat out pays {paid} a tick for the work its muscles do, against \
              the {upkeep} the smallest of these bodies pays simply to be alive. Group H's \
              whole risk was moving the problem rather than solving it"

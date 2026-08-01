@@ -2841,9 +2841,15 @@ mod tests {
         // going from 0.12 of the rest length to 0.8: work is force through distance and both
         // halves of it scale with the swing, so a stroke 6.7 times larger costs 44 times as
         // much. **That is the cost side of Group H and it is affordable**, which is the whole
-        // question the number is here to answer: 6.4e-4 a tick against a myocyte's own upkeep
-        // of 0.014 is **four and a half per cent** of what the cell costs to keep, for the
-        // hardest-worked spring in the scene, with nothing allowed to move.
+        // question the number is here to answer: 6.4e-4 a tick against a myocyte's own upkeep,
+        // for the hardest-worked spring in the scene, with nothing allowed to move.
+        //
+        // ⚠️ **That ratio moved without this figure moving, and the reason is worth keeping.**
+        // Group H read it as four and a half per cent of a myocyte's upkeep; the upkeep has
+        // since gone from 0.014 to 0.005 - `cell.rs`'s six-run sweep - so the same 6.4e-4 is
+        // now **thirteen per cent** of it. Nothing about what a muscle is charged for its work
+        // changed. What changed is that a muscle is no longer priced mostly by being owned,
+        // which is what the sweep was for.
         assert!(
             (spent - 0.0827).abs() < 1e-4,
             "a myocyte spent {spent} over a hundred and thirty ticks, against the 0.0827 \

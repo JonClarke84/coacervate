@@ -99,7 +99,8 @@ use crate::physics::DT;
 ///
 /// Eight, which is what a photocyte at SPEC section 6's `0.004` a tick spends over **two
 /// thousand ticks**. That is the shipped world's default lifespan for the plainest body there
-/// is: a myocyte body, at 0.014, gets 571; a sclerocyte body, at 0.002, gets four thousand.
+/// is: a myocyte body, at 0.005, gets 1,600; a devorocyte body, at 0.009, gets 889; a
+/// sclerocyte body, at 0.002, gets four thousand.
 ///
 /// Two thousand ticks is a little over half a simulated minute, and - the figure that
 /// actually decided it - somewhere between ten and twenty times how long a photosynthetic
@@ -863,13 +864,19 @@ mod tests {
         scene.run();
 
         // SPEC section 6's table, multiplied out here from the specification rather than
-        // asked of the code: two sclerocytes at 0.002 and two myocytes at 0.014, both at a
+        // asked of the code: two sclerocytes at 0.002 and two myocytes at 0.005, both at a
         // temperature of 2.5. The literals are widened from 32 bits first, because that is
-        // where a cell's upkeep is stored and `0.014` is not a number either size can hold
+        // where a cell's upkeep is stored and `0.005` is not a number either size can hold
         // exactly - so this is the specification's figure at the width the simulation keeps
         // it, rather than a fifteen-digit number the world could never produce.
+        //
+        // ⚠️ **The muscle figure was re-recorded when a myocyte's upkeep moved from 0.014 to
+        // 0.005** - the six-run sweep on `cell.rs`'s [`crate::cell::CellKind::upkeep`]. What
+        // moved with it is the ratio asserted below: a myocyte was seven times a sclerocyte
+        // and is now two and a half times one, and it is no longer the most expensive tissue
+        // in the world - a devorocyte at 0.009 is.
         let hard = 2.0 * f64::from(0.002f32) * 2.5;
-        let soft = 2.0 * f64::from(0.014f32) * 2.5;
+        let soft = 2.0 * f64::from(0.005f32) * 2.5;
 
         let armoured_paid = 20.0 - scene.energy(armoured).expect("nothing has died here");
         let muscular_paid = 20.0 - scene.energy(muscular).expect("nothing has died here");
@@ -885,7 +892,7 @@ mod tests {
              section 6's table asks for at a temperature of 2.5"
         );
         assert!(
-            muscular_paid > armoured_paid * 6.0,
+            muscular_paid > armoured_paid * 2.0,
             "muscle costs {muscular_paid} a tick and armour costs {armoured_paid}, so \
              specialising is not the trade SPEC section 6's table describes"
         );
@@ -1097,8 +1104,16 @@ mod tests {
     ///
     /// The claim is not "organisms die at two thousand ticks", which any hard-coded number
     /// would satisfy. It is that the maximum is **derived from the body**, so the two bodies
-    /// are SPEC section 6's cheapest tissue and its most expensive and the sclerocyte has to
-    /// outlive the myocyte by exactly the ratio of their upkeeps - seven to one.
+    /// are SPEC section 6's cheapest tissue and a piece of its dearest, and the sclerocyte has
+    /// to outlive the myocyte by exactly the ratio of their upkeeps - **two and a half to
+    /// one**.
+    ///
+    /// ⚠️ **Re-recorded when a myocyte's upkeep moved from 0.014 to 0.005**, which is the
+    /// six-run sweep on [`crate::cell::CellKind::upkeep`]. It read **571 ticks and seven to
+    /// one** before. That the muscular body's allowance nearly trebled is not incidental to
+    /// the change - it is most of what the change *did*, because the sweep found that what a
+    /// cheaper muscle buys is how long a body carrying one lasts rather than how often one is
+    /// born.
     ///
     /// Both are seeded holding far more than they can spend in their lifetimes, so that what
     /// kills them is unambiguously age. A body that ran out of energy on the way would pass a
@@ -1126,12 +1141,12 @@ mod tests {
             }
         }
 
-        // `LIFETIME_UPKEEP` of 8 against SPEC section 6's 0.002 and 0.014, at the shipped
+        // `LIFETIME_UPKEEP` of 8 against SPEC section 6's 0.002 and 0.005, at the shipped
         // temperature of one. Written out from the specification's numbers rather than asked
         // of the code, so the two can disagree.
         assert_eq!(
-            muscular_lived, 571,
-            "a body of one myocyte lived {muscular_lived} ticks, against the 8 ÷ 0.014 its \
+            muscular_lived, 1_600,
+            "a body of one myocyte lived {muscular_lived} ticks, against the 8 ÷ 0.005 its \
              upkeep allows it"
         );
         assert_eq!(
@@ -1142,7 +1157,7 @@ mod tests {
 
         // Neither of them starved on the way, which is what makes this a test about age.
         assert!(
-            60.0 - f64::from(0.014f32) * 571.0 > 50.0,
+            60.0 - f64::from(0.005f32) * 1_600.0 > 50.0,
             "the myocyte body was seeded with too little to outlive its own upkeep, so this \
              test cannot tell old age from starvation"
         );

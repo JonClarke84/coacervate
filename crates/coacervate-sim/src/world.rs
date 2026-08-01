@@ -1158,7 +1158,7 @@ mod tests {
             world.tick();
         }
 
-        // Three bodies of muscle, which `metabolism.rs` allows 571 ticks, and one of armour,
+        // Three bodies of muscle, which `metabolism.rs` allows 1,600 ticks, and one of armour,
         // which it allows four thousand. All four are seeded on the same tick and holding far
         // more than they can spend, so what takes the three is age and they go together.
         for (along, kind) in [
@@ -1199,14 +1199,21 @@ mod tests {
         let dissipated_before = world.ledger().dissipated();
 
         // Long enough for the muscle to reach its limit and not for the armour to reach its.
-        for _ in 0..600 {
+        //
+        // ⚠️ **Re-recorded from 600 ticks when a myocyte's upkeep moved from 0.014 to 0.005**
+        // - see `cell.rs`. The allowance is `LIFETIME_UPKEEP ÷ upkeep`, so a body of muscle
+        // went from 571 ticks to 1,600 and six hundred ticks stopped reaching it. Nothing
+        // about the claim changed: this is still the first moment after the muscle's limit
+        // and well before the armour's four thousand, and the twelve units each body was
+        // seeded with still outlast the eight its own upkeep spends getting there.
+        for _ in 0..1_700 {
             world.tick();
         }
 
         assert_eq!(
             world.organisms().iter().flatten().count(),
             1,
-            "the three bodies of muscle were allowed 571 ticks apiece and the world still \
+            "the three bodies of muscle were allowed 1,600 ticks apiece and the world still \
              holds {} organisms",
             world.organisms().iter().flatten().count()
         );
@@ -1219,7 +1226,7 @@ mod tests {
         // living for good, and what the dead were still holding is lying in the water.
         assert!(
             world.ledger().dissipated() > dissipated_before,
-            "nine hundred ticks of four bodies paying upkeep dissipated nothing at all, so \
+            "two thousand ticks of four bodies paying upkeep dissipated nothing at all, so \
              the tick is not charging anybody"
         );
         assert!(
@@ -1482,7 +1489,7 @@ mod tests {
         }
 
         // A chain of photocytes, which earns its keep, and one myocyte holding nothing at all.
-        // A myocyte harvests nothing and costs 0.014 a tick, so it cannot survive the tick it
+        // A myocyte harvests nothing and costs 0.005 a tick, so it cannot survive the tick it
         // is seeded on; a photocyte in this light earns several times its upkeep.
         world
             .seed(a_chain(3, &limits), Vec2::new(100.0, 100.0), 3.0)

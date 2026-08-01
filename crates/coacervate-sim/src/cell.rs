@@ -21,8 +21,9 @@
 //! whom. The upkeep is not needed by anything yet, and it is here anyway, for one reason:
 //! SPEC's table gives both numbers in the same row, and the two are what make a kind a
 //! trade-off rather than a label. A sclerocyte is the widest cell in the world and the
-//! cheapest to run; a myocyte is small and costs seven times as much. Split those two
-//! numbers across two files and the next person to tune one has no way to see the other.
+//! cheapest to run; a devorocyte is the narrowest but one and costs four and a half times as
+//! much. Split those two numbers across two files and the next person to tune one has no way
+//! to see the other.
 //!
 //! # The largest radius is a load-bearing number
 //!
@@ -393,17 +394,50 @@ impl CellKind {
     /// What this kind of cell costs its organism per tick simply for existing, from SPEC
     /// section 6's table.
     ///
-    /// Nothing reads it yet - metabolism is Phase 4, where it is multiplied by the
-    /// configuration's `upkeep_scale`. It is written here rather than there because it is
-    /// half of what makes a kind a *choice*: a sensocyte is the smallest cell in the world
-    /// and costs three times what a sclerocyte does, and that trade is invisible if the two
-    /// numbers live in different files.
+    /// It is multiplied by the configuration's `upkeep_scale` in `metabolism.rs`. It is
+    /// written here rather than there because it is half of what makes a kind a *choice*: a
+    /// sensocyte is the smallest cell in the world and costs three times what a sclerocyte
+    /// does, and that trade is invisible if the two numbers live in different files.
+    ///
+    /// # ⭐⭐ A myocyte is 0.005 and was 0.014, and the sweep that moved it is in SPEC section 6
+    ///
+    /// **Every other number in this table is still the one SPEC was written with before
+    /// anything ran. This one has been measured.** 0.014 made a muscle three and a half times
+    /// a photocyte to own while earning nothing, and it was written when `movement_cost` was
+    /// 0.15 - which SPEC section 3 records as a value at which *using* a muscle was impossible,
+    /// so upkeep was the only thing pricing one at all. Phase 7 moved `movement_cost` by a
+    /// thousandfold and never came back to the standing cost, leaving a body that swims flat
+    /// out paying about a ninth of what it pays merely to own the muscles.
+    ///
+    /// Six 300,000-tick runs of the shipped world, one per price. What the price actually
+    /// buys is **persistence, not supply**: the share of *births* carrying two or more
+    /// myocytes is 0.02% to 0.04% at every price and has no trend in it, while the mean life
+    /// of such a body goes from **325 ticks at 0.014 to 1,380 at 0.005**, because
+    /// `metabolism.rs` derives a lifespan from what a body costs to run. The two multiplied
+    /// are the standing population, which rises from 0.0073% of bodies to 0.034%.
+    ///
+    /// ⚠️ **And nothing swims at any price** - mean displacement per lifetime is 3.74 against
+    /// the 3.97 baseline. The valley floor came up and the near side of it is empty.
+    ///
+    /// # ⚠️ Why it stops above a photocyte rather than at or below one
+    ///
+    /// **Because 0.002 - a sclerocyte's price, and below the cell that earns the world's whole
+    /// income - is where neutral bloat starts.** Myocytes there rise through the run rather
+    /// than fluctuating (7, 22, 51, 42 over the last four checkpoints against the shipped
+    /// world's 2, 2, 0, 0), reach 2.4% of bodies over the run's last 25,000 ticks against
+    /// 0.10% here, are 0.28% of all cells over the whole of it, and the largest body in the
+    /// world carries 46 of them against a cap of 64 - **while mean displacement per
+    /// lifetime is 3.63, the lowest reading in the sweep.** Accumulating a cell that does
+    /// nothing is exactly the failure CLAUDE.md names, and a muscle cheaper to own than the
+    /// photocyte paying for it is where it begins. 0.005 keeps a myocyte dearer than a
+    /// photocyte, so owning one is never free, and it is 2.5x the sclerocyte the way SPEC's
+    /// own ordering has it.
     #[must_use]
     pub const fn upkeep(self) -> f32 {
         match self {
             Self::Photocyte => 0.004,
             Self::Devorocyte => 0.009,
-            Self::Myocyte => 0.014,
+            Self::Myocyte => 0.005,
             Self::Sclerocyte => 0.002,
             Self::Sensocyte => 0.006,
             Self::Gonocyte => 0.005,
@@ -531,7 +565,7 @@ mod tests {
         let spec_table = [
             (CellKind::Photocyte, 3.0, 0.004),
             (CellKind::Devorocyte, 2.6, 0.009),
-            (CellKind::Myocyte, 2.8, 0.014),
+            (CellKind::Myocyte, 2.8, 0.005),
             (CellKind::Sclerocyte, 3.4, 0.002),
             (CellKind::Sensocyte, 2.0, 0.006),
             (CellKind::Gonocyte, 3.2, 0.005),
@@ -596,6 +630,75 @@ mod tests {
              without development would take its behaviour from whichever gene that is"
         );
         assert_eq!(cell.energy_flow, 0.0, "a new cell has gained nothing yet");
+    }
+
+    /// ⭐⭐ A muscle is dearer to own than the cell that pays for it, and no longer dear
+    /// enough to be worth avoiding.
+    ///
+    /// This is the shape of the myocyte's upkeep rather than the number, and it is the pair
+    /// of claims the six-run sweep in [`CellKind::upkeep`] establishes. Both would have been
+    /// red at the 0.014 this project shipped until now: the first was true and the second was
+    /// not.
+    ///
+    /// # A myocyte must cost strictly more than a photocyte, and that is the bloat boundary
+    ///
+    /// A myocyte earns nothing. The only thing keeping one out of a body that has no use for
+    /// it is that it costs something to own, and the only meaningful "something" is what the
+    /// cell that earns the world's entire income costs. **Below that line the sweep measured
+    /// exactly what CLAUDE.md warns of**: at 0.002 - a sclerocyte's price - myocytes rise
+    /// steadily through a 300,000-tick run to 2.4% of bodies and 0.28% of every cell in the
+    /// world, the largest body carries 46 of them against a cap of 64, and mean displacement
+    /// per lifetime is the *lowest* in the sweep. That is a world accumulating a cell that
+    /// does nothing, which is neutral bloat and not evolution.
+    ///
+    /// # And it must not cost a multiple of one, which is what changed
+    ///
+    /// At three and a half times a photocyte, a body's *first* myocyte pays nothing and costs
+    /// a great deal - and a first myocyte is worth nothing on its own, because one muscle
+    /// working one spring is a reciprocal stroke and SPEC section 8's water gives a
+    /// reciprocal stroke exactly no net displacement. A lineage therefore needs two before
+    /// locomotion produces anything at all, and selection cannot see the second while it is
+    /// removing the first. Whether that gap is what has kept every run in this project at one
+    /// or two myocytes is the question the sweep asked; what it answered is that the gap is
+    /// real and it is not the whole of it.
+    #[test]
+    fn a_myocyte_costs_more_to_own_than_the_cell_that_earns() {
+        let muscle = CellKind::Myocyte.upkeep();
+        let earner = CellKind::Photocyte.upkeep();
+
+        assert!(
+            muscle > earner,
+            "a myocyte costs {muscle} a tick and the photocyte paying for it costs {earner}, \
+             so a body can carry muscle it has no use for more cheaply than the cell that \
+             feeds it - which is the neutral bloat measured at 0.002"
+        );
+        assert!(
+            muscle < earner * 2.0,
+            "a myocyte costs {muscle} a tick against a photocyte's {earner}, which is more \
+             than twice as much. A lineage's first muscle is worth nothing on its own - one \
+             spring worked by one myocyte is a reciprocal stroke - so at that price it is \
+             selected away long before a second one can appear beside it"
+        );
+
+        // What a cell is worth to build follows its upkeep, so the same claim has to hold of
+        // the construction cost or a cheap muscle would still be an expensive body part.
+        assert!(
+            CellKind::Myocyte.construction() > CellKind::Photocyte.construction()
+                && CellKind::Myocyte.construction() < CellKind::Photocyte.construction() * 2.0,
+            "a myocyte costs {} to build against a photocyte's {}",
+            CellKind::Myocyte.construction(),
+            CellKind::Photocyte.construction()
+        );
+
+        // Nothing in the table is free. A kind that cost nothing at all would accumulate
+        // without limit whatever else were true of it.
+        for kind in CellKind::ALL {
+            assert!(
+                kind.upkeep() > 0.0,
+                "{kind:?} costs nothing to own, so a body pays nothing for carrying any \
+                 number of them"
+            );
+        }
     }
 
     /// ⭐ A sclerocyte is hard to eat and a sensocyte is not, and that difference is the

@@ -135,8 +135,8 @@ written with, moving could never pay for itself under any circumstances whatever
 The measurement is in `behaviour.rs`'s `a_myocyte_oscillates_its_springs_and_pays_for_the_work`.
 One spring of stiffness 10, worked at the resting amplitude — a myocyte with nothing to sense,
 which is what every body in the world starts as — cost **0.0215 a tick** at `0.15`. A myocyte's
-whole upkeep is 0.014. So a single muscle at rest was charged **one and a half times its own
-cost of living** for the privilege of twitching, before it had gone anywhere.
+whole upkeep was 0.014 at the time. So a single muscle at rest was charged **one and a half
+times its own cost of living** for the privilege of twitching, before it had gone anywhere.
 
 Set that against what going somewhere is worth. A tile of water at the shipped `cap` and
 `influx` yields on the order of `3e-4` to a photocyte standing on it, so crossing one tile in
@@ -149,6 +149,14 @@ inside what a tile is worth.
 ⚠️ It is deliberately **not** zero. Free movement is a coherent world to run and the gate
 accepts it, but a myocyte that costs nothing to work is a cell with no downside at all, and
 a body would accumulate them as neutral bloat.
+
+⭐ **The other half of that trade was not looked at until much later, and it was wrong in the
+same direction.** With `movement_cost` at 0.15 a muscle's upkeep was the only thing pricing it,
+because using one was impossible; after the thousandfold cut, a muscle was priced almost
+entirely by being *owned* — a body swimming flat out paid about a ninth of what its muscles
+cost it to stand still. Section 6 records the sweep that brought a myocyte's upkeep from 0.014
+to **0.005**, at which working a muscle is about a third of owning one. The two numbers are one
+decision and they are now set together.
 
 ### ⭐⭐ `physics.drag_anisotropy` is 2.0, and one is the number that made this world impossible
 
@@ -541,7 +549,7 @@ some circumstance and not others, or differentiation never evolves.
 | --- | --- | --- | --- | --- | --- |
 | `Photocyte` | 3.0 | 0.004 | 0.10 | **−0.50** | Harvests from the field tile it occupies, rate ∝ local energy × exposure. **Occluded by cells above it** — this is what rewards spread-out, branching body plans over compact blobs. |
 | `Devorocyte` | 2.6 | 0.009 | 0.30 | **+0.80** | On contact, drains energy from detritus, or from another organism's cells at a rate reduced by that cell's toughness. |
-| `Myocyte` | 2.8 | 0.014 | 0.30 | **0.00** | Oscillates the rest length of its springs. Costs `movement_cost` × work done. The only source of locomotion. |
+| `Myocyte` | 2.8 | **0.005** ⭐⭐ | 0.30 | **0.00** | Oscillates the rest length of its springs. Costs `movement_cost` × work done. The only source of locomotion. **The one upkeep in this table that has been measured rather than guessed — it was 0.014; see below.** |
 | `Sclerocyte` | 3.4 | 0.002 | 0.90 | **+1.00** | High spring stiffness, high toughness. No metabolic function — pure structure and defence. |
 | `Sensocyte` | 2.0 | 0.006 | 0.00 | **−0.20** | Samples a local gradient (light, detritus, or foreign biomass — determined by its gene) and emits a scalar signal. |
 | `Gonocyte` | 3.2 | 0.005 | 0.10 | **+0.50** | Accumulates energy toward reproduction. An organism with no gonocyte cannot reproduce. |
@@ -555,6 +563,134 @@ spread out. Devorocytes want contact, which means reaching things. Myocytes cost
 are the only way to reach either. Sclerocytes are the answer to predation but contribute
 nothing. Requiring a gonocyte means reproduction has a real structural cost. If in play-
 testing one kind dominates every lineage, the costs are wrong — tune before adding kinds.
+
+### ⭐⭐ A myocyte's upkeep is 0.005 and was 0.014, and it is the only measured number in the table
+
+The sentence immediately above is the one this change was made under, and the condition it
+names is met: **photocytes and gonocytes are 99.7% of every cell in every run this project has
+recorded.** So the price of the one kind that has never established itself was swept, and what
+came back is a partial answer worth having in full, because the null half of it is the more
+useful half.
+
+#### Why the price was the thing to try
+
+Four rounds of work had made swimming physically possible (section 8's anisotropic water),
+energetically cheap (`movement_cost`, a thousandfold down), sensorily visible (section 9's
+fixed light reference) and behaviourally wired (section 7's gene-that-built-it). Nothing swam.
+The remaining obstacle had the shape of **a fitness valley with a lethal floor**:
+
+- One myocyte oscillating one spring is a **reciprocal** stroke, and section 8's water gives a
+  reciprocal stroke exactly no net displacement. That is the scallop theorem and it is measured
+  in this project, not assumed.
+- So locomotion needs **two muscles at different phases on a bent body** before it produces
+  anything at all.
+- Meanwhile a myocyte cost **0.014 a tick against a photocyte's 0.004** — three and a half
+  times — and earned nothing.
+
+The first muscle therefore paid nothing and cost a great deal, so it was removed before the
+second could arrive beside it. And **0.014 was never measured**: it was written before anything
+ran, at a time when `movement_cost` was 0.15 — a value section 3 records as making the *use* of
+a muscle arithmetically impossible, so upkeep was the only thing pricing one. `movement_cost`
+moved by a thousandfold in Phase 7 and the standing cost was never revisited.
+
+#### The sweep
+
+Six runs of 300,000 ticks after the dawn, shipped configuration, seed 42, eight founders, one
+price each. The 0.014 column reproduces `docs/PHASE7.md`'s Group J run **bit for bit**, which
+is what makes the other five comparable to everything else in this document.
+
+| Myocyte upkeep | 0.014 | 0.010 | 0.007 | **0.005** | 0.004 | 0.002 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Against a photocyte's 0.004 | ×3.5 | ×2.5 | ×1.75 | **×1.25** | ×1.0 | ×0.5 |
+| **Myocytes per body**, over the run | 0.00097 | 0.00094 | 0.00135 | **0.00205** | 0.00186 | **0.00797** |
+| **Bodies carrying ≥2 myocytes** | 0.0073% | 0.0064% | 0.0085% | **0.0345%** | 0.0147% | **0.0861%** |
+| *Births* carrying ≥2, of ~255,000 | 95 | 54 | 62 | **112** | 67 | 187 |
+| Mean life of a ≥2 body, ticks | 325 | 557 | 631 | **1,380** | 1,053 | 2,050 |
+| **Mean displacement per lifetime** | **3.966** | 4.030 | 3.750 | **3.742** | 3.766 | **3.627** |
+| Myocytes, of all living cells | 0.033% | 0.031% | 0.047% | **0.069%** | 0.068% | **0.278%** |
+| Photocytes / gonocytes | 66.0 / 33.7% | 66.5 / 33.3% | 65.0 / 34.8% | **66.4 / 33.3%** | 63.7 / 36.1% | 64.8 / 34.6% |
+| Devorocyte cell-observations | 1,535 | 1,185 | 1,219 | **1,445** | 1,031 | 1,035 |
+| Population at 300,000 | 848 | 659 | 844 | **826** | 744 | 832 |
+| Mean cells | 6.09 | 7.99 | 6.00 | **6.21** | 6.94 | 6.28 |
+| Biomass | 32,687 | 32,855 | 32,201 | **32,276** | 32,962 | 32,125 |
+| Myocytes alive at the end | 0 | 1 | 1 | **1** | 10 | **42** |
+| Largest myocyte count in one body | 22 | 11 | 12 | **14** | 21 | **46** |
+
+#### ⭐⭐ What the price buys is persistence, and not supply
+
+**The share of births carrying two or more myocytes is 0.02% to 0.04% at every price and has no
+trend in it whatever** — 95, 54, 62, 112, 67, 187 out of a quarter of a million births apiece.
+Price cannot change that number, because how often a mutation makes a second myocyte is a fact
+about `mutation.rs` and not about the ledger.
+
+What price changes is **how long such a body lasts**: 325 ticks at 0.014 and 1,380 at 0.005, a
+factor of four. That is not a subtlety of selection, it is section 10's lifespan — an
+organism's allowance is `LIFETIME_UPKEEP × cells ÷ what it costs per tick`, so cheaper tissue
+lives proportionally longer *by construction*. The standing population of muscle is those two
+multiplied, and it rises 4.7-fold.
+
+So the valley floor was real and it has come up. **The near side of it is empty**, and that is
+where the next experiment belongs.
+
+#### ⚠️ Nothing swims at any price, and the sweep contains its own control
+
+Mean displacement per lifetime is **3.74 at the shipped price against 3.97 at the old one** —
+down, not up, and every column is inside the spread of every run since Group I.
+
+Splitting those quarter-million lifetimes by how many myocytes development gave the body looks
+at first like a signal: bodies with two or more travel about 6.1 world units against 3.7 for
+bodies with none, at every single price. **It is not one.** The one-myocyte bucket is the
+built-in control — a single muscle is a reciprocal stroke and provably cannot produce net
+displacement — and at 0.002, where that bucket is large enough to read (997 lifetimes), it
+travels **7.19 units, further than the two-muscle bucket does.** What the excess measures is
+that a body with any myocyte in it is a bigger and longer-lived body than the two-celled median,
+which is a fact about body size and not about locomotion.
+
+#### ⚠️ The bloat boundary is between 0.004 and 0.002, and it is why this stops above a photocyte
+
+CLAUDE.md names the failure to watch for: a cell that becomes free accumulates without limit.
+**At 0.002 — a sclerocyte's price, and below the cell that earns the world's entire income —
+it starts.** Myocytes rise through the run rather than fluctuating (7, 22, 51, 42 over the last
+four checkpoints, against the shipped world's 2, 2, 0, 0), reach **2.4% of bodies over the run's
+last 25,000 ticks** against 0.10% in the shipped world, are 0.28% of every living cell over the
+whole of it, and the largest body in the world carries **46 of them against a cap of 64** —
+while mean displacement is the *lowest* reading in the sweep. That is a world accumulating a
+cell that does nothing, which is the definition of neutral bloat.
+
+Nothing of the kind happens at 0.005: a mean of one myocyte per five hundred bodies, no trend
+across the run, and no body ever holding more than fourteen — against twenty-two at the price
+this replaces. **The line is the photocyte**, and a muscle has to stay dearer than the cell
+paying for it or owning one is free.
+
+#### Why 0.005 rather than one of the others
+
+- It is the **largest measured effect among the safe prices**: myocytes per body double, the
+  ≥2 fraction goes up 4.7-fold, and a two-muscle body lives four times as long.
+- It stays **above a photocyte**, which the 0.002 run shows is where accumulation begins. 0.004
+  is exactly a photocyte and is the first price at which the end-of-run count drifts upward
+  (0, 4, 5, 10 over the last four checkpoints).
+- It restores the split the two settings were always meant to have. A body driven flat out
+  does about 95 units of work a tick; at `movement_cost` of 1e-4 that is 0.0095 against the
+  0.030 its six myocytes cost to own. **Working a muscle is now about a third of owning one,
+  where it was a ninth** — *carrying the machinery is cheap and using it costs*, which is what
+  section 3's `movement_cost` argument assumed and the standing cost had never been brought
+  into line with.
+- **The ecology does not notice.** Biomass 32,276 against 32,687, population 826 against 848,
+  mean body 6.21 against 6.09, photocytes 66.4% against 66.0%, devorocytes unmoved. The
+  carrying-capacity claim holds for the sixth change running.
+
+⚠️ **It is exactly a gonocyte's upkeep, and nothing rests on that.** A muscle and a store of
+reserves costing the same is a coincidence of two independently chosen numbers, not a claim.
+What is load-bearing is only that it sits above the photocyte and below the devorocyte.
+
+⚠️ **And this did not produce a lineage that swims**, which is the honest headline. It is the
+fifth change in a row not to. What it establishes is that the *price* is not the remaining
+obstacle: the standing cost has been cut to a quarter of a photocyte's premium and the number
+of bodies born with the configuration locomotion needs did not move at all. Two candidates
+follow from that and neither is a price — **a single muscle doing something useful that is not
+locomotion**, such as changing a body's shape and therefore its self-shading, so that the first
+one pays; or **making the second muscle reachable in one mutation rather than two**. Both are
+argued in `docs/PHASE7.md`'s Group K and neither is built.
 
 ### ⭐⭐ Buoyancy, and why depth is a property of composition
 
@@ -1600,9 +1736,13 @@ throughout, exactly as before; the population falls by two thirds while bodies q
 end state — 4,797 photocytes, 652 gonocytes, 11 sclerocytes, 6 sensocytes, 1 myocyte, 0
 devorocytes — is the same shape of population the half-million-tick run reached, at a little over
 half the ticks. Neither of the failure modes the changes were watched for appeared: myocytes did
-not accumulate as neutral bloat now that moving is nearly free (a myocyte costs 0.014 a tick to own
-against a photocyte's 0.004, which is what was ever pricing it), and mean depth drifted only from
-296 to 483 in a world 1,152 deep rather than to the surface.
+not accumulate as neutral bloat now that moving is nearly free (a myocyte cost 0.014 a tick to own
+at the time against a photocyte's 0.004, which is what was ever pricing it), and mean depth drifted
+only from 296 to 483 in a world 1,152 deep rather than to the surface.
+
+*(⭐ That parenthesis was right and it was also the whole problem. Section 6's sweep has since
+taken the upkeep to **0.005** and measured what happens below it: at 0.002 the neutral bloat this
+paragraph reports the absence of does appear, and nothing travels any further for it.)*
 
 ⚠️ **And it is still one myocyte, which is worth being exact about.** Swimming is now possible and
 measurable — section 8's table — and it is far too slow to be worth anything: a body that lives 571
