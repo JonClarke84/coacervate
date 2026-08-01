@@ -1,0 +1,88 @@
+# The `dense` profile: the same world, the same light, a quarter of the water.
+#
+# ⭐ **This exists to ask one question — does a feeding-strategy split appear when bodies
+# actually meet each other?** SPEC section 6 makes predation emergent rather than scripted, and
+# half a million ticks of the `default` profile produced one devorocyte in a population of 794.
+# The diagnostic reason is not that eating is a bad living; it is that in the shipped world a
+# body hardly ever touches a stranger. Measured: at the shipped density **13.5%** of cells are
+# in contact with a foreign body at any moment, and at four times that density **58.8%** are —
+# which came out as **eight times the predation**.
+#
+# Everything below is `default.toml` with three numbers changed, and the reasoning for each is
+# beside it. Read `default.toml` for what the rest of them mean; the comments there are the
+# document and are deliberately not copied.
+
+[world]
+seed = 42
+width = 2048.0           # ⚠️ NOT shrunk, and this is the one line in the file that must not be
+                         # edited without reading SPEC section 8. Springs are resolved from a
+                         # flat list rather than found by the spatial hash, and they have no
+                         # length limit — so a spring between two cells on opposite sides of the
+                         # world works, and hauls them together *through the seam*. A body may
+                         # hold 64 cells and a gene's rest length may reach MAX_REST_LENGTH,
+                         # which is 13.6 units, so a chain can be 870 units long. In a world
+                         # narrower than about 1,200 units that chain reaches more than half way
+                         # round, and SPEC's warning stops being hypothetical. The density comes
+                         # out of the height instead.
+height = 288.0           # ⭐ A quarter of the shipped 1,152, which is the whole of the change:
+                         # the same population in a quarter of the water.
+grid_cols = 256
+grid_rows = 36           # A quarter of 144, so a tile is still 8 by 8 world units and nothing
+                         # about the resource field's resolution has changed.
+years_per_tick = 1000.0
+
+[light]
+influx = 0.004           # ⭐ Four times the shipped 0.001, over a quarter as many tiles, so the
+                         # world is offered **exactly the same total energy per tick** as the
+                         # `default` profile: 9,216 tiles x 0.004 against 36,864 x 0.001. SPEC
+                         # section 4 makes carrying capacity proportional to the total, so this
+                         # is a denser population rather than a richer one.
+                         #
+                         # ⚠️ **Do not raise it further to hold the population up.** The count
+                         # does fall here, and it falls because bodies packed four times as
+                         # close shade one another and eat out of one another's tiles — which is
+                         # the pressure this profile exists to apply. Compensating for it with
+                         # more light is Phase 4's measured mistake: at an influx that outruns
+                         # the metabolism the arena binds first, every birth that fails does so
+                         # for a reason unconnected to how well its parent was doing, and drift
+                         # is the only force left acting. See SPEC section 3.
+cap = 8.0
+gradient = 0.75          # Unchanged, so the light still falls by three quarters from surface to
+                         # floor — over a quarter of the depth, which makes the gradient a
+                         # sensocyte reads four times as steep as the shipped world's.
+patchiness = 0.15
+diffusion = 0.04
+
+[physics]
+drag = 0.92
+drag_anisotropy = 2.0
+collision_stiffness = 40.0
+spring_damping = 0.35
+
+[metabolism]
+upkeep_scale = 1.0
+gene_cost = 0.0001
+movement_cost = 0.0001
+reproduction_threshold = 2.2
+offspring_share = 0.45
+
+[mutation]
+point_rate = 0.06
+point_sigma = 0.12
+duplication_rate = 0.02
+deletion_rate = 0.02
+insertion_rate = 0.01
+reorder_rate = 0.02
+genome_duplication_rate = 0.0008
+
+[limits]
+max_organisms = 4000
+max_cells_per_organism = 64
+max_genes = 128
+max_dev_steps = 16
+
+[run]
+max_wall_clock_hours = 12.0
+max_ticks = 0
+max_ticks_per_second = 0
+reseed_on_extinction = false

@@ -12,8 +12,13 @@
 | | |
 | --- | --- |
 | **Phase 7** | in progress |
-| **Current group** | D — Darwin in the margin (A, B and C are done) |
-| **Suite** | green — **247 tests, 108s** |
+| **Current group** | D — Darwin in the margin (A, B, C and F are done) |
+| **Suite** | green — **252 tests, 111s** |
+
+⚠️ **Group F is out of order and it had to be.** It is the swimming work, taken out of turn
+because Jonathan's live run had reached tick 2.8 million with one myocyte in it and the
+diagnostic found that **nothing in this world could move, and nothing ever could have**. It sits
+in the step ledger below between Groups D and E, which are the two still to do.
 
 ---
 
@@ -493,6 +498,173 @@ wants somewhere other than the left-hand column — see Group C's cost note.
   would notice immediately.
 - [ ] **D5. `the_marginalia_is_typeset_quietly`** — serif, generous leading, low contrast,
   slow fade. ⚠️ The chrome is currently one monospace face; this needs a second. Disableable.
+
+### Group F — making swimming possible — **done**
+
+⚠️ **Out of the phase's plan, and it could not wait.** Jonathan's live run had reached tick 2.8
+million with **one myocyte** in it, and the diagnostic that went looking for why found something
+larger than a tuning problem: **nothing in this world could move, and nothing ever could have.**
+
+Three changes, all measured, all landing together because the first of them moves every golden
+vector in the project and there is no sense in doing that twice.
+
+- [x] **F1. `a_travelling_wave_carries_a_body_through_the_water`** ⭐⭐ — `physics.drag_anisotropy`,
+  a new key in `[physics]`, shipping at **2.0**. See below.
+- [x] **F2. `a_straight_body_and_a_reciprocal_stroke_both_go_nowhere`** — the two ways the new
+  water still, correctly, refuses to move a body.
+- [x] **F3. `drag_is_anisotropic_across_a_body_axis`** — the mechanism, and the load-bearing half:
+  a cell with fewer than two adhesions has no axis and keeps the plain drag.
+- [x] **F4. `the_drag_anisotropy_range_is_closed_at_both_ends`** — `1.0..=3.0`.
+- [x] **F5. `metabolism.movement_cost` 0.15 → 0.0001** — a thousandfold, and the reasoning is in
+  SPEC section 3 beside the value.
+- [x] **F6. The light sensor's *normalisation*** — a fixed reference of 0.02 rather than the tile's
+  own energy, and `MAX_SENSOR_GAIN` from 1 to 8.
+- [x] **F7. `config/dense.toml`** — `the_dense_profile_is_the_shipped_world_with_less_water_in_it`.
+
+#### ⭐⭐ The conservation law, which is the whole finding
+
+Every internal force is `+f` on one cell and `−f` on another; there is no mass; and `drag` is one
+scalar applied identically to every cell. So for any free body, `Σv ← Σv × drag` — **the total
+velocity is a conserved quantity of the integrator and it decays to nothing.** Measured `|Σv|` of
+5.96e-7 over 2,000 ticks, and a twelve-cell travelling-wave undulator moving 0.00015 units per
+1,000 ticks, which is `f32` noise.
+
+**This is stronger than the scallop theorem**, and that is why nobody caught it: a travelling wave
+is the textbook escape from the scallop theorem, section 9's controller is built to produce one,
+and it escaped the theorem and not the law. The law is not about strokes at all. It is about the
+integrator.
+
+The fix is what real swimming at this scale works on — **drag anisotropy**, the fact that a
+slender body resists motion across its axis about twice as hard as along it. The full argument,
+the measurements and the bounds are in SPEC section 8, which had described the physics as if
+locomotion were possible and now says why it was not.
+
+#### ⭐ What the measurements actually say, including the part that is not good news
+
+Over 1,000 ticks, hand-built bodies through the real physics:
+
+| Body | `k = 1` (as shipped until now) | `k = 2` (shipped now) |
+| --- | --- | --- |
+| One myocyte, one spring | 0 | 0 |
+| Two springs at π/2, cells in a line | 0.0005 | 0.0005 |
+| Six-cell travelling wave, cells in a line | 0.0003 | 0.0003 |
+| **Eight-cell zig-zag, resting stroke** | 0.0005 | **0.154** |
+| **Eight-cell zig-zag, driven to full amplitude** | 0.0004 | **1.896** |
+| Three-cell zig-zag, two springs at π/2, full stroke | 0.0005 | **1.085** |
+
+**A body whose cells lie in a straight line still cannot swim, and that is correct** — all its
+motion is along its own axis, so the sideways drag never engages, and nothing one-dimensional
+swims in any fluid. What a lineage has to find is a **shape**, not a rhythm.
+
+⚠️ **And swimming is now possible without yet being worth anything.** 0.154 units per 1,000 ticks
+is a three-hundred-fold improvement on noise and it is still **a fortieth of a cell's diameter per
+1,000 ticks**, against a body that lives 571 to 2,000 ticks. A lineage that grew a perfect
+undulator would move less than its own width in a lifetime. That is the honest reading of the
+300,000-tick run below, where myocytes appear repeatedly and never persist: the mechanism exists
+now and the *payoff* does not. Whatever comes next — a faster beat, a larger swing, or SPEC
+section 8's buoyancy-by-`CellKind` — has a working substrate to act on, which it did not before.
+
+#### The 300,000-tick run at the shipped configuration
+
+Eight founders, seed 42, `config/default.toml` as it now ships. Ticks are the world's, so the
+first 10,000 are the dawn.
+
+| Tick | Alive | Field | Biomass | Mean cells | Mean genes | Mean depth | Myocytes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 20,000 | 879 | 170,506 | 12,435 | 1.97 | 1.42 | 296 | 0 |
+| 50,000 | 2,070 | 110,605 | 29,035 | 1.98 | 1.90 | 400 | 2 |
+| 100,000 | 2,159 | 87,880 | 30,739 | 2.03 | 2.45 | 434 | 0 |
+| 150,000 | 2,007 | 86,946 | 30,900 | 2.22 | 2.89 | 435 | 1 |
+| 200,000 | 1,498 | 79,388 | 32,094 | 3.21 | 3.86 | 460 | 0 |
+| 250,000 | 844 | 69,300 | 32,958 | 6.07 | 6.28 | 484 | 0 |
+| **310,000** | **650** | **65,755** | **33,961** | **8.39** | **8.75** | **483** | **1** |
+
+The five accounts at the end: **65,755** in the field, **33,961** held by the living, **4,475**
+lying in the drift, **6,468,877** spent for good, **6,573,069** fallen as light. The ledger checked
+itself every thousand ticks of all 310,000 and never once disagreed.
+
+Cell-kind composition at tick 310,000, out of 5,467 living cells: **4,797 photocytes, 652
+gonocytes, 11 sclerocytes, 6 sensocytes, 1 myocyte, 0 devorocytes.**
+
+**Nothing degenerated, and neither of the two failure modes the change was watched for appeared.**
+
+*Myocytes did not accumulate as neutral bloat.* They are present in fourteen of the thirty-one
+readings and never number more than five at once, in a population of four to five thousand cells.
+Making movement nearly free did not make a muscle free: a myocyte's upkeep is **0.014** against a
+photocyte's **0.004**, so it is three and a half times as expensive to own and earns nothing.
+`movement_cost` was never what was pricing it.
+
+*The population did not migrate to the surface and form a mat.* Mean depth drifts from 296 to 483
+in a world 1,152 deep — into the brighter half and nowhere near the top of it. Nothing can swim
+upwards to any useful degree, so what that drift measures is where the lineages that bred fastest
+happened to be, which is what it measured before Group F.
+
+**The ecology is the one Phase 4 measured, arriving sooner.** Living biomass sits between 30,000
+and 34,000 for the whole run while the population falls by two thirds and bodies quadruple — the
+carrying-capacity claim holding exactly while everything else moves. Phase 4's half-million-tick
+run ended at 794 organisms of 6.73 cells and 10.80 genes; this one is at 650, 8.39 and 8.75 by tick
+310,000, having taken a little over half as long to get further.
+
+⚠️ **And myocytes are still at one, which is the number Group F set out to change.** The answer to
+why is in the table above it: the mechanism works and the payoff does not yet exist. A body that
+lives 571 to 2,000 ticks and swims 0.154 units per 1,000 has moved a fortieth of its own width by
+the time it dies. Selection has nothing to see. **That is a real result rather than a failure of
+the change** — before it, the payoff was not small but exactly zero and provably so — and it says
+where to look next: at the *speed*, which means the beat, the swing, or SPEC section 8's
+buoyancy-by-`CellKind`, and not at the water.
+
+#### `config/dense.toml`, run the same distance
+
+300,000 ticks, same seed, same eight founders. The dawn is 3,000 ticks rather than 10,000,
+because the light is four times as bright per tile.
+
+| Tick | Alive | Mean cells | Mean genes | Mean depth (of 288) |
+| --- | --- | --- | --- | --- |
+| 30,000 | 1,848 | 1.99 | 1.45 | 107 |
+| 100,000 | 1,571 | 2.66 | 2.37 | 120 |
+| 200,000 | 666 | 8.17 | 5.90 | 147 |
+| 303,000 | 542 | 9.90 | 8.47 | 143 |
+
+**It is alive, it is denser, and it is smaller.** 542 organisms against the shipped profile's 650
+in a quarter of the water, which is about **3.3 times** the bodies per unit of water; the
+population falls further and the bodies grow faster and larger (9.90 cells against 8.39 at the
+same age), which is what packing the same energy into less room ought to do. Ending composition:
+4,797 photocytes, 556 gonocytes, 11 sclerocytes, 1 sensocyte, 0 myocytes, 0 devorocytes.
+
+⚠️ **Devorocytes are still transient**, though they reach 7 at once here against the shipped
+world's 3. This is a run, not the diagnostic's measurement — whether the contact rate turns into a
+feeding-strategy split is the question the profile exists to be pointed at over an overnight run,
+and 300,000 ticks is not that.
+
+#### What Group F decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **The axis is the line between a cell's first and last adhered partner** | `physics.rs`, `axis` | Exactly right for a cell in a chain, which is the case that matters. A branch point has no single direction the body runs and gets a deterministic one; it is also a place a body genuinely is not slender. |
+| **Fewer than two adhesions means isotropic drag** | `physics.rs`, `axis` | ⚠️ The load-bearing half. Using the one spring a cell does have, or breaking the tie the way `direction` does, would hold every loose cell in the world harder in one direction than another — thrust with no muscle behind it, in a direction decided by storage order. |
+| **Every axis is read before any cell moves** | `physics.rs`, `axes` | A cell's axis is a line between two *other* cells, half of which the loop has already moved. Read from a half-moved world it would depend on storage order, which SPEC section 2 forbids. |
+| **`across_drag` is worked out once, not per cell** | `physics.rs` | A power is the most expensive operation in the module and it is the same number for every cell. |
+| **The bound is `1.0..=3.0`** | `config.rs`, `DRAG_ANISOTROPY_CEILING` | One is isotropic water, kept reachable because it is the control for every claim about swimming. Three is where a prototype produced not-a-number at `collision_stiffness = 5,000` — an unequal damping of two components is a *rotation* of the velocity towards the axis, and past three the correction and the overshoot stop cancelling. |
+| **`LIGHT_REFERENCE` is 0.02 and is not a config key** | `behaviour.rs` | It is the background gradient of the shipped world, derived from SPEC section 4's own formula. A cell cannot know what `light.cap` is set to, and a sensor whose meaning moved with the weather is one whose evolved gain means something different after every change of conditions. |
+| **⚠️ `SENSOR_GAIN_SPREAD` does not follow `MAX_SENSOR_GAIN`** | `genome.rs` | The genetic distance was scaled by `2 × MAX_SENSOR_GAIN`, and genetic distance is the unit every species boundary in every chronicle is measured in. Raising the gain would have silently redrawn all of them. One is a sensor's range; the other is a unit of measurement. |
+| **The golden vector was re-recorded, and said so** | `run.rs` | The one time it is allowed. The old values are written out beside the new ones so a recording made before today can still be identified. |
+| **`dense` shrinks the height** | `config/dense.toml` | ⚠️ SPEC section 8: a 64-cell body at `MAX_REST_LENGTH` reaches 870 units, so in a world narrower than about 1,200 a chain reaches more than half way round and the spring-through-the-seam warning goes live. |
+
+#### ⚠️ Three tests moved, and none of them was weakened
+
+- **`a_run_produces_what_it_produced_before_group_a`** — re-recorded, deliberately. Any one of the
+  three changes moves every draw in every stream after the first birth. A golden vector that
+  survived would have meant the changes had not landed.
+- **`a_myocyte_oscillates_its_springs_and_pays_for_the_work`** — 2.790 → 0.00186 over the same 130
+  ticks, which is exactly the ratio `movement_cost` moved by. The old figure is kept in the comment
+  because it is the argument for the change: **one spring, at rest, cost one and a half times a
+  myocyte's entire upkeep.**
+- **`hue_comes_from_lineage_and_drifts_with_it`** — the band widened from 0.15 to 0.2, measured at
+  0.1512. The cause is `MAX_SENSOR_GAIN`: at one, a gain spent most of its life pressed against its
+  own clamp, where a point mutation changes nothing and `divergence_from` sees an identical gene.
+  Off the clamp the same mutations are real, so lineages drift faster. **The test was made stronger
+  rather than looser**: the counterfactual it rejects is now *measured* on the same population, by
+  colouring it from the genome fingerprint instead, rather than being a number in a comment.
 
 ### Group E — looking at one organism
 

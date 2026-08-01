@@ -362,7 +362,7 @@ pub fn millions_of_years(ticks: u64, years_per_tick: f32) -> f64 {
 /// gives: `light.gradient` contains *grad*, which the shared ban list refuses, and a log is prose
 /// rather than a settings file. The key is kept anyway, unprinted, and reachable through
 /// [`conditions`] — so that `settings.rs`'s `every_dial_is_a_condition_the_chronicle_reports` can
-/// put this list beside its own twenty sliders and insist the two name the same settings. Two
+/// put this list beside its own twenty-two sliders and insist the two name the same settings. Two
 /// lists of the live settings would be two lists that come apart, and a slider whose changes
 /// nothing recorded would be an environmental event that happened and was never written down.
 struct Condition {
@@ -389,9 +389,9 @@ struct Condition {
 /// changes made by the user"* among the things worth recording beside a mass extinction.
 ///
 /// The four tables here are exactly the ones [`World::retune`] will accept a change to, and
-/// exactly `settings.rs`'s twenty sliders less `run.max_ticks_per_second` — which is not a fact
-/// about the world at all, but about how fast a person is watching it.
-const CONDITIONS: [Condition; 20] = [
+/// exactly `settings.rs`'s twenty-two sliders less `run.max_ticks_per_second` — which is not a
+/// fact about the world at all, but about how fast a person is watching it.
+const CONDITIONS: [Condition; 21] = [
     Condition {
         table: "light",
         label: "influx",
@@ -427,6 +427,12 @@ const CONDITIONS: [Condition; 20] = [
         label: "drag",
         phrase: "how much of its speed the water leaves a cell",
         read: |config| config.physics.drag,
+    },
+    Condition {
+        table: "physics",
+        label: "drag_anisotropy",
+        phrase: "how much harder the water holds a body sideways than lengthways",
+        read: |config| config.physics.drag_anisotropy,
     },
     Condition {
         table: "physics",

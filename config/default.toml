@@ -26,6 +26,15 @@ diffusion = 0.04         # lateral spread per tick
 
 [physics]
 drag = 0.92              # velocity retained per tick (high — viscous regime)
+drag_anisotropy = 2.0    # the power `drag` is raised to across a cell's own body axis, so
+                         # the water resists a slender body sideways harder than lengthways.
+                         # 1.0 is isotropic water and is what this project shipped with until
+                         # Phase 7 — in which a free body's total velocity is a conserved
+                         # quantity of the integrator and nothing can swim at all. 2.0 makes a
+                         # cell about 2.1x as mobile along its axis as across it, which is
+                         # what a long thin thing in water actually is. Capped at 3.0: the
+                         # arithmetic produced NaN there at a collision stiffness of 5,000.
+                         # SPEC 8.
 collision_stiffness = 40.0
 spring_damping = 0.35
 
@@ -33,7 +42,12 @@ spring_damping = 0.35
 upkeep_scale = 1.0       # global multiplier on all cell upkeep ("temperature")
 gene_cost = 0.0001       # per gene, per tick — keeps genomes off the max_genes ceiling so
                          # duplication stays available. Not a brake on bloat; see SPEC 7.
-movement_cost = 0.15     # energy per unit of work done by contraction
+movement_cost = 0.0001   # energy per unit of work done by contraction. Measured in Phase 7,
+                         # not guessed: at the 0.15 SPEC was first written with, one tick of
+                         # an ordinary myocyte's work costs about a thousand times what
+                         # crossing a whole tile is worth, so swimming can never pay for
+                         # itself whatever it finds. Break-even for a one-tile hop is ~3e-4.
+                         # SPEC 3.
 reproduction_threshold = 2.2   # × body construction cost
 offspring_share = 0.45   # fraction of parent energy passed to offspring
 

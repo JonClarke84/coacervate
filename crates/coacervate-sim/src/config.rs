@@ -83,6 +83,7 @@ pub struct RawLight {
 #[serde(deny_unknown_fields)]
 pub struct RawPhysics {
     pub drag: f64,
+    pub drag_anisotropy: f64,
     pub collision_stiffness: f64,
     pub spring_damping: f64,
 }
@@ -180,13 +181,14 @@ pub fn spec_defaults() -> RawConfig {
         },
         physics: RawPhysics {
             drag: 0.92,
+            drag_anisotropy: 2.0,
             collision_stiffness: 40.0,
             spring_damping: 0.35,
         },
         metabolism: RawMetabolism {
             upkeep_scale: 1.0,
             gene_cost: 0.0001,
-            movement_cost: 0.15,
+            movement_cost: 0.0001,
             reproduction_threshold: 2.2,
             offspring_share: 0.45,
         },
@@ -246,6 +248,18 @@ pub enum ConfigError {
         limit: f32,
     },
 
+    /// A setting bounded at both ends, given a value outside them.
+    ///
+    /// The only one of these is `physics.drag_anisotropy`, and it is a separate kind of
+    /// refusal from [`Self::Unstable`] because its *lower* end means something too: one is
+    /// isotropic water. See [`DRAG_ANISOTROPY_CEILING`].
+    OutsideRange {
+        field: &'static str,
+        value: f32,
+        least: f32,
+        most: f32,
+    },
+
     /// A setting that may be nothing but cannot be less than nothing, given a value below
     /// zero.
     Negative { field: &'static str, value: f32 },
@@ -302,6 +316,24 @@ impl std::fmt::Display for ConfigError {
                  that still conserves energy exactly nothing else in the program will \
                  catch it"
             ),
+            // Also long, and for the same reason: neither end of this one can be guessed
+            // from the name of the setting. The lower end is where the water stops being
+            // anisotropic at all, which is the world in which SPEC section 8's conservation
+            // law holds and nothing can swim; the upper end is where the arithmetic stops.
+            Self::OutsideRange {
+                field,
+                value,
+                least,
+                most,
+            } => write!(
+                out,
+                "{field}: {value} is outside {least}..={most}. At {least} the water resists \
+                 a cell equally in every direction, which is the model this project shipped \
+                 with and the one in which a free body's total velocity is conserved and \
+                 decays to nothing, so no arrangement of muscles can move it. The upper end \
+                 is a limit of the arithmetic rather than a preference: measured at 3 with a \
+                 collision stiffness of 5,000, a cell's velocity became not-a-number"
+            ),
             // A sentence of its own, rather than a use of the one above with a lower end
             // of zero and no upper end. Written that way it would read
             // "light.influx: -0.1 is outside 0..=340282350000000000000000000000000000000",
@@ -333,7 +365,7 @@ impl std::error::Error for ConfigError {}
 ///
 /// `field` is the setting's full path, `light.influx` and the like. It is carried here
 /// purely so a refusal can name it - a complaint about a number, with no indication which
-/// of thirty-three settings it came from, sends you hunting through the file by hand.
+/// of thirty-five settings it came from, sends you hunting through the file by hand.
 ///
 /// # The rule
 ///
@@ -447,6 +479,45 @@ const MAX_DEV_STEPS_CEILING: u32 = 255;
 /// `coacervate_render::settings`.
 pub const DIFFUSION_STABILITY_LIMIT: f32 = 0.25;
 
+/// Isotropic water: the drag a cell feels across its own body axis is the drag it feels
+/// along it, which is what this project shipped with until Phase 7.
+///
+/// It is the *floor* rather than the default, and the two are deliberately different. Below
+/// it the water would resist a cell **less** across its axis than along it, which is not a
+/// slender body in a fluid at all - it is a body that slips sideways more easily than it
+/// slides forwards - and nothing in SPEC describes such a thing.
+///
+/// At exactly this value SPEC section 8's conservation law holds: every internal force
+/// appears as `+f` on one cell and `-f` on another, there is no mass, and one scalar
+/// multiplies every cell's velocity, so a free body's **total** velocity is a conserved
+/// quantity of the integrator that decays to nothing. Nothing can move, under any
+/// parameters, by any arrangement of muscles. See `physics.rs`.
+pub const DRAG_ANISOTROPY_FLOOR: f32 = 1.0;
+
+/// The most the drag across a cell's body axis may be sharpened, and the one bound in this
+/// file that was found by breaking the arithmetic rather than by reading SPEC.
+///
+/// The drag across the axis is `drag` raised to this power, so a larger number is thicker
+/// water sideways. Three is where a prototype stopped computing: at `collision_stiffness =
+/// 5,000` - which is inside the range `physics_is_stable_under_a_pile_up` measures the
+/// explicit integrator to survive, and about a hundred and twenty times what the world
+/// ships with - a pile of cells produced not-a-number within a few hundred ticks and every
+/// cell in it left the world.
+///
+/// The mechanism is worth writing down, because it is not the ordinary stiff-spring
+/// overshoot. Splitting a velocity into two components and damping them by different
+/// amounts is a *rotation* of the velocity towards the body axis, and a cell whose axis is
+/// itself turning under a stiff collision can be handed a velocity that points somewhere the
+/// force never pushed it. The sharper the split, the further that goes; past three the
+/// correction and the overshoot stop being able to cancel.
+///
+/// Three itself is allowed, because a limit that cannot be reached is a limit one step lower
+/// with nobody able to tell which - the same reading [`DIFFUSION_STABILITY_LIMIT`] takes.
+/// The world ships at **2.0**, which is a third of the way in and is where slender-body
+/// theory puts a real one: it makes a cell about **2.1 times** as mobile along its axis as
+/// across it, against the factor of two a long thin thing in water actually has.
+pub const DRAG_ANISOTROPY_CEILING: f32 = 3.0;
+
 // ---------------------------------------------------------------------------------------
 // The three kinds of bound
 //
@@ -491,6 +562,26 @@ fn stable(field: &'static str, value: f64, limit: f32) -> Result<f32, ConfigErro
             field,
             value: narrowed,
             limit,
+        })
+    }
+}
+
+/// A setting bounded at both ends, where both ends mean something.
+///
+/// Deliberately a third gate rather than [`stable`] with a lower end, for the reason
+/// [`stable`] gives about not being [`fraction`]: the sentence a refusal has to write is
+/// different, because here there are two ends to explain instead of one.
+fn within(field: &'static str, value: f64, least: f32, most: f32) -> Result<f32, ConfigError> {
+    let narrowed = narrow(field, value)?;
+
+    if (least..=most).contains(&narrowed) {
+        Ok(narrowed)
+    } else {
+        Err(ConfigError::OutsideRange {
+            field,
+            value: narrowed,
+            least,
+            most,
         })
     }
 }
@@ -593,6 +684,26 @@ pub struct LightConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PhysicsConfig {
     pub drag: f32,
+
+    /// How much harder the water resists a cell moving **across** its own body axis than
+    /// along it, as the power `drag` is raised to.
+    ///
+    /// ⭐ **This is the one setting in the file without which nothing in the world can
+    /// swim**, and the reason is arithmetic rather than balance. With one drag for every
+    /// direction, `physics.rs`'s integrator has a conserved quantity: every internal force
+    /// is `+f` on one cell and `-f` on another, there is no mass, and one scalar multiplies
+    /// every velocity - so a free body's *total* velocity is only ever multiplied by `drag`
+    /// and decays to nothing. That is stronger than the scallop theorem, which a travelling
+    /// wave normally escapes. Measured over 2,000 ticks of a twelve-celled undulator, the
+    /// body moved 0.00015 world units, which is the noise floor of a 32-bit float.
+    ///
+    /// What real swimming at this scale works on is **drag anisotropy**: a slender body
+    /// resists motion across its axis roughly twice as hard as along it, so a wave passing
+    /// down it pushes the water backwards and the body forwards. Two is that factor, and it
+    /// is what the world ships with. See [`DRAG_ANISOTROPY_FLOOR`] for what one means and
+    /// [`DRAG_ANISOTROPY_CEILING`] for why three is the end.
+    pub drag_anisotropy: f32,
+
     pub collision_stiffness: f32,
     pub spring_damping: f32,
 }
@@ -748,6 +859,16 @@ impl RawConfig {
             physics: PhysicsConfig {
                 // "velocity retained per tick" - a proportion of what was there before.
                 drag: fraction("physics.drag", self.physics.drag)?,
+                // Bounded at both ends, and neither end is SPEC's. One is the isotropic
+                // water this project shipped with, in which a body's total velocity is
+                // conserved and nothing can move; three is where the arithmetic stopped
+                // computing when it was pushed. See the two constants.
+                drag_anisotropy: within(
+                    "physics.drag_anisotropy",
+                    self.physics.drag_anisotropy,
+                    DRAG_ANISOTROPY_FLOOR,
+                    DRAG_ANISOTROPY_CEILING,
+                )?,
                 collision_stiffness: positive(
                     "physics.collision_stiffness",
                     self.physics.collision_stiffness,
@@ -868,6 +989,7 @@ mod tests {
             ("light.patchiness", raw.light.patchiness),
             ("light.diffusion", raw.light.diffusion),
             ("physics.drag", raw.physics.drag),
+            ("physics.drag_anisotropy", raw.physics.drag_anisotropy),
             (
                 "physics.collision_stiffness",
                 raw.physics.collision_stiffness,
@@ -900,7 +1022,7 @@ mod tests {
     /// Obvious, and it is here because the obvious rule for narrowing a number fails it.
     /// That rule is "accept the number only if converting it back gives exactly what was
     /// written", which sounds like precisely the right standard and rejects fifteen of
-    /// the twenty-three numbers in SPEC's own defaults - `influx`, `drag`, `patchiness` and
+    /// the twenty-five numbers in SPEC's own defaults - `influx`, `drag`, `patchiness` and
     /// most of the mutation rates among them. The reason is that a value like `0.012` has
     /// no exact representation in binary at either size, so the two sizes round it
     /// slightly differently and the comparison fails. Under that rule the shipped
@@ -916,8 +1038,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            24,
-            "SPEC section 3 has twenty-four decimal settings; this list has {}, so one has \
+            25,
+            "SPEC section 3 has twenty-five decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );
@@ -930,7 +1052,7 @@ mod tests {
 
         assert!(
             refused.is_empty(),
-            "{} of the 23 numbers in SPEC's own default configuration cannot be loaded:\n  {}",
+            "{} of the 25 numbers in SPEC's own default configuration cannot be loaded:\n  {}",
             refused.len(),
             refused.join("\n  ")
         );
@@ -978,9 +1100,9 @@ mod tests {
 
     /// SPEC's own defaults go through the gate and come out the other side unchanged.
     ///
-    /// Every one of the thirty-four settings is checked, not a sample, and the reason is
+    /// Every one of the thirty-five settings is checked, not a sample, and the reason is
     /// the shape of the code being tested rather than thoroughness for its own sake.
-    /// Turning a document into a checked configuration is thirty-four hand-written
+    /// Turning a document into a checked configuration is thirty-five hand-written
     /// assignments in a row, all of the same shape, several of them neighbours with
     /// identical types - `gradient` and `patchiness` sit side by side and are both
     /// fractions between zero and one. Copy the wrong one and every test that looks at a
@@ -1012,12 +1134,13 @@ mod tests {
         assert_eq!(config.light.diffusion, 0.04);
 
         assert_eq!(config.physics.drag, 0.92);
+        assert_eq!(config.physics.drag_anisotropy, 2.0);
         assert_eq!(config.physics.collision_stiffness, 40.0);
         assert_eq!(config.physics.spring_damping, 0.35);
 
         assert_eq!(config.metabolism.upkeep_scale, 1.0);
         assert_eq!(config.metabolism.gene_cost, 0.0001);
-        assert_eq!(config.metabolism.movement_cost, 0.15);
+        assert_eq!(config.metabolism.movement_cost, 0.0001);
         assert_eq!(config.metabolism.reproduction_threshold, 2.2);
         assert_eq!(config.metabolism.offspring_share, 0.45);
 
@@ -1085,7 +1208,7 @@ mod tests {
         // because 0.5 *is* a fraction: what excludes it is the stability of the arithmetic
         // rather than the meaning of the setting, and it is the value somebody would
         // actually write.
-        let corruptions: [(&str, Corruption); 24] = [
+        let corruptions: [(&str, Corruption); 25] = [
             ("world.width", |raw| raw.world.width = 0.0),
             ("world.height", |raw| raw.world.height = 0.0),
             ("world.years_per_tick", |raw| raw.world.years_per_tick = 0.0),
@@ -1095,6 +1218,12 @@ mod tests {
             ("light.patchiness", |raw| raw.light.patchiness = 1.5),
             ("light.diffusion", |raw| raw.light.diffusion = 0.5),
             ("physics.drag", |raw| raw.physics.drag = 1.5),
+            // Past the ceiling rather than below the floor, because the ceiling is the end
+            // that was found by the arithmetic going wrong rather than by argument, and 4
+            // is a number somebody experimenting with a livelier world would type.
+            ("physics.drag_anisotropy", |raw| {
+                raw.physics.drag_anisotropy = 4.0;
+            }),
             ("physics.collision_stiffness", |raw| {
                 raw.physics.collision_stiffness = 0.0;
             }),
@@ -1153,6 +1282,49 @@ mod tests {
                 complaint.starts_with(&format!("{field}: ")),
                 "{field} was set to something its meaning excludes, and the complaint was \
                  about something else: {complaint}"
+            );
+        }
+    }
+
+    /// ⭐ Both ends of `physics.drag_anisotropy` are reachable, and a hair outside either is
+    /// refused.
+    ///
+    /// The two ends are bounds of different kinds and the test is here because neither is
+    /// SPEC's. **One** is isotropic water - the model this project shipped with, and the one
+    /// in which a free body's total velocity is a conserved quantity of the integrator, so
+    /// that no arrangement of muscles moves anything. It has to stay reachable, because it is
+    /// the control experiment for every claim about swimming. **Three** is where the
+    /// arithmetic stopped: see [`DRAG_ANISOTROPY_CEILING`].
+    ///
+    /// Both ends are accepted rather than only approached, for the reason
+    /// `DIFFUSION_STABILITY_LIMIT` gives: a limit that cannot be reached is a limit one step
+    /// lower with nobody able to tell which.
+    #[test]
+    fn the_drag_anisotropy_range_is_closed_at_both_ends() {
+        let at = |value: f64| {
+            let mut raw = spec_defaults();
+            raw.physics.drag_anisotropy = value;
+            raw.validate()
+        };
+
+        assert!(
+            at(f64::from(DRAG_ANISOTROPY_FLOOR)).is_ok(),
+            "isotropic water is the control experiment for every claim about swimming and \
+             the gate refuses it"
+        );
+        assert!(
+            at(f64::from(DRAG_ANISOTROPY_CEILING)).is_ok(),
+            "a limit that cannot be reached is a limit one step lower"
+        );
+
+        for outside in [0.99, 3.01] {
+            let complaint = at(outside)
+                .expect_err("a drag anisotropy outside the range must stop the run")
+                .to_string();
+
+            assert!(
+                complaint.starts_with("physics.drag_anisotropy: "),
+                "{outside} was refused and the complaint was about something else: {complaint}"
             );
         }
     }

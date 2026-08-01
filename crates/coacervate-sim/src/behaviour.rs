@@ -173,6 +173,28 @@ const SENSE_RANGE: f32 = MAX_REST_LENGTH;
 /// corpse, so being smaller than the cell it came from is the right shape for it.
 const DETRITUS_RADIUS: f32 = 1.0;
 
+/// What a light gradient is measured against: the half-signal mark for a sensocyte tuned to
+/// [`SensorTarget::Light`].
+///
+/// ⭐ **Phase 7, and the reason a light sensor was worth nothing before it.** See [`sense`]
+/// for the normalisation this replaces and what it cost.
+///
+/// Two hundredths is not a round number chosen to be one. It is **the background gradient of
+/// the shipped world**, worked out from SPEC section 4's own formula rather than measured: a
+/// tile's ceiling is `cap × (1 - gradient × depth)`, so at a `cap` of 8, a `gradient` of 0.75
+/// and 144 rows the light falls by `8 × 0.75 / 144 = 0.042` a row, and the central difference
+/// [`light_gradient`] takes is half of what lies two rows apart - which is that figure again.
+/// The field settles at about half its ceiling once there is a population eating out of it,
+/// so a sensocyte in open water at equilibrium reads about **0.02**.
+///
+/// Putting the reference *there* is what makes the number mean something: a signal of a half
+/// is "the ordinary gradient of open water", below that is flatter than usual, and a tile
+/// something has been grazing - which is ten to a hundred times steeper - runs up towards one
+/// without ever reaching it. It is deliberately not a configuration key. A cell has no way to
+/// know what `light.cap` is set to, and a sensor whose meaning moved with the weather would be
+/// one whose evolved gain meant something different after every change of conditions.
+const LIGHT_REFERENCE: f32 = 0.02;
+
 /// Everything one pass of behaviour is allowed to touch that is alive.
 ///
 /// Grouped into one argument rather than passed as six, because six references threaded
@@ -1214,27 +1236,30 @@ struct Surroundings<'a> {
 /// single source right against the sensocyte - so "one thing, touching" is the half-signal
 /// mark, two are two thirds, and a crowd approaches but never reaches saturation.
 ///
-/// For **light** the reference is the energy of the tile the sensocyte is standing in, which
-/// makes the signal a *relative* gradient: how much the light changes across a tile as a
-/// fraction of how much light there is. That is the right normalisation for a field whose
-/// scale is set by a configuration slider rather than by anything a cell can know - and it has
-/// a consequence worth knowing about, which is that the same absolute gradient reads
-/// **stronger in dim water than in bright**. A sensocyte deep down is therefore more sensitive
-/// than one at the surface, which is where a lineage would want the sensitivity.
+/// For **light** the reference is [`LIGHT_REFERENCE`], a fixed quantity of energy, which makes
+/// the signal an *absolute* gradient: how much the light changes across a tile, against how
+/// much it changes across a tile in the world as the light alone leaves it.
 ///
-/// ⚠️ **The light signal is small under SPEC's shipped defaults.** The light falls by
-/// `gradient` over the whole height of the world, which is 0.5% of the ceiling per tile - so a
-/// sensocyte in still, full water reads about 0.005, and with `MAX_SENSOR_GAIN` at one that
-/// moves a myocyte's amplitude by half a percent. Phototaxis on the *background* gradient is
-/// therefore reachable in principle and almost invisible in practice; what a light sensor can
-/// actually see is a tile something has been eating out of, which reads ten to a hundred times
-/// higher. `genome.rs` says Phase 4 owns the gain's magnitude, and Group D is where that has
-/// to be settled against a running ecology.
+/// ⭐ **That is Phase 7's correction, and the thing it replaced is the reason nothing had ever
+/// used a light sensor.** The reference used to be the energy of the tile the sensocyte was
+/// standing in, which made the signal *relative*: how much the light changes across a tile as
+/// a fraction of how much light there is. It reads well in principle - the same gradient is
+/// worth more in dim water, so a cell deep down is more sensitive - and in the shipped world
+/// the divisor is about **four units** against a gradient of about **two hundredths**, so
+/// every reading came back a couple of thousandths and a sensocyte's whole output was smaller
+/// than the rounding on the amplitude it drives. Measured: 0.0025 for the background gradient,
+/// and 0.05 to 0.31 beside a tile something had been grazing.
+///
+/// Dividing by a fixed reference instead puts the background gradient near the middle of the
+/// range and a grazed tile near the top of it, which is a signal a gene can be selected on.
+/// The price is the property that was nice about the old one: the light is now read the same
+/// way at every depth, and a lineage wanting to be more sensitive in the dark has to evolve
+/// the gain for it.
 fn sense(target: SensorTarget, around: &Surroundings<'_>, index: usize) -> f32 {
     let here = around.cells[index];
 
     let (lopsided, reference) = match target {
-        SensorTarget::Light => light_gradient(around.grid, here.pos),
+        SensorTarget::Light => (light_gradient(around.grid, here.pos), LIGHT_REFERENCE),
         SensorTarget::Detritus => (drift_gradient(around, here.pos), 1.0),
         SensorTarget::ForeignBiomass => (crowd_gradient(around, index), 1.0),
     };
@@ -1308,7 +1333,7 @@ fn drift_gradient(around: &Surroundings<'_>, at: Vec2) -> f32 {
     lopsided.length()
 }
 
-/// How fast the light changes around a point, and how much of it there is there.
+/// How fast the light changes around a point.
 ///
 /// A central difference over the four tiles around the one the cell is standing in - the
 /// coarsest possible answer, and the only one available: the resource field *is* tiles, and
@@ -1316,7 +1341,7 @@ fn drift_gradient(around: &Surroundings<'_>, at: Vec2) -> f32 {
 /// vertically it stops at the surface and the floor, where the one-sided difference that
 /// results is half of the real slope and the honest answer to a question with nothing on one
 /// side of it.
-fn light_gradient(grid: &Grid, at: Vec2) -> (f32, f32) {
+fn light_gradient(grid: &Grid, at: Vec2) -> f32 {
     let tile = grid.tile_at(at);
     let (cols, rows) = (grid.cols(), grid.rows());
     let (col, row) = (tile % cols, tile / cols);
@@ -1327,10 +1352,7 @@ fn light_gradient(grid: &Grid, at: Vec2) -> (f32, f32) {
     let over = tiles[row.saturating_sub(1) * cols + col];
     let under = tiles[(row + 1).min(rows - 1) * cols + col];
 
-    (
-        Vec2::new((east - west) * 0.5, (under - over) * 0.5).length(),
-        tiles[tile],
-    )
+    Vec2::new((east - west) * 0.5, (under - over) * 0.5).length()
 }
 
 /// SPEC section 9's controller, for one myocyte at one moment: what its spring's rest length
@@ -2580,15 +2602,24 @@ mod tests {
         let spent = 4.0 - scene.energy(swimmer);
         let spent_stiff = 4.0 - scene.energy(stiff);
 
-        // Measured: 2.790 over the hundred and thirty ticks, which is **0.0215 a tick** for a
-        // spring of stiffness ten worked at the bare amplitude - one and a half times a
-        // myocyte's upkeep, and about a quarter of what a photocyte earns off a full tile.
-        // Worth knowing when Group D comes to tune `movement_cost`, and worth knowing that it
-        // is an *upper* bound: nothing moves in this scene, so the spring never gets to
-        // relieve its own tension the way it would with the physics running.
+        // ⚠️ **Phase 7 moved this figure by a factor of fifteen hundred, and deliberately.**
+        // It read 2.790 over the hundred and thirty ticks, which is 0.0215 a tick for a spring
+        // of stiffness ten worked at the bare amplitude - **one and a half times a myocyte's
+        // own upkeep of 0.014, for one spring, at rest, with no sensor driving it.** A body
+        // that swam therefore paid several times its own cost of living to do so, and nothing
+        // it could have found on the other side would have covered that: the whole energy of a
+        // tile at the shipped `cap` and `influx` is worth about 3e-4 to cross, so `movement_cost`
+        // at 0.15 was roughly a thousand times break-even. Swimming could not pay whatever it
+        // discovered. `config/default.toml` now ships **0.0001**, and this is that number: 0.00186
+        // over the same hundred and thirty ticks, which is **1.4e-5 a tick**, or a thousandth of
+        // a myocyte's upkeep.
+        //
+        // It is still an *upper* bound on what a real muscle pays: nothing moves in this scene,
+        // so the spring never gets to relieve its own tension the way it would with the physics
+        // running.
         assert!(
-            (spent - 2.79).abs() < 0.01,
-            "a myocyte spent {spent} over a hundred and thirty ticks, against the 2.790 \
+            (spent - 0.00186).abs() < 1e-5,
+            "a myocyte spent {spent} over a hundred and thirty ticks, against the 0.00186 \
              recorded here"
         );
         assert!(

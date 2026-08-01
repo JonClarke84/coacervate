@@ -529,12 +529,42 @@ mod tests {
             spread += home;
         }
 
+        // ⚠️ **Phase 7 moved this band from 0.15 to 0.2, and the reason is worth writing down
+        // rather than the number being quietly changed.** `genome.rs`'s `MAX_SENSOR_GAIN` went
+        // from 1 to 8, and at the tenfold point rate this test runs at, a gain used to spend
+        // most of its life pressed against its own clamp - where a point mutation changes
+        // nothing whatever, so `divergence_from` sees an identical gene and the marker does not
+        // move at all. Off the clamp the same mutations are real ones, and lineages drift
+        // faster. Measured: the furthest a body was drawn from its founder went from inside
+        // 0.15 to **0.1512**.
+        //
+        // The band is still doing its job, and the assertion after it is what says so rather
+        // than a number chosen to be comfortable: the counterfactual is *measured*, on this
+        // very population, by colouring it Group B's way instead.
         assert!(
-            furthest < 0.15,
+            furthest < 0.2,
             "a body is drawn {furthest} round the wheel from the founder it descends from. \
              Colour is supposed to say which colony something belongs to, and at that distance \
              it no longer does - which is exactly what a hue taken from the genome fingerprint \
              gives, because a fingerprint knows nothing about descent"
+        );
+
+        // ⭐ The same bodies, coloured from their genome fingerprints. A fingerprint knows
+        // nothing about descent, so this is what the band above would be measuring if the
+        // marker were not inherited.
+        let mut by_fingerprint = 0.0_f32;
+        for organism in world.organisms().iter().flatten() {
+            let hue = hue_of_the_fingerprint(organism.genome_hash());
+            by_fingerprint =
+                by_fingerprint.max(apart(hue, founders[0]).min(apart(hue, founders[1])));
+        }
+
+        assert!(
+            by_fingerprint > furthest * 1.5,
+            "the same population coloured from its genome fingerprint puts a body \
+             {by_fingerprint} round the wheel from its founder, against the inherited marker's \
+             {furthest}. Those are close enough that this test cannot tell descent from a \
+             hash, and the band above is measuring nothing"
         );
         assert!(
             spread > 0.0,

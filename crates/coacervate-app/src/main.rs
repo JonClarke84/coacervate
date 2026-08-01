@@ -621,12 +621,13 @@ mod tests {
         assert_eq!(raw.light.diffusion, 0.04);
 
         assert_eq!(raw.physics.drag, 0.92);
+        assert_eq!(raw.physics.drag_anisotropy, 2.0);
         assert_eq!(raw.physics.collision_stiffness, 40.0);
         assert_eq!(raw.physics.spring_damping, 0.35);
 
         assert_eq!(raw.metabolism.upkeep_scale, 1.0);
         assert_eq!(raw.metabolism.gene_cost, 0.0001);
-        assert_eq!(raw.metabolism.movement_cost, 0.15);
+        assert_eq!(raw.metabolism.movement_cost, 0.0001);
         assert_eq!(raw.metabolism.reproduction_threshold, 2.2);
         assert_eq!(raw.metabolism.offspring_share, 0.45);
 
@@ -871,6 +872,94 @@ mod tests {
             "config/default.toml and coacervate_sim::config::spec_defaults() have drifted \
              apart: the tests and the shipped program are no longer describing the same \
              configuration"
+        );
+    }
+
+    /// ⭐ **Phase 7, Group F.** The `dense` profile is the shipped world with a quarter of the
+    /// water and the same light falling into it.
+    ///
+    /// SPEC section 3 lists the named presets and `config/dense.toml` is the fourth. It exists to
+    /// ask whether a feeding-strategy split appears once bodies actually meet one another - SPEC
+    /// section 6 makes predation emergent, and half a million ticks of the shipped world produced
+    /// one devorocyte, because at that density a cell is in contact with a stranger 13.5% of the
+    /// time.
+    ///
+    /// Three claims, and each of them is a way the file could be quietly wrong.
+    ///
+    /// **It is the same energy.** Carrying capacity is proportional to `tiles × influx` - SPEC
+    /// section 3's measured table - so a denser world is only a denser world if that product is
+    /// held. Written as an equality between the two documents rather than as the number 36.864,
+    /// so that retuning `light.influx` in `default.toml` moves both or fails here.
+    ///
+    /// **⚠️ The width is untouched.** SPEC section 8: springs are not found by the spatial hash
+    /// and have no length limit, so one created across the seam works and hauls its two cells
+    /// together the long way round. A body may hold `max_cells_per_organism` cells at up to
+    /// `MAX_REST_LENGTH` apart, which is 870 units, and in a world narrower than about twice that
+    /// a single chain reaches more than half way round it. Shrinking the height is what makes this
+    /// profile safe; shrinking the width is what would make it a bug report months later.
+    ///
+    /// **And nothing else moved.** Every other setting is asserted equal to the shipped one,
+    /// because a preset that quietly also changed the mutation rates would be an experiment with
+    /// two variables in it and no way to tell which had done the work.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the two documents' numbers are pinned against each other; an approximate \
+                  match would let a profile drift away from the one it is a variation on"
+    )]
+    fn the_dense_profile_is_the_shipped_world_with_less_water_in_it() {
+        let dense: RawConfig = toml::from_str(include_str!("../../../config/dense.toml"))
+            .expect("the dense profile parses");
+        let shipped = coacervate_sim::config::spec_defaults();
+
+        dense
+            .clone()
+            .validate()
+            .expect("the dense profile is a world the program will accept");
+
+        assert_eq!(
+            dense.world.height * 4.0,
+            shipped.world.height,
+            "the dense profile holds {} of the shipped world's depth rather than a quarter",
+            dense.world.height / shipped.world.height
+        );
+        assert_eq!(
+            dense.world.grid_rows * 4,
+            shipped.world.grid_rows,
+            "the grid was not shrunk with the world, so a tile in the dense profile is not the \
+             same 8 by 8 units of water it is everywhere else"
+        );
+
+        // ⚠️ The width, which is the one that matters. See the doc comment.
+        assert_eq!(
+            dense.world.width, shipped.world.width,
+            "the dense profile is narrower than the shipped world. SPEC section 8 warns that a \
+             spring has no length limit and is not found by the spatial hash, so a 64-cell body \
+             at MAX_REST_LENGTH reaches 870 units - and in a world this narrow that is more than \
+             half way round, where a spring hauls its cells together through the seam"
+        );
+
+        let energy = |raw: &RawConfig| {
+            f64::from(raw.world.grid_cols) * f64::from(raw.world.grid_rows) * raw.light.influx
+        };
+        assert!(
+            (energy(&dense) - energy(&shipped)).abs() < 1e-9,
+            "the dense world is offered {} units of light a tick and the shipped one {}. A \
+             profile that is denser *and* richer cannot say which of the two did anything",
+            energy(&dense),
+            energy(&shipped)
+        );
+
+        // And nothing else is different: the same document with `[world]` and `light.influx`
+        // put back.
+        let mut restored = dense;
+        restored.world.height = shipped.world.height;
+        restored.world.grid_rows = shipped.world.grid_rows;
+        restored.light.influx = shipped.light.influx;
+        assert_eq!(
+            restored, shipped,
+            "the dense profile changes something besides how much water there is and how bright \
+             it is, so a run of it is an experiment with more than one variable in it"
         );
     }
 

@@ -82,13 +82,15 @@ diffusion = 0.04         # lateral spread per tick
 
 [physics]
 drag = 0.92              # velocity retained per tick (high — viscous regime)
+drag_anisotropy = 2.0    # power `drag` is raised to across a cell's body axis — measured,
+                         # see section 8. 1.0 is isotropic water, in which nothing can swim
 collision_stiffness = 40.0
 spring_damping = 0.35
 
 [metabolism]
 upkeep_scale = 1.0       # global multiplier on all cell upkeep ("temperature")
 gene_cost = 0.0001       # per gene, per tick — see section 7
-movement_cost = 0.15     # energy per unit of work done by contraction
+movement_cost = 0.0001   # energy per unit of work done by contraction — measured, see below
 reproduction_threshold = 2.2   # × body construction cost
 offspring_share = 0.45   # fraction of parent energy passed to offspring
 
@@ -116,6 +118,38 @@ reseed_on_extinction = false
 
 Every one of these is exposed as a slider in the UI. `[world]`, `[limits]` and `seed` lock
 at run start; the rest can be changed live, which is how environmental events work.
+
+### ⭐⭐ `metabolism.movement_cost` is 0.0001, not 0.15 — measured in Phase 7
+
+**A thousandfold down, and it had to be**, because at the value this document was first
+written with, moving could never pay for itself under any circumstances whatever.
+
+The measurement is in `behaviour.rs`'s `a_myocyte_oscillates_its_springs_and_pays_for_the_work`.
+One spring of stiffness 10, worked at the resting amplitude — a myocyte with nothing to sense,
+which is what every body in the world starts as — cost **0.0215 a tick** at `0.15`. A myocyte's
+whole upkeep is 0.014. So a single muscle at rest was charged **one and a half times its own
+cost of living** for the privilege of twitching, before it had gone anywhere.
+
+Set that against what going somewhere is worth. A tile of water at the shipped `cap` and
+`influx` yields on the order of `3e-4` to a photocyte standing on it, so crossing one tile in
+search of a better one has to cost less than that to be worth doing. `0.15` is about **a
+thousand times** break-even. No stroke, no body plan and no amount of anisotropy in section 8's
+water would have made swimming a living: the ledger closed the question before the physics was
+asked. `0.0001` puts a resting muscle at a thousandth of its own upkeep and a one-tile hop just
+inside what a tile is worth.
+
+⚠️ It is deliberately **not** zero. Free movement is a coherent world to run and the gate
+accepts it, but a myocyte that costs nothing to work is a cell with no downside at all, and
+a body would accumulate them as neutral bloat.
+
+### ⭐⭐ `physics.drag_anisotropy` is 2.0, and one is the number that made this world impossible
+
+The whole argument is section 8's, because it is a fact about the integrator rather than about
+the economy, and it is the single most consequential thing measured in this project so far:
+**with one drag for every direction, nothing in this world could ever have moved.** Not slowly
+— at all, under any parameters. Two is the factor by which a long thin body in water resists
+being pushed sideways rather than lengthways, and it is what makes the shipped world one a
+lineage can swim in. Read section 8 before changing it.
 
 ### ⭐⭐ `light.influx` is the one number in this table that was measured rather than chosen
 
@@ -173,11 +207,12 @@ it closes the window between "old enough to breed" and "dead" from both ends at 
 founder's death, before a single birth.** The temperature slider is a real environmental
 pressure and it is not a carrying-capacity control.
 
-**Profiles.** Ship named presets rather than expecting anyone to tune 25 sliders from cold:
+**Profiles.** Ship named presets rather than expecting anyone to tune 26 sliders from cold:
 
 | Profile | Intent |
 | --- | --- |
 | `default` | Balanced. The starting point for experiments on the PC. Settles near 2,200 organisms with the field about half eaten. |
+| `dense` | ⭐ **The same total energy in a quarter of the water** — `world.height` cut to 288 with `light.influx` raised fourfold to match, so `tiles × influx` is the `default` profile's exactly. It exists to ask section 6's open question: does a feeding-strategy split appear once bodies actually *meet* one another? At the shipped density only **13.5%** of cells are in contact with a foreign body; at four times it, **58.8%** are, and predation measured **eight times** higher. ⚠️ **The height is what shrinks, never the width.** Section 8 warns that springs have no length limit and are not found by the spatial hash, and a 64-cell body at `MAX_REST_LENGTH` reaches 870 units — so in a world narrower than about 1,200 a single chain reaches more than half way round it and that warning goes live. ⚠️ And the population *falls* here rather than holding: raising `influx` further to prop it back up is the `bloom` failure below, arrived at by a different road. |
 | `slow` | `max_ticks_per_second` reduced so meaningful change happens over hours rather than minutes. For leaving it up on a second screen and noticing it rather than watching it. |
 | `bloom` | High light influx — the old `0.012` is exactly this. **The population fills `max_organisms` and stops, with the water still full**, which is stagnation by way of the arena rather than by way of abundance. Worth shipping precisely because it is what a too-bright world actually looks like from the outside: a healthy-looking constant population with no selection acting on it. |
 | `famine` | Low influx — a world of a few hundred bodies rather than a few thousand. ⚠️ **It does not produce extinction, and that is a measured finding rather than an oversight.** At a tenth of the shipped light the population settles at about 210 and goes on turning over indefinitely, because how hard a body has to work to replace itself does not depend on how much light there is — only how many bodies the world can carry does. What *does* end a run is `upkeep_scale`: at 3 or above, a founder dies of old age before it has earned the reproduction threshold, and nothing is ever born. If a preset is wanted that demonstrates extinction, that is the slider it has to move. |
@@ -540,9 +575,138 @@ Per tick, semi-implicit Euler:
 force = 0
 force += spring forces from adhered neighbours (Hooke, with spring_damping)
 force += collision repulsion from overlapping non-adhered cells
-vel = (vel + force × dt) × drag        // drag ≈ 0.92, so velocity ≈ force
+
+vel += force × dt
+along = the direction between this cell's adhered neighbours, if it has two
+vel  = along-component × drag  +  across-component × drag^drag_anisotropy
+                                       // no axis: × drag in every direction, as before
 pos += vel × dt
 ```
+
+⭐⭐ **The two-drag line replaced a one-drag line in Phase 7, and the reason is the most
+important measurement in this document.** It is set out immediately below, before anything
+else in this section, because every other sentence here was written on the assumption that
+locomotion was possible and none of it was true.
+
+### ⭐⭐ Nothing could swim, and it was not a balance problem — it was a conservation law
+
+Written as this section originally had it — one `drag`, applied identically to every cell —
+**a free body's total velocity is a conserved quantity of the integrator, and it decays to
+zero.** Not "swimming was slow", or "the parameters were wrong". Movement was arithmetically
+impossible, for every body plan, at every setting of every slider in section 3.
+
+Three facts about the model above, each of them deliberate and each of them fine on its own:
+
+1. **Every internal force appears twice, with opposite signs.** A spring pulls `+f` on one
+   cell and `−f` on the other; so does a collision. That is Newton's third law and it is what
+   makes the forces honest.
+2. **There is no mass.** This section says so in as many words. Force becomes velocity
+   directly.
+3. **`drag` is one scalar and every cell gets the same one.**
+
+Put them together and sum the velocity update over the cells of one body:
+
+```
+Σvel ← (Σvel + Σforce × dt) × drag       and Σforce = 0, because every force cancels
+Σvel ← Σvel × drag
+```
+
+The total velocity is multiplied by 0.92 every tick and touched by nothing else. Whatever the
+muscles do, it goes to zero and stays there, and the body's centre never moves. **Measured:
+`|Σvel|` of 5.96e-7 after 2,000 ticks, and a twelve-cell travelling-wave undulator moved
+0.00015 world units per 1,000 ticks** — which is the noise floor of a 32-bit float, not slow
+swimming.
+
+**This is stronger than the scallop theorem, and that is why it was missed.** The scallop
+theorem is the well-known result that at low Reynolds number a *reciprocal* stroke — one that
+retraces its own shape — goes nowhere however fast it is performed. A travelling wave is the
+textbook way out of it, and section 9's controller is built to produce one. It escapes the
+scallop theorem and it did not escape this, because this is not a statement about strokes at
+all. It is a statement about the integrator.
+
+### What real swimming works on, and what the fix is
+
+A body at this scale does not swim by pushing off anything. It swims because **the water
+resists a slender body about twice as hard across its axis as along it** — that is the whole
+of resistive-force theory, and it is why a flagellum works. A wave running down a body puts
+each segment obliquely to its own motion, the sideways resistance exceeds the lengthways one,
+and the imbalance is thrust.
+
+The model above had no anisotropy at all, so there was nothing for a wave to push against.
+`physics.drag_anisotropy` is the fix, and it is deliberately a *property of the water* rather
+than a force added to a cell: the cell's velocity is split into the part running along its own
+body and the part crossing it, and the two are damped by different amounts. Because the two
+parts add back to exactly what was there, a cell moving straight along its own axis is left
+with precisely `drag` — the physics this section always described — and only motion across the
+body is treated differently.
+
+**Where the axis comes from.** The line between a cell's two adhered neighbours. A cell with
+**fewer than two adhesions has no axis and keeps the plain isotropic drag**, and that is
+load-bearing rather than tidy: the tempting alternatives — use the one spring it does have, or
+break the tie the way the collision code does and say sideways — would hold every loose cell
+in the world harder in one direction than another, in a direction decided by the order the
+body happens to be stored in. That is thrust with no muscle behind it, and it would look
+exactly like life.
+
+**Measured, at the shipped `drag` of 0.92 and `drag_anisotropy` of 2.0**, over 1,000 ticks:
+
+| Body | Isotropic (`k = 1`) | Shipped (`k = 2`) |
+| --- | --- | --- |
+| One myocyte, one spring | 0 | 0 |
+| Two springs at π/2, cells in a line | 0.0005 | 0.0005 |
+| Six-cell travelling wave, cells in a line | 0.0003 | 0.0003 |
+| **Eight-cell zig-zag, resting stroke** | 0.0005 | **0.154** |
+| **Eight-cell zig-zag, driven to full amplitude** | 0.0004 | **1.896** |
+| Eight-cell zig-zag, springs in antiphase | 0.0001 | 0.0002 |
+
+Two things in that table matter as much as the headline.
+
+**⚠️ A body whose cells lie in a straight line still cannot swim, and that is correct.** Its
+springs run along the line, so all its motion is along the line, so every cell's velocity is
+parallel to its own axis and the sideways drag never engages. A straight rod that only
+lengthens and shortens along itself is doing one-dimensional motion, and nothing
+one-dimensional swims in any fluid. **What a lineage has to find is a shape, not a rhythm** —
+development buds every daughter at a gene's `angle`, so a bent body is the ordinary case, but a
+lineage that grows a straight spine gets nothing at all from its muscles until something bends
+it.
+
+**And the scallop theorem still holds**, which is the check that the new water is water: the
+last row is the same kinked body with its springs beating in antiphase, which is a reciprocal
+stroke, and it goes nowhere in either column.
+
+`drag_anisotropy` is bounded at `1.0..=3.0`. One is isotropic water — kept reachable because it
+is the control experiment for every claim above. Three is where the arithmetic stopped: at a
+`collision_stiffness` of 5,000, which is inside the range the explicit integrator otherwise
+survives, a pile of cells produced not-a-number within a few hundred ticks. Splitting a
+velocity and damping the halves unequally is a *rotation* of that velocity towards the body
+axis, and a cell whose axis is itself turning under a stiff collision can be handed a velocity
+pointing somewhere no force pushed it; past three the correction and the overshoot stop
+cancelling.
+
+### ⚠️ The same law says gravity is not the lever it looks like
+
+The obvious next idea, once bodies can swim, is to make them sink — give every cell a small
+constant downward pull, so that staying in the light costs work and depth becomes something a
+lineage has to earn. **It does not work, and it fails for exactly the reason above.**
+
+Gravity is an *external* force, so `Σforce` is no longer zero and the body does move — straight
+down, at a terminal velocity of `g × dt × drag / (1 − drag)`, and there is nothing a muscle can
+do about it. A muscle only ever produces internal forces, which still cancel in the sum. It can
+change the body's *shape* while it falls; it cannot change the rate of the fall.
+
+Measured: a body contracting hard against gravity fell **0.1% slower** than the same body
+holding still. That is not a lineage swimming upwards against a current, it is rounding.
+
+**Buoyancy as a property of `CellKind` is the version of the idea that works**, and it is worth
+recording as the design to reach for rather than the one that was tried. Give each of section
+6's six kinds its own weight — some heavier than water, some lighter — and a body's depth
+follows from *what it is made of*. The consequences are all the right shape: a body's resting
+depth becomes a function of its composition, which is a function of its genome; changing it
+takes **one mutation** to one gene's `child_kind`, which is the smallest step the mutation
+operators have; a lineage that wants to be shallower pays for it in whatever the floaty cell is
+bad at rather than in continuous work; and there is a real trade-off, because the kind that
+harvests and the kind that floats need not be the same kind. Nothing in it asks a muscle to do
+something the integrator forbids.
 
 Neighbour queries use a **uniform spatial hash** sized to **twice** the largest cell radius.
 This is the single most important performance decision on the CPU side: it takes collision
@@ -599,7 +763,42 @@ sampled from the resource grid or from nearby foreign biomass.
 Because `sensor_gain` is signed and evolvable, both attraction and avoidance are reachable
 by mutation, and phototaxis, detritus-seeking and predator-avoidance are all *discoverable*
 rather than coded. Undulating locomotion falls out of neighbouring myocytes evolving
-compatible `osc_phase` values.
+compatible `osc_phase` values — and, section 8 adds, out of the body being **bent**, which is
+the part that is not obvious.
+
+### ⭐ What a light sensor is normalised against — measured in Phase 7
+
+"Normalised" was left undefined here, and the first reading of it was the natural one: divide
+the gradient by **the energy of the tile the sensocyte is standing in**, so the signal is a
+*relative* gradient. It reads well — the same slope is worth more in dim water, so a cell deep
+down is more sensitive, which is where a lineage would want the sensitivity — and it made a
+light sensor worth nothing whatever.
+
+The arithmetic is one line. Section 4's field falls by `cap × gradient` over `grid_rows`, which
+in the shipped world is `8 × 0.75 / 144 = 0.042` a row, and the field settles at about half its
+ceiling once a population is eating out of it — so the gradient a sensocyte can see is about
+**0.02**. The divisor was the tile's own energy, about **4**. Every reading came back at a few
+thousandths, which moved a myocyte's amplitude by less than the rounding on it. Measured:
+**0.0025** for the background gradient, and 0.05 to 0.31 beside a tile something had been
+grazing.
+
+So the reference is now **fixed** — the 0.02 above, which is the gradient of ordinary open
+water — and the signal is an *absolute* gradient rather than a relative one. A reading of a half
+means "the ordinary slope of open water", less means flatter, and a grazed tile runs up towards
+one without reaching it. The price is the property that was nice about the first reading: light
+is now read the same way at every depth, and a lineage wanting to be more sensitive in the dark
+has to evolve the gain for it.
+
+`MAX_SENSOR_GAIN` moved with it, from **1.0 to 8.0**. It is the range a gain is *drawn* from
+rather than a bound on the field, and at one a gain spent most of its life pressed against its
+own clamp, where a point mutation changes nothing at all.
+
+⚠️ **The genetic distance of section 11 does not follow that number, and must not.** It scaled
+a difference in `sensor_gain` by `2 × MAX_SENSOR_GAIN`, which is the obvious thing to write and
+is wrong for one reason: genetic distance is the unit every species boundary in every chronicle
+is measured in, and moving it would silently redraw them all. The two are now separate
+constants — one is a sensor's range, the other is a unit of measurement, and only the first is
+free to move as the model is tuned.
 
 **Phase 2 — evolved neural networks**, whose inputs and outputs wire to whatever sensory
 and contractile cells the body actually grew, so anatomy and behaviour co-evolve. Far more
@@ -868,6 +1067,12 @@ from eight founders. The equilibrium above holds from tick 50,000 to tick 200,00
 and fifty thousand ticks of a flat population. Then it **moves**, and what moves it is the
 bodies:
 
+⚠️ **The table below was measured on the pre-Phase-7 program** — isotropic water, a
+`movement_cost` of 0.15, a `MAX_SENSOR_GAIN` of 1 — and every one of those three moved in Phase
+7. The run is not reproducible from today's binary and its last line explains why the change
+was made: one myocyte in a population of 794, in a world where a myocyte could not have moved
+anything if it had tried. The Phase 7 re-measurement is beneath it.
+
 | Tick | Population | Mean cells | Mean genes | Field |
 | --- | --- | --- | --- | --- |
 | 50,000 | 2,138 | 1.99 ± 0.12 | 2.10 | 55% |
@@ -885,3 +1090,35 @@ myocyte and 1 devorocyte.
 That is the outcome CLAUDE.md's decision log calls a realistic overnight one, arriving
 unprompted: multicellularity, from a founder of two cells, with no term anywhere in the model
 that rewards being larger.
+
+### ⭐⭐ Re-measured in Phase 7, after the water was made anisotropic
+
+Three hundred thousand ticks at the shipped configuration, eight founders, seed 42, with
+`drag_anisotropy` at 2.0, `movement_cost` at 0.0001 and `MAX_SENSOR_GAIN` at 8. Ticks are the
+world's, so the first ten thousand are the dawn.
+
+| Tick | Population | Mean cells | Mean genes | Field | Myocytes |
+| --- | --- | --- | --- | --- | --- |
+| 50,000 | 2,070 | 1.98 | 1.90 | 60% | 2 |
+| 100,000 | 2,159 | 2.03 | 2.45 | 48% | 0 |
+| 150,000 | 2,007 | 2.22 | 2.89 | 47% | 1 |
+| 200,000 | 1,498 | 3.21 | 3.86 | 43% | 0 |
+| 250,000 | 844 | 6.07 | 6.28 | 38% | 0 |
+| 310,000 | 650 | 8.39 | 8.75 | 36% | 1 |
+
+**It is the same world, arriving sooner.** Living biomass sits between 30,000 and 34,000
+throughout, exactly as before; the population falls by two thirds while bodies quadruple; and the
+end state — 4,797 photocytes, 652 gonocytes, 11 sclerocytes, 6 sensocytes, 1 myocyte, 0
+devorocytes — is the same shape of population the half-million-tick run reached, at a little over
+half the ticks. Neither of the failure modes the changes were watched for appeared: myocytes did
+not accumulate as neutral bloat now that moving is nearly free (a myocyte costs 0.014 a tick to own
+against a photocyte's 0.004, which is what was ever pricing it), and mean depth drifted only from
+296 to 483 in a world 1,152 deep rather than to the surface.
+
+⚠️ **And it is still one myocyte, which is worth being exact about.** Swimming is now possible and
+measurable — section 8's table — and it is far too slow to be worth anything: a body that lives 571
+to 2,000 ticks and swims 0.154 world units per 1,000 has moved a fortieth of its own width by the
+time it dies. **The mechanism exists; the payoff does not yet.** That is a different situation from
+the one before, where the payoff was exactly zero and provably so, and it says where to look next —
+at the speed, which means the beat, the swing, or section 8's buoyancy-by-`CellKind`, and not at the
+water.

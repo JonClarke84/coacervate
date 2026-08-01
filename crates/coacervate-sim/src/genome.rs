@@ -292,11 +292,42 @@ pub const MAX_OSC_FREQ: f32 = 5.0;
 /// The strongest a gene may make a sensocyte's response, in either direction, when one is
 /// drawn at random.
 ///
-/// The magnitude is arbitrary and Phase 4 owns it - what a gain multiplies *into* does not
-/// exist yet. What is not arbitrary is that the draw is symmetric about zero, so a random
-/// sensocyte is as likely to be repelled by what it senses as attracted to it. See
+/// The magnitude was arbitrary while nothing read it and Phase 4 left it at one. Phase 7
+/// measured what it multiplies into and moved it to **eight**. Two figures decided that: at a
+/// gain of one, a sensocyte in the shipped world read the background light gradient as a
+/// signal of about **0.0025**, which moves SPEC section 9's amplitude by a quarter of a
+/// percent off a base of 0.3 - reachable in principle and invisible in practice - and read a
+/// tile something had been grazing at 0.05 to 0.31, which one is about right for. The
+/// background wanted twenty to forty times more.
+///
+/// Most of that gap is closed in `behaviour.rs` instead, by normalising the light signal
+/// against a fixed reference rather than against the tile's own energy, which is where the
+/// factor of a hundred was hiding. What is left is this, and eight is enough of it.
+///
+/// What is not arbitrary, and has not changed, is that the draw is symmetric about zero, so a
+/// random sensocyte is as likely to be repelled by what it senses as attracted to it. See
 /// [`Gene::sensor_gain`].
-pub const MAX_SENSOR_GAIN: f32 = 1.0;
+///
+/// ⚠️ **[`Genome::distance_from`] must not follow this number.** See [`SENSOR_GAIN_SPREAD`].
+pub const MAX_SENSOR_GAIN: f32 = 8.0;
+
+/// The range a difference in `sensor_gain` is measured against when two genomes are compared.
+///
+/// ⭐ **Deliberately its own constant, and deliberately not [`MAX_SENSOR_GAIN`], though it was
+/// written as `2 × MAX_SENSOR_GAIN` until Phase 7.** It is the width of the whole span a gain
+/// could be drawn across, which is what every other numeric field in [`gene_distance`] is
+/// scaled by - so tying it to the draw was the obvious thing to write and it is wrong for one
+/// reason: **the genetic distance is the unit every species boundary in every chronicle is
+/// measured in.** Move it and two lineages that were one species become two, or the reverse,
+/// in every recording ever made and in every run since - silently, because nothing anywhere
+/// compares a species count against what it used to be.
+///
+/// So the two are cut apart. `MAX_SENSOR_GAIN` is free to move as Phase 7 measures what a gain
+/// actually multiplies into; this number is a **unit of measurement** and moves only when
+/// somebody means to redefine what a species is. `spread` truncates at one, so a gene carrying
+/// a gain outside this span costs exactly what any other maximally different field costs and
+/// cannot outweigh the other fifteen.
+pub const SENSOR_GAIN_SPREAD: f32 = 2.0;
 
 /// How many fields a gene has, and so how many different things one point mutation might be.
 ///
@@ -696,7 +727,10 @@ fn gene_distance(mine: &Gene, theirs: &Gene) -> f32 {
         + differ(mine.new_state, theirs.new_state)
         + spread(mine.osc_freq, theirs.osc_freq, MAX_OSC_FREQ)
         + round_the_circle(mine.osc_phase, theirs.osc_phase)
-        + spread(mine.sensor_gain, theirs.sensor_gain, 2.0 * MAX_SENSOR_GAIN)
+        // ⚠️ Not `2 × MAX_SENSOR_GAIN`, which is what this was until Phase 7 raised that
+        // number. See [`SENSOR_GAIN_SPREAD`]: a species boundary is not allowed to move
+        // because a sensor's range did.
+        + spread(mine.sensor_gain, theirs.sensor_gain, SENSOR_GAIN_SPREAD)
         + differ(mine.sensor_target, theirs.sensor_target);
 
     apart / f32::from(u16::try_from(FIELDS_IN_A_GENE).expect("a gene has sixteen fields"))
@@ -1517,6 +1551,53 @@ mod tests {
             "a gene holding a value past the end of the range `Gene::random` draws from - \
              which nothing forbids - counted for more than a whole field, so one such gene \
              could outweigh every real difference in a genome"
+        );
+
+        // --- ⚠️ and `sensor_gain` is scaled by a unit of measurement, not by the sensor's
+        //     range. See `SENSOR_GAIN_SPREAD`. ---
+        //
+        // This is the one field whose scale was written as `2 × MAX_SENSOR_GAIN` and had to be
+        // cut loose from it, and the assertions are stated as **absolute quantities of gain**
+        // rather than as fractions of anything, because that is the whole point: a gain
+        // difference of one is half a field's worth of difference, and it stays half a field's
+        // worth however far `MAX_SENSOR_GAIN` moves afterwards. Written the other way, raising
+        // the gain to eight would have made this same pair of genomes an eighth as far apart as
+        // they used to be - silently redrawing every species boundary in every chronicle ever
+        // recorded, in a commit about a sensocyte's sensitivity.
+        let gained = |sensor_gain| {
+            Genome::new(
+                vec![Gene {
+                    sensor_gain,
+                    ..gene(1)
+                }],
+                &limits,
+            )
+        };
+        assert_eq!(
+            gained(0.0).distance_from(&gained(1.0)),
+            a_field / 2.0,
+            "two genes whose gains differ by one are no longer half a field apart, so the \
+             species metric has been rescaled by a change to what a sensor can do - and every \
+             boundary in every chronicle moved with it"
+        );
+        assert_eq!(
+            gained(-1.0).distance_from(&gained(1.0)),
+            a_field,
+            "a gain at each end of the range this measure is defined over is a whole field's \
+             worth of difference and no more"
+        );
+        assert_eq!(
+            gained(-MAX_SENSOR_GAIN).distance_from(&gained(MAX_SENSOR_GAIN)),
+            a_field,
+            "a gain at each end of the range a gene may be *drawn* from counted for more than a \
+             whole field, so one such gene could outweigh every other difference in a genome"
+        );
+        assert!(
+            (SENSOR_GAIN_SPREAD - 2.0 * MAX_SENSOR_GAIN).abs() > f32::EPSILON,
+            "SENSOR_GAIN_SPREAD is back to being 2 x MAX_SENSOR_GAIN. It is a unit of \
+             measurement and that is a sensor's range; tying them together means the next \
+             person to tune a sensocyte moves every species boundary in the project without \
+             knowing it"
         );
 
         // --- ⭐ the two angles are angles ---

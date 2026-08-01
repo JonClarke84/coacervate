@@ -28,6 +28,45 @@
 //! worth exactly the distance it is paid for. If a lineage ever appears to be coasting,
 //! something is wrong with the drag rather than clever about the lineage.
 //!
+//! # ⭐⭐ And the water is *thicker sideways*, which is the only reason anything can swim
+//!
+//! Until Phase 7 there was one `drag`, applied identically to every cell, and that one
+//! decision made **movement arithmetically impossible for every body plan at every setting of
+//! every slider in SPEC section 3.** Not slow. Impossible.
+//!
+//! The proof is three lines. Every internal force below appears as `+f` on one cell and `-f`
+//! on another - springs and collisions both, which is Newton's third law and is what makes
+//! them honest. There is no mass, so force becomes velocity directly. And `drag` was one
+//! scalar every cell shared. Sum the velocity update over the cells of one body and the forces
+//! cancel:
+//!
+//! ```text
+//! Σvel <- (Σvel + Σforce x dt) x drag       and Σforce = 0
+//! Σvel <- Σvel x drag
+//! ```
+//!
+//! A free body's **total** velocity is a conserved quantity of this integrator and it decays
+//! to nothing. Whatever the muscles do, the body's centre stays where it is. Measured before
+//! the fix: `|Σvel|` of 5.96e-7 after 2,000 ticks, and a twelve-cell travelling-wave undulator
+//! moving 0.00015 world units per 1,000 ticks, which is the noise floor of a 32-bit float
+//! rather than slow swimming.
+//!
+//! **That is stronger than the scallop theorem and it is why it went unnoticed.** The scallop
+//! theorem forbids a *reciprocal* stroke at low Reynolds number; a travelling wave is the
+//! textbook escape from it and `behaviour.rs`'s controller is built to make one. It escapes the
+//! theorem and it did not escape this, because this is not a claim about strokes at all.
+//!
+//! What a real body at this scale swims on is that **the water resists a slender thing about
+//! twice as hard across its axis as along it**. So [`Physics::integrate`] splits a cell's
+//! velocity into the part running along its own body and the part crossing it, and damps them
+//! by `drag` and `drag^drag_anisotropy` respectively. A cell with no axis - fewer than two
+//! adhesions - keeps the single drag, which means the sum above still holds exactly for a crowd
+//! of loose cells. That is correct: a crowd of loose cells is not a swimmer.
+//!
+//! See [`axis`] for where a body's direction comes from and why the cells without one must not
+//! be given a guess, and SPEC section 8 for the measurements, the bounds, and the two shapes
+//! that still cannot swim.
+//!
 //! # Two forces, and only two
 //!
 //! **Springs** hold a body together. Phase 3 creates one whenever a gene divides a cell
@@ -481,6 +520,53 @@ fn direction(offset: Vec2, distance: f32) -> Vec2 {
     }
 }
 
+/// Which way a cell's own body runs, as a direction of length one, or nothing at all if it
+/// has no such direction.
+///
+/// ⭐ **This is what makes swimming possible**, and the module header explains why nothing
+/// could move without it. The water resists a cell harder across this direction than along
+/// it, so a body that puts its cells sideways-on to the water on one half of a stroke and
+/// end-on on the other has pushed itself somewhere.
+///
+/// # The axis is the line between a cell's adhered neighbours
+///
+/// For a cell in the middle of a chain that is exactly right: the body runs from the
+/// neighbour behind it to the neighbour in front. For a cell with three or more adhesions
+/// there is no such thing as *the* direction the body runs, and the first and last of its
+/// partners is the answer taken - deterministic, because [`Physics::index_bonds`] builds
+/// that list by a counting sort in spring order, and no worse than any other for a branch
+/// point, which is a place a body genuinely is not slender.
+///
+/// # ⚠️ Fewer than two adhesions means no axis, and that is load-bearing
+///
+/// A lone cell, or one at the end of a chain, has no line between its neighbours because it
+/// does not have two. The tempting answer is to use the one spring it does have, or to break
+/// the tie the way [`direction`] does and say sideways - and either would be a **silent
+/// source of thrust**. The water would then hold every unattached cell in the world harder
+/// in one direction than another, in a direction decided by how the body happened to be
+/// stored, and single cells would drift with no muscle behind them. So such a cell keeps the
+/// plain isotropic drag of SPEC section 8, and the same applies to a cell whose two
+/// neighbours are in the same place, where the line between them has no direction either.
+fn axis(
+    cells: &[Cell],
+    starts: &[usize],
+    partners: &[usize],
+    cell: usize,
+    width: f32,
+) -> Option<Vec2> {
+    let run = &partners[starts[cell]..starts[cell + 1]];
+    let (&first, &last) = (run.first()?, run.last()?);
+
+    if first == last {
+        return None;
+    }
+
+    let offset = wrapped_offset(cells[first].pos, cells[last].pos, width);
+    let apart = offset.length();
+
+    (apart > 0.0).then(|| offset.scaled(1.0 / apart))
+}
+
 /// Whether a spring joins these two cells.
 ///
 /// Reads the index built by [`Physics::index_bonds`]: a cell's adhesions are a short run of
@@ -506,8 +592,27 @@ pub struct Physics {
     collision_stiffness: f32,
     spring_damping: f32,
 
+    /// What a cell keeps of its motion **across** its own body axis, which is `drag` raised
+    /// to `physics.drag_anisotropy`.
+    ///
+    /// Worked out once when the physics is built rather than per cell per tick, because a
+    /// power is much the most expensive operation in this module and it is the same number
+    /// for every cell in the world. At the shipped `drag` of 0.92 and an anisotropy of 2 it
+    /// is **0.8464**, which leaves a cell about 2.1 times as mobile lengthways as sideways.
+    across_drag: f32,
+
     /// Which cells are near which.
     hash: SpatialHash,
+
+    /// Which way each cell's body runs, from the positions the tick began with.
+    ///
+    /// Filled in a pass of its own before anything is moved, and that is the point of it
+    /// existing rather than being worked out inside the loop: a cell's axis is a line between
+    /// two *other* cells, and half of the crowd has already been moved by the time the loop
+    /// reaches the middle of it. Read from a half-moved world the axis would depend on the
+    /// order the cells are stored in, which is exactly the class of thing SPEC section 2
+    /// forbids.
+    axes: Vec<Option<Vec2>>,
 
     /// What is pushing on each cell this tick. Cleared at the start of every tick, so
     /// nothing from the last one leaks into this one.
@@ -535,8 +640,8 @@ impl Physics {
     /// Every array is allocated here at the size the configuration implies and never
     /// resized, which is CLAUDE.md's rule for every arena in the project: a simulation that
     /// cannot allocate cannot leak. At SPEC section 3's defaults - four thousand organisms
-    /// of up to sixty-four cells - that is room for 256,000 cells and about twelve
-    /// megabytes, most of it the two adhesion arrays.
+    /// of up to sixty-four cells - that is room for 256,000 cells and about fifteen
+    /// megabytes, most of it the two adhesion arrays and, since Phase 7, the axes.
     #[must_use]
     pub fn new(config: &Config) -> Self {
         let capacity = cell_capacity(config);
@@ -547,7 +652,9 @@ impl Physics {
             drag: config.physics.drag,
             collision_stiffness: config.physics.collision_stiffness,
             spring_damping: config.physics.spring_damping,
+            across_drag: config.physics.drag.powf(config.physics.drag_anisotropy),
             hash: SpatialHash::new(config),
+            axes: vec![None; capacity],
             forces: vec![Vec2::ZERO; capacity],
             bond_starts: vec![0; capacity + 1],
             bond_cursor: vec![0; capacity],
@@ -565,6 +672,7 @@ impl Physics {
         self.drag = config.physics.drag;
         self.collision_stiffness = config.physics.collision_stiffness;
         self.spring_damping = config.physics.spring_damping;
+        self.across_drag = config.physics.drag.powf(config.physics.drag_anisotropy);
     }
 
     /// Move every cell on by one tick.
@@ -747,6 +855,23 @@ impl Physics {
     /// That is what a cell-sized object in water actually does, and it is also far kinder
     /// to the arithmetic than momentum would be.
     ///
+    /// # ⭐⭐ There are two drags, and that is the whole of why anything can swim
+    ///
+    /// SPEC section 8 wrote one, and one is a world in which **nothing can move, under any
+    /// parameters**. Every internal force in this module appears as `+f` on one cell and
+    /// `-f` on another, there is no mass, and one scalar multiplied every velocity - so the
+    /// *total* velocity of a free body was only ever `Σv ← Σv × drag`, a conserved quantity
+    /// of the integrator that decays to nothing whatever the muscles do. Measured, before
+    /// this line was written: a twelve-celled travelling-wave undulator moved 0.00015 world
+    /// units in a thousand ticks, which is the noise floor of a 32-bit float.
+    ///
+    /// Real swimming at this scale does not work on the stroke being clever. It works on the
+    /// water being **anisotropic**: a slender body resists motion across its own axis about
+    /// twice as hard as along it, so the two halves of a stroke do not cancel. That is what
+    /// [`axis`] finds and what `across_drag` is. A cell with no axis keeps the single drag
+    /// SPEC section 8 describes, and the sum above still holds for a crowd of loose cells -
+    /// which is correct, because a crowd of loose cells is not a swimmer.
+    ///
     /// # The edges of the world
     ///
     /// Sideways there is no edge: a cell that walks off one side arrives at the other, and
@@ -759,10 +884,40 @@ impl Physics {
     /// back energy the physics never accounted for - a pile of cells resting on the floor
     /// would simmer for ever instead of settling.
     fn integrate(&mut self, cells: &mut [Cell]) {
-        let (width, height, drag) = (self.width, self.height, self.drag);
+        let Self {
+            width,
+            height,
+            drag,
+            across_drag,
+            axes,
+            forces,
+            bond_starts,
+            bond_partners,
+            ..
+        } = self;
+        let (width, height, drag, across) = (*width, *height, *drag, *across_drag);
 
-        for (cell, force) in cells.iter_mut().zip(&self.forces) {
-            cell.vel = (cell.vel + force.scaled(DT)).scaled(drag);
+        // Every axis is read off the crowd as the tick found it, before a single cell has
+        // been moved. See the field's own note for why that cannot be folded into the loop.
+        for (index, into) in axes[..cells.len()].iter_mut().enumerate() {
+            *into = axis(cells, bond_starts, bond_partners, index, width);
+        }
+
+        for ((cell, force), axis) in cells.iter_mut().zip(&*forces).zip(&*axes) {
+            let moving = cell.vel + force.scaled(DT);
+
+            cell.vel = match *axis {
+                // Split the motion into the part running along the body and the part
+                // crossing it, and let the water take a different share of each. The two
+                // parts add back to exactly what was there, so a cell with an axis pointing
+                // the way it is already going is left with precisely `drag` - which is what
+                // makes this the same physics SPEC section 8 describes rather than a new one.
+                Some(along) => {
+                    let lengthways = along.scaled(moving.dot(along));
+                    lengthways.scaled(drag) + (moving - lengthways).scaled(across)
+                }
+                None => moving.scaled(drag),
+            };
             cell.pos += cell.vel.scaled(DT);
 
             cell.pos.x = wrapped(cell.pos.x, width);
@@ -1748,5 +1903,333 @@ mod tests {
              too close to the edge for a number exposed as a slider, and the measured edge \
              was eighty times the default when this was written"
         );
+    }
+
+    // -------------------------------------------------------------------------------------
+    // Swimming
+    //
+    // Everything below is about `physics.drag_anisotropy`, which is Phase 7's answer to a
+    // measured finding: **nothing in this world could move, under any parameters, and it
+    // never could.** The module header now says why; these are the measurements.
+    // -------------------------------------------------------------------------------------
+
+    /// How far a myocyte's contraction moves its spring's rest length, either way, at the
+    /// resting amplitude.
+    ///
+    /// `behaviour.rs`'s `BASE_AMPLITUDE × AMPLITUDE_SWING`, which is SPEC section 9's
+    /// `0.3 × 0.4`. Written out here rather than imported because those two are private to
+    /// the behaviour pass and this module must not learn that a myocyte exists - what is
+    /// being measured is the *water*, and the controller is only how the water is stirred.
+    const STROKE: f32 = 0.3 * 0.4;
+
+    /// How fast a hand-built body beats, in radians of the controller's sine per second.
+    ///
+    /// `genome.rs`'s `MAX_OSC_FREQ`, which is the fastest a gene may be drawn with. A tick is
+    /// a sixtieth of a second, so this is a stroke every seventy-five ticks and every cycle
+    /// is sampled a dozen times over.
+    const BEAT: f32 = 5.0;
+
+    /// A body built by hand: a run of cells in a line or a zig-zag, adhered end to end.
+    ///
+    /// `sag` is how far each cell is displaced from the line, alternating either way, so nought
+    /// is a straight chain and anything else is a zig-zag. The cells are myocytes because that
+    /// is what a body that swims is made of, though nothing in this module knows the difference.
+    fn body(count: u8, apart: f32, sag: f32, at: Vec2) -> (Vec<Cell>, Vec<Spring>) {
+        let mut cells = Vec::new();
+        let mut springs = Vec::new();
+
+        for index in 0..count {
+            let along = f32::from(index) * apart;
+            let across = if index % 2 == 0 { sag } else { -sag };
+
+            cells.push(Cell::new(
+                CellKind::Myocyte,
+                Vec2::new(at.x + along, at.y + across),
+            ));
+
+            if index > 0 {
+                let far = usize::from(index);
+                springs.push(Spring {
+                    a: far - 1,
+                    b: far,
+                    // ⚠️ The distance the two cells actually are apart, not the spacing along
+                    // the body. A zig-zag's legs are longer than its stride, and a rest
+                    // length of the stride is a body that pulls itself straight in the first
+                    // fifty ticks and is then a chain again - which is a shape that cannot
+                    // swim, so the whole measurement would come back as noise.
+                    rest_length: (cells[far].pos - cells[far - 1].pos).length(),
+                    stiffness: 10.0,
+                });
+            }
+        }
+
+        (cells, springs)
+    }
+
+    /// Where the middle of a body is.
+    ///
+    /// A plain mean, which SPEC section 8 warns is wrong for a body straddling the seam. Every
+    /// body here is put down in the middle of the world and moves by a few tens of units at
+    /// most, so it never goes near one.
+    fn centre(cells: &[Cell]) -> Vec2 {
+        let count = u8::try_from(cells.len()).expect("a hand-built body is a few cells");
+        let mut sum = Vec2::ZERO;
+
+        for cell in cells {
+            sum += cell.pos;
+        }
+
+        sum.scaled(1.0 / f32::from(count))
+    }
+
+    /// Drive a hand-built body with SPEC section 9's controller for a while, and hand back how
+    /// far it travelled.
+    ///
+    /// One phase per spring, in the order the springs were built, so a constant step between
+    /// them is a wave running from the head of the body to its tail. The rest length is a
+    /// closed-form function of the time exactly as `behaviour.rs` makes it, so nothing is
+    /// remembered between ticks and the body's motion is entirely the water's doing.
+    ///
+    /// What comes back is the distance the *middle* of the body moved, which is the only
+    /// honest measure: a body that thrashes in place moves every one of its cells a long way
+    /// and goes nowhere.
+    fn swims_at(
+        anisotropy: f64,
+        count: u8,
+        sag: f32,
+        phase_step: f32,
+        stroke: f32,
+        ticks: u32,
+    ) -> f32 {
+        let world = config(|raw| {
+            raw.physics.drag_anisotropy = anisotropy;
+            raw.limits.max_organisms = 1;
+            raw.limits.max_cells_per_organism = 64;
+        });
+
+        let apart = 8.0;
+        let (mut cells, base) = body(count, apart, sag, Vec2::new(1_000.0, 576.0));
+        let mut springs = base.clone();
+        let mut physics = Physics::new(&world);
+
+        let began = centre(&cells);
+        let mut seconds = 0.0f32;
+
+        for _ in 0..ticks {
+            for (index, spring) in springs.iter_mut().enumerate() {
+                let phase = f32::from(u8::try_from(index).expect("a few springs")) * phase_step;
+                spring.rest_length = base[index].rest_length.mul_add(
+                    stroke * seconds.mul_add(BEAT, phase).sin(),
+                    base[index].rest_length,
+                );
+            }
+
+            physics.step(&mut cells, &springs);
+            seconds += DT;
+        }
+
+        (centre(&cells) - began).length()
+    }
+
+    /// The same, at the stroke a myocyte with nothing to sense gives.
+    fn swims(anisotropy: f64, count: u8, sag: f32, phase_step: f32, ticks: u32) -> f32 {
+        swims_at(anisotropy, count, sag, phase_step, STROKE, ticks)
+    }
+
+    /// ⭐⭐ **A body with a wave running down it swims, and in isotropic water it cannot.**
+    ///
+    /// This is the test the whole of `drag_anisotropy` exists for, and the second half is the
+    /// load-bearing one. A body that travels somewhere proves nothing on its own - a bug in
+    /// the integrator would do that too, and would look exactly like locomotion. What makes
+    /// this a claim about *swimming* is that the identical body, beaten in the identical
+    /// rhythm, in water whose only difference is that it resists equally in every direction,
+    /// goes **nowhere at all**.
+    ///
+    /// # Why isotropic water forbids it, which is stronger than the scallop theorem
+    ///
+    /// See the module header. Every internal force appears twice with opposite signs, there is
+    /// no mass, and one scalar multiplies every cell's velocity, so `Σv ← Σv × drag`: the
+    /// total velocity of a free body is a conserved quantity of the integrator and decays to
+    /// nothing whatever its muscles do. The scallop theorem forbids *reciprocal* strokes and a
+    /// travelling wave escapes it; this forbids every stroke there is.
+    ///
+    /// So the control here is not decoration. Before Phase 7 the first assertion below was
+    /// unreachable by any configuration of this program, and a reader is entitled to know that
+    /// the difference is the water rather than the wave.
+    ///
+    /// # Measured, over a thousand ticks of an eight-celled zig-zag
+    ///
+    /// | Stroke | Isotropic | Anisotropic, k = 2 | k = 3 |
+    /// | --- | --- | --- | --- |
+    /// | 0.12 - a myocyte with nothing to sense | 0.0005 | **0.154** | 0.158 |
+    /// | 0.40 - a myocyte driven to full amplitude | 0.0004 | **1.896** | 2.063 |
+    ///
+    /// Every isotropic figure in that table is the noise floor of a 32-bit float. The stroke
+    /// is `behaviour.rs`'s amplitude times SPEC section 9's swing of 0.4, so the first row is
+    /// what a body does in still water and the second is what one does with a sensocyte
+    /// driving it - which is where the *rest* of Phase 7's work makes itself felt, because
+    /// raising `MAX_SENSOR_GAIN` is what lets a signal reach the top of that clamp.
+    #[test]
+    fn a_travelling_wave_carries_a_body_through_the_water() {
+        let ticks = 1_000;
+        let wave = std::f32::consts::FRAC_PI_2;
+
+        // A body driven at full amplitude, which is what a myocyte with a sensocyte beside it
+        // does. Eight cells, a stride of eight units, kinked three units either way.
+        let swum = swims_at(2.0, 8, 3.0, wave, 0.4, ticks);
+        let still = swims_at(1.0, 8, 3.0, wave, 0.4, ticks);
+
+        assert!(
+            swum > 1.0,
+            "an eight-celled body with a wave running down it travelled {swum} units in \
+             {ticks} ticks, and 1.9 was measured. It is beating and staying where it is"
+        );
+        assert!(
+            still < 0.01,
+            "the same body in isotropic water travelled {still} units, so this test's control \
+             is not controlling anything and the first assertion above says nothing about \
+             which of the water and the wave moved the body"
+        );
+        assert!(
+            swum > still * 100.0,
+            "the anisotropic body went {swum} units and the isotropic one {still}, which is \
+             not a difference worth shipping a configuration key for"
+        );
+
+        // And the same body at the stroke a myocyte gives with nothing to sense, which is the
+        // one every body in the shipped world starts with.
+        let unsensed = swims(2.0, 8, 3.0, wave, ticks);
+        assert!(
+            unsensed > 0.05,
+            "with nothing to sense the same body travelled {unsensed} units, and 0.15 was \
+             measured. A lineage that cannot move at all until it has already grown a sensor \
+             has nothing for selection to act on in between"
+        );
+    }
+
+    /// ⚠️ **A straight body cannot swim, however the wave is timed, and that is not a bug.**
+    ///
+    /// The finding that came out of measuring the shapes above, and it is worth a test of its
+    /// own because it is the first thing somebody will think is broken. A chain of cells in a
+    /// **line**, joined by springs along that line, moves only *along* the line - so every
+    /// cell's velocity is parallel to its own body axis, the split in [`Physics::integrate`]
+    /// puts all of it in the lengthways part, and `across_drag` never touches anything. The
+    /// conserved total velocity of the module header is back, exactly.
+    ///
+    /// That is physically right rather than a limitation to work around. A straight rod that
+    /// only stretches and shortens along itself is doing one-dimensional motion, and nothing
+    /// one-dimensional swims in any fluid. Real undulators **bend**, and a bend is what puts a
+    /// cell sideways-on to the water.
+    ///
+    /// The consequence for the ecology is worth stating: what a lineage has to find is not a
+    /// rhythm but a **shape**. `development.rs` buds every daughter at a gene's `angle`, so a
+    /// body that is not straight is the ordinary case and a perfectly straight one is the
+    /// special case - but a lineage that happens to grow a straight spine will get nothing
+    /// whatever from its muscles until something bends it.
+    ///
+    /// The second half is the scallop theorem, which survives all of this: a body whose
+    /// springs all beat in **antiphase** is doing a reciprocal stroke, and a reciprocal stroke
+    /// goes nowhere in either water. Measured at 0.0002 units against the kinked body's 1.9.
+    #[test]
+    fn a_straight_body_and_a_reciprocal_stroke_both_go_nowhere() {
+        let ticks = 1_000;
+        let (wave, antiphase) = (std::f32::consts::FRAC_PI_2, std::f32::consts::PI);
+
+        for count in [2u8, 3, 6, 12] {
+            let straight = swims_at(2.0, count, 0.0, wave, 0.4, ticks);
+            assert!(
+                straight < 0.01,
+                "a straight chain of {count} cells travelled {straight} units, so something \
+                 other than the water being anisotropic is moving bodies about - a chain in a \
+                 line has every cell's motion along its own axis and there is nothing for the \
+                 sideways drag to act on"
+            );
+        }
+
+        let reciprocal = swims_at(2.0, 8, 3.0, antiphase, 0.4, ticks);
+        assert!(
+            reciprocal < 0.01,
+            "a kinked body beating in antiphase travelled {reciprocal} units. That is a \
+             reciprocal stroke, which the scallop theorem forbids at this Reynolds number, \
+             and the same body with a wave running down it manages 1.9"
+        );
+    }
+
+    /// The water holds a cell harder across its own body axis than along it, and a cell that
+    /// has no axis feels the plain drag in every direction.
+    ///
+    /// The mechanism under the test above, stated on its own so that a failure can be read.
+    /// Three cells in a row: the middle one has two adhered neighbours and therefore an axis,
+    /// and the ones at either end have one neighbour each and therefore none.
+    ///
+    /// ⚠️ **The second half is what stops this being a source of thrust nobody asked for.** A
+    /// cell with fewer than two adhesions has no direction between its neighbours to speak of,
+    /// and the tempting thing is to pick one - the single spring it does have, or `+x` the way
+    /// `direction` breaks its own tie. Either would make the water push a lone cell sideways
+    /// in a direction decided by how its body happens to be stored, which is a drive with no
+    /// muscle behind it. So it gets the drag SPEC section 8 describes, unchanged.
+    #[test]
+    fn drag_is_anisotropic_across_a_body_axis() {
+        let world = config(|_| {});
+        let (drag, power) = (world.physics.drag, world.physics.drag_anisotropy);
+
+        // Nothing may move under its own steam here: the springs sit exactly at rest.
+        let (cells, springs) = body(3, 8.0, 0.0, Vec2::new(1_000.0, 576.0));
+
+        let coast = |along: bool| {
+            let mut physics = Physics::new(&world);
+            let mut cells = cells.clone();
+            let shove = if along {
+                Vec2::new(10.0, 0.0)
+            } else {
+                Vec2::new(0.0, 10.0)
+            };
+
+            for cell in &mut cells {
+                cell.vel = shove;
+            }
+            physics.step(&mut cells, &springs);
+
+            [cells[0].vel, cells[1].vel, cells[2].vel]
+        };
+
+        let lengthways = coast(true);
+        let sideways = coast(false);
+
+        // The middle cell, which has an axis: along it keeps `drag`, across it keeps less.
+        assert!(
+            (lengthways[1].x - 10.0 * drag).abs() < 1e-4,
+            "the middle cell was shoved along its own axis and kept {} of 10, against the \
+             {drag} the water leaves a cell moving lengthways",
+            lengthways[1].x / 10.0
+        );
+        assert!(
+            (sideways[1].y - 10.0 * drag.powf(power)).abs() < 1e-4,
+            "the middle cell was shoved across its own axis and kept {} of 10, against the \
+             {} a body sideways-on to its own motion should keep",
+            sideways[1].y / 10.0,
+            drag.powf(power)
+        );
+        assert!(
+            sideways[1].y < lengthways[1].x,
+            "a cell moving across its axis kept {} and one moving along it kept {}, so the \
+             water is not anisotropic and no wave can push against it",
+            sideways[1].y,
+            lengthways[1].x
+        );
+
+        // The two ends have one adhesion each, so both directions cost them the same.
+        for end in [0, 2] {
+            assert!(
+                (lengthways[end].x - 10.0 * drag).abs() < 1e-4
+                    && (sideways[end].y - 10.0 * drag).abs() < 1e-4,
+                "the cell at the end of the chain has one adhesion and therefore no axis, and \
+                 it kept {} of 10 lengthways and {} sideways. A cell with no axis must feel \
+                 the plain drag both ways, or the water is pushing bodies about in a \
+                 direction decided by the order their cells are stored in",
+                lengthways[end].x / 10.0,
+                sideways[end].y / 10.0
+            );
+        }
     }
 }

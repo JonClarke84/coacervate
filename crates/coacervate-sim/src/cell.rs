@@ -383,7 +383,7 @@ mod tests {
     /// A cell is what SPEC section 6 says it is, and so is every kind of one.
     ///
     /// This test is a transcription check, and it earns its place for the same reason
-    /// `config.rs` writes out all thirty-three settings rather than a sample. SPEC section 6
+    /// `config.rs` writes out all thirty-five settings rather than a sample. SPEC section 6
     /// is a table of twelve numbers in six rows of two, and the two columns are next to
     /// each other: a photocyte's radius is 3.0 and its upkeep 0.004, a gonocyte's are 3.2
     /// and 0.005. Copy a row into the wrong place and nothing fails - cells are simply the

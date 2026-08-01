@@ -43,7 +43,10 @@
 //! inventing it. It is the one bound in the program that nothing downstream would catch, which
 //! makes it the one bound that must not exist in two places.
 
-use coacervate_sim::config::{Config, ConfigError, DIFFUSION_STABILITY_LIMIT, RawConfig};
+use coacervate_sim::config::{
+    Config, ConfigError, DIFFUSION_STABILITY_LIMIT, DRAG_ANISOTROPY_CEILING, DRAG_ANISOTROPY_FLOOR,
+    RawConfig,
+};
 
 /// One setting a person may turn while the run is going.
 ///
@@ -120,6 +123,7 @@ impl std::fmt::Debug for Dial {
 /// | --- | --- | --- |
 /// | `light.influx` | `0 – 0.02` | SPEC section 3's measured table runs 0.0001 to 0.012, and 0.012 is the shipped `bloom` profile. A dark world is a legitimate experiment, so the low end is nought |
 /// | `light.diffusion` | `0 – 0.25` | ⭐ [`DIFFUSION_STABILITY_LIMIT`] itself. See this module's header |
+/// | `physics.drag_anisotropy` | `1 - 3` | ⭐ [`DRAG_ANISOTROPY_FLOOR`] and [`DRAG_ANISOTROPY_CEILING`] themselves. One is isotropic water, which is the world in which nothing can swim; three is where the arithmetic stopped computing |
 /// | `metabolism.upkeep_scale` | `0.01 – 8` | SPEC section 3: *"`3` and `4` both go extinct with the founder's death"*. A dial that stopped at 2 could not reach the one environmental event that measurement describes. Its low end is not nought because the gate calls it positive |
 /// | the `[mutation]` rates | `0 – 0.2` | All seven are fractions and the gate would take one, but a rate of one is every gene mutating at every birth. The dial covers ten times the shipped value, which is the range an experiment lives in |
 /// | `run.max_ticks_per_second` | `0 – 600` | Nought is SPEC's *"0 = uncapped"*. Six hundred is about what this machine manages headless, so the far end is "as fast as it goes" and everything below it is a real slowing |
@@ -185,6 +189,20 @@ pub const DIALS: &[Dial] = &[
         places: Some(2),
         read: |raw| raw.physics.drag,
         write: |raw, value| raw.physics.drag = value,
+    },
+    Dial {
+        table: "physics",
+        // ⚠️ Not `0.0 - 3.0`. The low end is `DRAG_ANISOTROPY_FLOOR` and the high end is
+        // `DRAG_ANISOTROPY_CEILING`, imported for the reason `light.diffusion` imports its
+        // own: the ceiling is where the arithmetic stopped computing rather than a
+        // preference, and a copy of `3.0` written out here would be silently wrong the day
+        // somebody moves it.
+        label: "drag_anisotropy",
+        least: DRAG_ANISOTROPY_FLOOR as f64,
+        most: DRAG_ANISOTROPY_CEILING as f64,
+        places: Some(2),
+        read: |raw| raw.physics.drag_anisotropy,
+        write: |raw, value| raw.physics.drag_anisotropy = value,
     },
     Dial {
         table: "physics",
@@ -518,7 +536,7 @@ mod tests {
     /// because they are made of bounds, formatting and a `RawConfig` - the *unchecked* document a
     /// panel edits; the log's live in `coacervate-sim`, because a `Config` and the sentence
     /// describing it are the simulation's. So the failure to guard against is somebody adding a
-    /// twenty-first slider: without this, that setting would be changeable by hand and the change
+    /// twenty-third slider: without this, that setting would be changeable by hand and the change
     /// would never appear in the log, which is an environmental event that happened and was not
     /// written down.
     ///
@@ -560,9 +578,9 @@ mod tests {
     /// it is to drive one and ask the other.
     ///
     /// Both ends, and every dial rather than a sample: the ends are where a range is wrong, and
-    /// the twenty-one entries above are twenty-one hand-written pairs of numbers of which
+    /// the twenty-two entries above are twenty-two hand-written pairs of numbers of which
     /// several are neighbours with the same type. `config.rs`'s own
-    /// `spec_defaults_convert_into_a_validated_config` lists all thirty-four settings for
+    /// `spec_defaults_convert_into_a_validated_config` lists all thirty-five settings for
     /// exactly this reason.
     #[test]
     fn every_dial_reaches_both_of_its_ends() {
@@ -703,7 +721,7 @@ mod tests {
         // setting dropped out of one of them is a number that changes.
         for (table, settings) in [
             ("light", 5),
-            ("physics", 3),
+            ("physics", 4),
             ("metabolism", 5),
             ("mutation", 7),
             ("run", 1),
@@ -717,7 +735,7 @@ mod tests {
         }
         assert_eq!(
             DIALS.len(),
-            21,
+            22,
             "the dials do not add up to the tables above"
         );
 
@@ -725,7 +743,8 @@ mod tests {
         // and `label` did not spell the field's real path would produce a complaint pointing at
         // a setting that does not exist, which is worse than no complaint - and the panel prints
         // that sentence verbatim. Not-a-number is the probe because it is the one value every
-        // decimal setting refuses whatever its meaning, so one line covers all twenty of them.
+        // decimal setting refuses whatever its meaning, so one line covers all twenty-one of
+        // them.
         //
         // ⚠️ The count dials are left out and there is exactly one: `run.max_ticks_per_second`
         // is a whole number and *every* whole number is a rate SPEC section 3 allows, nought
