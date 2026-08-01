@@ -476,12 +476,25 @@ fn lineages(taxonomy: &Taxonomy) -> String {
         return "The run was too short for the population to be clustered.".to_owned();
     };
 
-    format!(
+    let mut said = format!(
         "At tick {tick} the population fell into {} groups by genetic distance, {} of which had \
-         been there long enough to be counted as species.",
+         been there long enough to be counted as species. {} genera have been named in this run.",
         taxonomy.clusters().len(),
         taxonomy.species_count(),
-    )
+        taxonomy.names().genera(),
+    );
+
+    // ⭐ **Phase 7, Group B.** The names themselves, which is the whole point of generating them:
+    // a headless run that reported only a count would have named fifty lineages and shown none of
+    // them. One line each, with what was alive in it at the last sample - a fact about the lineage
+    // and not a ranking of it.
+    for cluster in taxonomy.species() {
+        if let Some(name) = cluster.name() {
+            said.push_str(&format!("\n  {name} — {} alive", cluster.members()));
+        }
+    }
+
+    said
 }
 
 /// What to say about a run that has stopped.

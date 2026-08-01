@@ -39,6 +39,9 @@
 //!   earned enough, and has grown the tissue to do it with, copies its genome imperfectly and
 //!   puts a child down beside itself out of its own energy. Until this existed a population
 //!   could only fall, so nothing a mutation happened to make better could ever become common.
+//! - [`naming`] — what a lineage is called: a binomial built out of Latin-ish syllables, so that
+//!   a chronicle can say *Coacervus primus* rather than *cluster 47*. Nothing here draws a random
+//!   number; a name is a function of the run's seed and the lineage it belongs to.
 //! - [`species`] — telling one lineage from another: how far apart two growth programs are,
 //!   which of the living population are near enough to one another to be one group, and which
 //!   of those groups has been there long enough to be worth a name. It reads a world and
@@ -59,6 +62,7 @@ pub mod grid;
 pub mod ledger;
 pub mod metabolism;
 pub mod mutation;
+pub mod naming;
 pub mod organism;
 pub mod physics;
 pub mod reproduction;

@@ -49,6 +49,7 @@
 
 use crate::config::Config;
 use crate::genome::Genome;
+use crate::naming::{Name, Nomenclature};
 use crate::world::World;
 
 /// How many ticks pass between two samples of the population. SPEC section 11's own number.
@@ -125,6 +126,63 @@ pub const PERSISTENCE: u32 = 20;
 /// genome moves on screen as well as in the list.
 pub const THRESHOLD: f32 = 0.5;
 
+/// ⭐ **B3.** How far a new species has to be from its nearest named relative before it is given a
+/// genus of its own rather than joining that relative's.
+///
+/// SPEC section 11 asks for *"a sufficiently large jump"* and, as with [`THRESHOLD`], does not say
+/// how large. So this number decides how a run's list of names reads: too small and every species
+/// is its own genus, which makes the first half of every binomial noise; too large and every
+/// lineage in the run shares one genus, which makes it silent.
+///
+/// # It was read off the same measurement [`THRESHOLD`] was
+///
+/// `docs/PHASE7.md` records how many groups the living population of the shipped
+/// `config/default.toml`, seed 42, falls into at a range of radii, at four points in one run:
+///
+/// | Tick | Population | at 0.50 | at 0.60 | **at 0.70** |
+/// | --- | --- | --- | --- | --- |
+/// | 50,000 | 2,038 | 15 | 9 | **6** |
+/// | 100,000 | 2,208 | 20 | 8 | **6** |
+/// | 200,000 | 2,142 | 34 | 13 | **6** |
+/// | 400,000 | 820 | 37 | 12 | **4** |
+///
+/// The column that made this the number is the last one: **at seven tenths the run holds four to
+/// six neighbourhoods at every point measured, while the species count under it climbs from
+/// fifteen to thirty-seven.** That is a taxonomy - a handful of genera, several species in each,
+/// and the genus count moving only when something genuinely far away appears. At six tenths there
+/// are eight to thirteen, which is close enough to the species count that a genus stops grouping
+/// anything.
+///
+/// **And then the shipped run was made and read.** Two hundred thousand ticks, seed 42, headless:
+/// 60 groups, **55 of them named species, in 4 genera**. The table predicted four to six and the
+/// run produced four, which is the check worth having, because the table counts a clustering done
+/// from nothing at one moment and this is a run carrying its identities forward for two hundred
+/// thousand ticks.
+///
+/// ⚠️ **One of those four genera holds 48 of the 55 species.** That is worth writing down and it
+/// is not a defect: at this radius the living population of this run genuinely is one large
+/// neighbourhood with three small ones outside it, which is what a world in the middle of a single
+/// radiation looks like. A genus inherited from the *nearest* named relative also spreads
+/// transitively - A is near B and B is near C without A being near C - so a genus is a chain of
+/// relatives rather than a ball, exactly as SPEC's *"inherits its genus from its parent species"*
+/// describes. If a later run ever reads as one genus and nothing else, this is the number to
+/// revisit, and the table above says six tenths is where it goes.
+///
+/// # ⚠️ It has to be larger than [`THRESHOLD`], and that is not a stylistic preference
+///
+/// A cluster is minted precisely because its founder was further than [`THRESHOLD`] from every
+/// representative in the world. So at the moment a lineage becomes a cluster it is already half a
+/// genome from all of its neighbours, and a genus boundary at or below a half would mint a new
+/// genus for very nearly every species there has ever been. The binomial would then carry exactly
+/// as much information as the epithet alone.
+///
+/// Seven tenths also sits just above the *median* distance between two organisms of this world
+/// taken at random, which `docs/PHASE7.md` measures at 0.53 early in a run and 0.69 late. Read as
+/// a sentence, that is: **a lineage founds a genus when it is further from everything named than
+/// two organisms of this world usually are from each other.** Which is about the plainest thing
+/// "a sufficiently large jump" can be asked to mean.
+pub const GENUS: f32 = 0.7;
+
 /// Which cluster an organism was found in, and which organism that was.
 ///
 /// ⚠️ **The serial is what makes this answerable at all.** A slot is a place in the arena and is
@@ -180,6 +238,14 @@ pub struct Cluster {
     /// [`Taxonomy::observe`] uses to move the representative. Kept on the cluster rather than in
     /// a second vector beside it so that there is no parallel array to fall out of step.
     nearest: Option<(f32, Genome)>,
+
+    /// ⭐ **B1.** What this lineage is called, once it has been there long enough to be worth
+    /// calling anything.
+    ///
+    /// Nothing at all until [`Cluster::is_species`], and never nothing again afterwards: a name is
+    /// minted once, at promotion, and the cluster carries it until it goes extinct. See
+    /// [`Taxonomy::christen`] for where it comes from.
+    name: Option<Name>,
 }
 
 impl Cluster {
@@ -212,6 +278,17 @@ impl Cluster {
     #[must_use]
     pub const fn is_species(&self) -> bool {
         self.seen >= PERSISTENCE
+    }
+
+    /// ⭐ **B1.** What this lineage is called, or nothing at all if it is not a species yet.
+    ///
+    /// A cluster that has not persisted for [`PERSISTENCE`] samples has no name, and that is the
+    /// honest answer rather than a missing feature: clusters churn - one outlier mints one and it
+    /// is gone by the next sample - and a chronicle that named them would be mostly names for
+    /// things that were never there.
+    #[must_use]
+    pub const fn name(&self) -> Option<&Name> {
+        self.name.as_ref()
     }
 }
 
@@ -247,6 +324,12 @@ pub struct Taxonomy {
     /// The next cluster identifier to hand out, which is never handed out twice.
     next_id: u32,
 
+    /// ⭐ **Group B.** Every name this run has handed out, and the genera they are in.
+    ///
+    /// It outlives the clusters it named: `naming.rs` explains why a name must never be reused
+    /// even after the lineage that carried it is extinct.
+    names: Nomenclature,
+
     /// The tick the last sample was taken at, or nothing at all if none has been.
     ///
     /// ⚠️ **This is what stops a tick being counted twice**, and here that matters more than it
@@ -268,6 +351,7 @@ impl Taxonomy {
             clusters: Vec::with_capacity(slots * 2),
             of_slot: vec![None; slots],
             next_id: 0,
+            names: Nomenclature::new(config.world.seed),
             at: None,
         }
     }
@@ -392,6 +476,82 @@ impl Taxonomy {
                 cluster.representative = nearest;
             }
         }
+
+        // ⭐ Group B, and it is deliberately the last thing that happens. A cluster is named from
+        // the representative it has *after* this sample moved it, and against the other clusters
+        // as they are now - so a lineage promoted at the same sample as its neighbour is named
+        // against where that neighbour actually is.
+        for at in 0..self.clusters.len() {
+            if self.clusters[at].is_species() && self.clusters[at].name.is_none() {
+                self.clusters[at].name = Some(self.christen(at));
+            }
+        }
+    }
+
+    /// ⭐ **B2 and B3.** A name for the cluster at this index, which has just become a species.
+    ///
+    /// > SPEC section 11: *"A new species inherits its genus from its parent species and receives a
+    /// > new epithet; a sufficiently large jump mints a new genus."*
+    ///
+    /// # ⚠️ There is no parent species to inherit from, so the nearest one is used instead
+    ///
+    /// Nothing in Group A records which cluster came out of which, and nothing should. A cluster is
+    /// minted by whichever organism happened to be further than [`THRESHOLD`] from every
+    /// representative in the world; that organism's own parent may be in any cluster at all, or
+    /// dead, or in a cluster that has since been removed. A parentage built on that would be a
+    /// record of which slot of the arena was free, which is not ancestry.
+    ///
+    /// So the genus is inherited from the thing that is actually known, and it is the same measure
+    /// the clustering itself is built on: **the nearest named species there is**, if it is within
+    /// [`GENUS`]. That is a claim about relatedness rather than about descent, which is what a
+    /// genus has always been - a group of species that resemble each other more than they resemble
+    /// anything else.
+    ///
+    /// **Living species only**, and that is a decision. A genus could go on accepting new members
+    /// after everything in it was extinct, which would need every named genome kept for the length
+    /// of the run - `docs/PHASE7.md`'s cap is 128 genes, so that is kilobytes per name and
+    /// unbounded in total. Reading the living clusters costs nothing and says something defensible:
+    /// a lineage joins the genus of a relative that is *there*.
+    ///
+    /// # What the name is made of
+    ///
+    /// The cluster's identifier and the fingerprint of the representative genome, which
+    /// `naming.rs` mixes with the run's seed. **No random number is drawn**, from this observer's
+    /// state or from anybody's stream - see that module and this one's opening paragraph for why
+    /// that is the constraint the whole group is built around.
+    ///
+    /// The identifier is in it because it is unique for the life of the run, so two lineages that
+    /// are running identical programs still get two names. The genome is in it so that a name is a
+    /// fingerprint of the lineage rather than of a counter - two runs that produce the same growth
+    /// program in the same place in the sequence call it the same thing.
+    fn christen(&mut self, at: usize) -> Name {
+        let mine = &self.clusters[at];
+        let of = u64::from(mine.id) ^ mine.representative.hash();
+
+        let mut nearest: Option<(f32, &Name)> = None;
+        for (other, cluster) in self.clusters.iter().enumerate() {
+            let Some(name) = cluster.name.as_ref() else {
+                continue;
+            };
+            if other == at {
+                continue;
+            }
+
+            let apart = mine.representative.distance_from(&cluster.representative);
+            if apart > GENUS {
+                continue;
+            }
+
+            if nearest.is_none_or(|(sofar, _)| apart < sofar) {
+                nearest = Some((apart, name));
+            }
+        }
+
+        // Cloned so that the borrow of the cluster list ends before the nomenclature is written
+        // to. A name is a couple of short words and this happens once in a lineage's existence.
+        let parent = nearest.map(|(_, name)| name.clone());
+
+        self.names.mint(of, parent.as_ref())
     }
 
     /// Which cluster this genome is nearest to and how far away it is, or nothing at all if it is
@@ -427,6 +587,7 @@ impl Taxonomy {
             members: 0,
             seen: 0,
             nearest: None,
+            name: None,
         });
         self.next_id += 1;
 
@@ -477,6 +638,12 @@ impl Taxonomy {
             .ok()?;
 
         self.clusters[at].is_species().then_some(membership.cluster)
+    }
+
+    /// ⭐ **Group B.** Every name this run has handed out, and the genera they are in.
+    #[must_use]
+    pub const fn names(&self) -> &Nomenclature {
+        &self.names
     }
 
     /// The tick the last sample was taken at, or nothing at all if none has been.
@@ -620,7 +787,269 @@ mod tests {
 
     /// A taxonomy with room for a few hundred organisms and nothing seen yet.
     fn a_taxonomy() -> Taxonomy {
-        Taxonomy::new(&config(|raw| raw.limits.max_organisms = 250))
+        a_taxonomy_of_seed(42)
+    }
+
+    /// The same, for a run of a given seed.
+    ///
+    /// The seed is what the names come out of - see [`crate::naming`] - so it is the one setting
+    /// the naming tests have to be able to change.
+    fn a_taxonomy_of_seed(seed: u64) -> Taxonomy {
+        Taxonomy::new(&config(|raw| {
+            raw.limits.max_organisms = 250;
+            raw.world.seed = seed;
+        }))
+    }
+
+    /// A population of chains, sampled until every group in it has been there long enough to be a
+    /// species, and what each of those species ended up being called.
+    ///
+    /// ⚠️ **Chain lengths are how these tests control distance exactly.** Gene *i* of
+    /// [`a_chain`] depends only on *i*, so two chains agree at every position they share and the
+    /// distance between them is the number of positions they do not share over the longer of the
+    /// two: a chain of eight and a chain of three are exactly `5/8` apart. That is a rational
+    /// number written in the test rather than a consequence of what
+    /// [`crate::genome::MAX_REST_LENGTH`] happens to be.
+    fn named(seed: u64, chains: &[u8]) -> Vec<String> {
+        let limits = config(|_| {}).limits;
+        let genomes: Vec<Genome> = chains
+            .iter()
+            .map(|segments| a_chain(*segments, &limits))
+            .collect();
+
+        let mut taxonomy = a_taxonomy_of_seed(seed);
+        for _ in 0..PERSISTENCE {
+            taxonomy.sample(population(&genomes).into_iter());
+        }
+
+        taxonomy
+            .clusters()
+            .iter()
+            .map(|cluster| {
+                cluster
+                    .name()
+                    .expect("every cluster here has been a species for a sample")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// ⭐ **B1.** A species gets a binomial name.
+    ///
+    /// > SPEC section 11: *"Binomial, generated from Latin-ish syllables."*
+    ///
+    /// CLAUDE.md says what the name is for, and it is not decoration: *"Lineages get generated
+    /// binomial names (`Coacervus primus`) **so they are things you can refer to rather than
+    /// coloured dots**."* Group A gave every lineage an identifier; this is what makes a sentence
+    /// about one readable.
+    ///
+    /// Three claims here, and the second is the one with teeth.
+    ///
+    /// **A species has a name, and a cluster that is not one yet does not.** A name that appeared
+    /// before SPEC section 11's twenty samples would be a name for something that mostly turns out
+    /// not to exist - `Taxonomy::observe` explains why clusters churn and species do not - and a
+    /// chronicle full of lineages that were named and never seen again is a chronicle nobody
+    /// trusts.
+    ///
+    /// **A name is minted once and never changes.** The whole value of a name is that the sentence
+    /// written about a lineage ten thousand ticks ago still refers to the same thing.
+    ///
+    /// **And it is a binomial**: two words, a capitalised genus and a lower-case epithet, which is
+    /// the shape every reader of a species name recognises. What makes those two words read like
+    /// Latin rather than like line noise is `naming.rs`'s own test.
+    #[test]
+    fn a_species_gets_a_binomial_name() {
+        let limits = config(|_| {}).limits;
+        let steady = vec![a_chain(3, &limits)];
+        let mut taxonomy = a_taxonomy();
+
+        for sample in 1..PERSISTENCE {
+            taxonomy.sample(population(&steady).into_iter());
+            assert!(
+                taxonomy.clusters()[0].name().is_none(),
+                "a cluster that has been there for {sample} samples has been named, and SPEC \
+                 section 11 asks for {PERSISTENCE} before anything is a species"
+            );
+        }
+
+        taxonomy.sample(population(&steady).into_iter());
+        let name = taxonomy.clusters()[0]
+            .name()
+            .expect("a cluster that has persisted long enough to be a species has no name")
+            .clone();
+
+        let written = name.to_string();
+        assert_eq!(
+            written,
+            format!("{} {}", name.genus(), name.epithet()),
+            "a name does not read as a binomial"
+        );
+        assert_eq!(
+            written.split(' ').count(),
+            2,
+            "{written} is not two words, so it is not a binomial"
+        );
+        assert!(
+            name.genus().starts_with(char::is_uppercase) && !name.epithet().is_empty(),
+            "{written} is not a capitalised genus and a lower-case epithet"
+        );
+
+        // ⚠️ And it is minted once. A lineage whose name changed as it went would make every
+        // sentence already written about it wrong.
+        for _ in 0..3 {
+            taxonomy.sample(population(&steady).into_iter());
+            assert_eq!(
+                taxonomy.clusters()[0].name(),
+                Some(&name),
+                "a species that went on existing was renamed"
+            );
+        }
+    }
+
+    /// ⭐ **B2.** A new species inherits its genus from its nearest named relative and gets an
+    /// epithet of its own.
+    ///
+    /// > SPEC section 11: *"A new species inherits its genus from its parent species and receives
+    /// > a new epithet."*
+    ///
+    /// **Group A does not record which cluster came out of which**, and it should not: a cluster is
+    /// minted by whichever organism was far from everything, and that organism's parent may be in
+    /// any cluster at all or dead. So the parent species is read off the thing that is actually
+    /// known, which is the same distance the clustering itself is built on - **the nearest named
+    /// species there is**, provided it is within [`GENUS`].
+    ///
+    /// A chain of eight and a chain of three are `5/8` apart: past [`THRESHOLD`], so they are two
+    /// clusters and two species, and inside [`GENUS`], so the second is a relative of the first
+    /// rather than something new.
+    #[test]
+    fn a_new_species_inherits_its_genus_and_gets_a_new_epithet() {
+        let limits = config(|_| {}).limits;
+        let eight = a_chain(8, &limits);
+        let three = a_chain(3, &limits);
+
+        let apart = eight.distance_from(&three);
+        assert!(
+            apart > THRESHOLD && apart <= GENUS,
+            "the two lineages are {apart} apart, which is not the case this test is about: past \
+             {THRESHOLD} so that they are two species, and inside {GENUS} so that they are one \
+             genus"
+        );
+
+        let mut taxonomy = a_taxonomy();
+        for _ in 0..PERSISTENCE {
+            taxonomy.sample(population(std::slice::from_ref(&eight)).into_iter());
+        }
+        let elder = taxonomy.clusters()[0]
+            .name()
+            .expect("the first lineage is a species")
+            .clone();
+
+        for _ in 0..PERSISTENCE {
+            taxonomy.sample(population(&[eight.clone(), three.clone()]).into_iter());
+        }
+        assert_eq!(
+            taxonomy.clusters().len(),
+            2,
+            "the two lineages did not come out as two clusters"
+        );
+        let younger = taxonomy.clusters()[1]
+            .name()
+            .expect("the second lineage has been there long enough to be a species")
+            .clone();
+
+        assert_eq!(
+            younger.genus(),
+            elder.genus(),
+            "{younger} did not inherit the genus of {elder}, which is {} away - inside {GENUS}",
+            apart
+        );
+        assert_ne!(
+            younger.epithet(),
+            elder.epithet(),
+            "{younger} and {elder} are the same name, so the chronicle cannot tell them apart"
+        );
+    }
+
+    /// ⭐ **B3.** A large enough jump mints a new genus.
+    ///
+    /// > SPEC section 11: *"a sufficiently large jump mints a new genus."*
+    ///
+    /// How large is [`GENUS`], and that constant is where the reasoning and the measurement are.
+    /// This is the test that says the rule is applied: a chain of eight and a chain of two are
+    /// `6/8` apart, which is past it, so the second lineage is not put in the first's genus.
+    ///
+    /// ⚠️ **And the first species of a run founds a genus too**, having nothing to be a relative
+    /// of. Checked here because it is the case that happens in every run and never in a test that
+    /// only ever looks at the second species.
+    #[test]
+    fn a_large_enough_jump_mints_a_new_genus() {
+        let limits = config(|_| {}).limits;
+        let eight = a_chain(8, &limits);
+        let two = a_chain(2, &limits);
+
+        let apart = eight.distance_from(&two);
+        assert!(
+            apart > GENUS,
+            "the two lineages are {apart} apart, which is not past {GENUS}, so this test is not \
+             about a large enough jump"
+        );
+
+        let mut taxonomy = a_taxonomy();
+        for _ in 0..PERSISTENCE {
+            taxonomy.sample(population(std::slice::from_ref(&eight)).into_iter());
+        }
+        let elder = taxonomy.clusters()[0]
+            .name()
+            .expect("the first lineage of a run is a species and founds a genus")
+            .clone();
+
+        for _ in 0..PERSISTENCE {
+            taxonomy.sample(population(&[eight.clone(), two.clone()]).into_iter());
+        }
+        let younger = taxonomy.clusters()[1]
+            .name()
+            .expect("the second lineage has been there long enough to be a species")
+            .clone();
+
+        assert_ne!(
+            younger.genus(),
+            elder.genus(),
+            "{younger} was put in the genus of {elder}, which is {apart} away - past {GENUS}"
+        );
+    }
+
+    /// ⭐ **B5.** The same run gives the same names.
+    ///
+    /// Without this a replayed run's chronicle disagrees with the original, and SPEC section 2's
+    /// whole determinism argument is about being able to go back and watch something again: *"When
+    /// something interesting happens you will want to see it again."* A chronicle that said
+    /// *Coacervus vorax* last night and something else this morning would make every screenshot,
+    /// every note and every archived run stop describing the run it came from.
+    ///
+    /// So a name is a function of **the run's seed and the lineage**, and of nothing else. It is
+    /// not a function of the wall clock, of what order the arena happened to be in, or of a draw
+    /// from anybody's generator - see [`crate::naming`] for why that last one would be far worse
+    /// than a naming bug.
+    ///
+    /// Three lineages rather than one, because the second and third are where a generator that
+    /// drew from a shared stream would come apart.
+    #[test]
+    fn names_are_reproducible_from_the_seed() {
+        let chains = [3, 8, 20];
+
+        assert_eq!(
+            named(42, &chains),
+            named(42, &chains),
+            "one seed named the same three lineages two different things"
+        );
+
+        // ⚠️ And a different seed is a different run. If the names did not move with the seed they
+        // would not be coming from it, and every run ever made would carry the same list.
+        assert_ne!(
+            named(42, &chains),
+            named(43, &chains),
+            "two seeds produced the same names, so the names are not coming from the seed"
+        );
     }
 
     /// ⭐ **A3.** The living population is clustered by distance, every 500 ticks.

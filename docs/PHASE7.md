@@ -12,8 +12,8 @@
 | | |
 | --- | --- |
 | **Phase 7** | in progress |
-| **Current group** | B — names (A is done) |
-| **Suite** | green — **218 tests, 120s** |
+| **Current group** | C — the event log (A and B are done) |
+| **Suite** | green — **227 tests, 120s** |
 
 ---
 
@@ -237,26 +237,102 @@ the thing to reach for if the group count ever climbs into the hundreds on a lon
 **No sorting, no random numbers, no map iteration**, which is A6 stated as three prohibitions
 rather than as a test.
 
-### Group B — names
+### Group B — names — **done**
 
-⚠️ **What Group A leaves on the doorstep.** A settled run of the shipped configuration carries
+⚠️ **What Group A left on the doorstep.** A settled run of the shipped configuration carries
 **about sixty groups, fifty-five of them species**, and the count rises slowly as the world
 diversifies. That is the size of list B has to name and B4 has to keep unique. `Cluster::id` is
 minted once and never reused, which is the hook — a name attaches to an identifier that has one
 meaning for the life of the run. `Cluster::representative` is the genome to name *from*, if a
 name is to be generated from anything but the identifier.
 
-- [ ] **B1. `a_species_gets_a_binomial_name`** — generated from Latin-ish syllables.
-- [ ] **B2. `a_new_species_inherits_its_genus_and_gets_a_new_epithet`**
-- [ ] **B3. `a_large_enough_jump_mints_a_new_genus`**
-- [ ] **B4. `a_name_is_never_reused_in_one_run`** — two lineages sharing a name is a
-  chronicle nobody can read.
-- [ ] **B5. `names_are_reproducible_from_the_seed`** — same run, same names. Without this the
-  chronicle of a replayed run disagrees with the original.
+- [x] **B1. `a_species_gets_a_binomial_name`** — generated from Latin-ish syllables, in the new
+  `naming.rs`. A name is minted at promotion, once, and never changes. `naming.rs`'s
+  `a_name_reads_like_a_latin_binomial` holds the structure a person's judgement rests on:
+  capitalised genus, lower-case epithet, two syllables at least, **no run of four consonants**,
+  and the epithet agreeing with its genus.
+- [x] **B2. `a_new_species_inherits_its_genus_and_gets_a_new_epithet`** — from its *nearest named
+  living relative*, because Group A does not record which cluster came out of which and should
+  not. See the table below.
+- [x] **B3. `a_large_enough_jump_mints_a_new_genus`** — `species::GENUS = 0.7`, read off the same
+  measurement `THRESHOLD` was and then confirmed against a real run. Below.
+- [x] **B4. `a_name_is_never_reused_in_one_run`** — a `BTreeSet` of every binomial ever handed
+  out, which outlives the lineages in it. Proved over five thousand names, three quarters of them
+  minted into a genus that already existed.
+- [x] **B5. `names_are_reproducible_from_the_seed`** — **no random number is drawn anywhere in
+  the group.** Below.
+- [x] **A headless run says what it named.** `main.rs`'s closing report gained the genus count and
+  the list of named species with what was alive in each. Without it the phase generated fifty-five
+  names a run and displayed none of them.
+
+#### ⭐ Where the names come from, given that nothing may draw a number
+
+The constraint is `species.rs`'s and it is the whole shape of the group: an observer that drew one
+number from the world's generator would leave a run **perfectly deterministic and deterministically
+different**, and `a_run_produces_what_it_produced_before_group_a` is the golden vector that would
+catch it. **It passes untouched.**
+
+So a name is *computed*, not drawn. `Taxonomy::christen` mixes three numbers that already exist —
+the run's **seed**, the cluster's **identifier**, and the **fingerprint of its representative
+genome** (`Genome::hash`) — through the finalising step of `splitmix64`, which holds no state. The
+identifier is in it because it is unique for the life of the run, so two lineages running identical
+programs still get two names; the genome is in it so that a name is a fingerprint of the lineage
+rather than of a counter.
+
+⚠️ **`grid.rs` writes out the same mixer and the two are deliberately not shared.** Both are
+numbers that must mean the same thing for ever and they must mean it for different reasons — one is
+what a run *looks like*, the other is what its lineages are *called*. Sharing them would mean a
+change made for the noise field silently renames every species in every archived run.
+
+#### The syllables, and how they were made to read Latin rather than random
+
+Every word is `onset · nucleus · medial [· nucleus · medial] · ending`, so consonants and vowels
+alternate by construction and `strkth` is unreachable. SPEC's own two examples fall straight out:
+`v·o·r·ax` is *vorax* and `pr·i·m·us` is *primus*.
+
+⭐ **The tables are distributions, not sets, and that is what actually made it read.** The first
+version drew uniformly over the *set* of legal Latin groups and produced
+
+> Quauralum spoettuntens · Cloettannum saefilmosum · Thauclaclum natructosum
+
+— every syllable individually plausible and the whole thing obviously machine-made. Three things
+were wrong and all three were distributional:
+
+| Wrong | Why | Fix |
+| --- | --- | --- |
+| **Nearly every stem was three syllables** | Laying two-syllable stems out first and three-syllable ones after multiplies the positions by 300, so 300 words in 301 are the long kind | The stem length is **its own digit**, so it is an even split |
+| Two words in five began with a diphthong, three in five with a cluster | Uniform over a set where 3 of 8 nuclei are diphthongs | Plain vowels listed three times, plain consonants twice |
+| Seven epithets in eight were `-osus` or `-idus` | Eight endings drawn evenly | `-us`/`-a`/`-um` listed three times |
+
+After that: *Virnus defens · Grophus soxidus · Taetha nafina · Bruscirum drophinum · Thenna
+firmens*.
+
+One spelling rule survived the alternation and had to be written down: **`qu` is never followed by
+`u`** in Latin, and `quuprax` is the one word in thirty a reader stops at.
+
+#### What Group B decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **⭐ The genus threshold is `0.7`** | `species.rs` | SPEC asks for *"a sufficiently large jump"* and gives no number. Read off Group A's own table: at seven tenths the shipped run holds **four to six neighbourhoods at every point measured** while the species count under it climbs from 15 to 37 — a handful of genera with several species in each. At six tenths it is 8 to 13, close enough to the species count that a genus stops grouping anything. It also **has** to be above `THRESHOLD`: a cluster is minted precisely because it was half a genome from everything, so a genus boundary at or below a half would mint a genus for very nearly every species and the binomial would carry no more than the epithet alone. Seven tenths also sits just above the *median* distance between two organisms taken at random (0.53 early, 0.69 late) — **a lineage founds a genus when it is further from everything named than two organisms of this world usually are from each other.** |
+| **⚠️ Measured, and it came out at four** | — | 200,000 ticks of the shipped `config/default.toml`, seed 42, headless: 60 groups, **55 named species in 4 genera**. The table predicted four to six. **One of the four holds 48 of the 55**, which is recorded rather than fixed: at this radius the population genuinely is one large neighbourhood with three small ones outside it, and a genus inherited from the *nearest* relative also spreads transitively — A near B and B near C without A near C. That is a chain of relatives, which is what SPEC's *"inherits from its parent species"* describes. If a run ever reads as one genus and nothing else, six tenths is where this goes. |
+| **⭐ The parent species is the nearest *named living* one, not an ancestor** | `species.rs` | Group A records no cluster parentage and should not: a cluster is minted by whichever organism happened to be far from everything, and that organism's own parent may be in any cluster, or dead, or in one since removed. A parentage built on that is a record of which arena slot was free. So the genus is inherited from the thing actually known — the nearest named species within `GENUS` — which is a claim about *relatedness* rather than descent, and that is what a genus has always been. **Living only**: keeping every named genome for the length of a run is kilobytes per name and unbounded, and reading the live clusters costs nothing. |
+| **A name is minted at promotion and never changes** | `species.rs` | The whole value of a name is that a sentence written ten thousand ticks ago still refers to the same thing. Clusters churn — one outlier mints one and it is gone by the next sample — so a name before SPEC's twenty samples would mostly be a name for something that was never there. |
+| **⭐ Three genders, and the epithet agrees** | `naming.rs` | *Coacervus prima* is the mistake a classicist notices immediately, and it is what a scheme that draws its two endings independently produces in a third of all names. The gender **is** which ending the genus was given, and every epithet in that genus is then drawn from the endings that agree with it. `-ax` and `-ens` are third-declension adjectives of one termination — *vorax*, *virens* — so they appear unchanged in all three lists. |
+| **Uniqueness is enforced on the written binomial, by walking rather than redrawing** | `naming.rs` | Redrawing on a collision cannot say what happens when the words run out, because a sequence of draws is not a sequence of *different* draws. Stepping one along from where the draw landed visits every position in the language exactly once. **When a genus runs out of epithets the lineage founds a new one** — a genus minted a moment ago has all of its epithets free. It cannot be reached: 38 million epithets in each gender and 14 million genera, against a run that names of the order of fifty lineages an hour. |
+| **⚠️ The name registry is the one thing here that grows with the length of a run** | `naming.rs` | B4 is *never reused in one run*, so a name has to be remembered after its lineage is extinct. A name is about twenty bytes and a twelve-hour run keeps a few hundred kilobytes of them. Recorded because CLAUDE.md's arenas are all allocated once and this one is not — it is an observer's bookkeeping rather than simulation state, and the bound is the number of species a run has ever had. |
+| **A ban list, checked before every name is handed out** | `naming.rs` | CLAUDE.md marks the non-teleological rule load-bearing and a name is the most repeated generated copy in the project. *maximus* is `m·a·x·imus` — four draws from perfectly innocent — so the rule needs a filter and not care. 78 fragments in three groups: **Latin that ranks** (*optimus*, *summus*, *melior*, *dominus*, *victor*, *sapiens*, *gradus*…), **the English CLAUDE.md bans outright**, and **words that would be read as something other than Latin** — a generated name is going into a document somebody may show to other people. ⚠️ `primus` is deliberately *not* banned: it is a fact about the order a lineage appeared in, not a rank, and it is the project's own example. |
 
 ### Group C — the event log ⭐
 
 The highest-value item in the phase. Append-only, human-readable, in a naturalist's register.
+
+⚠️ **What Group B leaves on the doorstep.** `Cluster::name()` is `Option<&Name>` — `Some` exactly
+when the cluster is a species — and `Name` displays as *Coacervus primus*. C5 has its names.
+`Taxonomy::names()` reaches the whole registry, including the genus count. **C9 should call
+`naming::is_permissible` rather than growing a second list of banned words**: two such lists are
+two lists that come apart, and the register of the log and the register of the names are one
+register.
 
 - [ ] **C1. `an_event_is_recorded_with_its_tick_and_its_deep_time`** — *"Tick 41,208 — 41.2
   Ma."*
