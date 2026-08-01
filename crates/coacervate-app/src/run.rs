@@ -1226,6 +1226,32 @@ mod tests {
     /// to 313,000 ticks diverges from its own baseline at about tick 50,000 and ends with a
     /// different world. See `docs/PHASE7.md`, Group I.
     ///
+    /// # ⭐⭐ Group J moved it, and it is the first change since Group F to do so
+    ///
+    /// Group J biases the distribution a re-drawn `trigger_state`, `child_state` or `new_state`
+    /// comes from — towards the states some cell is in for the first, away from them for the other
+    /// two. It changes the number of draws a point mutation takes as well as where they land, so
+    /// every stream in the world parts company with its old self at the first point mutation of
+    /// the first birth. **A vector that survived it would have meant the operator was not being
+    /// reached**, which is exactly the reading Groups H and I had to give.
+    ///
+    /// **What it was through Groups G, H and I:**
+    ///
+    /// ```text
+    /// 4,000 ticks, 583 born, 541 alive
+    /// field       0x40c5_2762_ae79_0000   10,830.771
+    /// biomass     0x40be_9540_3bda_7bce    7,829.251
+    /// detritus    0x406f_61db_e12c_9ca0      251.058
+    /// dissipated  0x40bf_d11c_ba5a_1f50    8,145.112
+    /// influx      0x40da_6c0c_4c88_2000   27,056.192
+    /// ```
+    ///
+    /// The world it describes is very nearly the same one: one more organism born, one more alive,
+    /// and every account inside 4% of what it was. That is what a change to *where a state lands*
+    /// ought to look like at four thousand ticks — the genomes here hold one or two genes and have
+    /// had a few hundred point mutations between them, so almost nothing has yet been addressed
+    /// differently. What it does over three hundred thousand ticks is in `docs/PHASE7.md`.
+    ///
     /// # Why the field's total is the sensitive one
     ///
     /// It is a 64-bit sum over every tile in the world, and every body in the world has been
@@ -1273,19 +1299,19 @@ mod tests {
             [
                 // 4,000 ticks: a dawn of 2,000 and the 2,000 the run was allowed.
                 4_000,
-                // 583 organisms have ever lived here; 541 of them are still alive.
-                583,
-                541,
+                // 584 organisms have ever lived here; 542 of them are still alive.
+                584,
+                542,
                 // The field, then SPEC section 5's four accounts, as bit patterns. The
                 // quantities they stand for are written beside them so that a failure can be
                 // read as a change in the world rather than only as a change in a number:
-                // 10,830.771 in the water, 7,829.251 held by the living, 251.058 lying in the
-                // drift, 8,145.112 spent for good, and 27,056.192 fallen as light.
-                0x40c5_2762_ae79_0000,
-                0x40be_9540_3bda_7bce,
-                0x406f_61db_e12c_9ca0,
-                0x40bf_d11c_ba5a_1f50,
-                0x40da_6c0c_4c88_2000,
+                // 10,789.656 in the water, 7,847.672 held by the living, 261.145 lying in the
+                // drift, 8,165.230 spent for good, and 27,063.702 fallen as light.
+                0x40c5_12d3_fabb_0000,
+                0x40be_a7ab_fc8d_20e9,
+                0x4070_5251_a3c1_ce4f,
+                0x40bf_e53a_ca68_c230,
+                0x40da_6dec_f5a7_2000,
             ],
             "this run no longer produces what it produced at the end of Phase 4. Something \
              changed what the simulation *does* rather than only what it can be asked about, \

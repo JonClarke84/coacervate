@@ -715,8 +715,10 @@ is that argument as a property test over arbitrary genomes.
 
 ⚠️ **`trigger_state` still decides development, and the 2.2% above is a fact about development
 too.** Development also stops at a cell whose state no gene names — which is why bodies in this
-world sat at a mean of 2.0 cells for the first 140,000 ticks of every run ever measured. See
-section 9 and `docs/PHASE7.md`; it is a much larger change and it has not been made.
+world sat at a mean of 2.0 cells for the first 140,000 ticks of every run ever measured. ⭐⭐ **That
+half was answered differently and the answer is below, under Mutation**: development's rule is
+untouched, because this section's whole justification for the genome design rests on it, and what
+changed instead is the *distribution* a re-drawn state comes from.
 
 ### Development
 
@@ -745,12 +747,13 @@ Four things that pseudo-code leaves open, decided in `development.rs` and record
 they are not re-litigated:
 
 - **⚠️ A cell whose state no gene names is a cell development can do nothing further with**,
-  and that is the ordinary case rather than the exception: **2.2% of grown cells** in the
-  shipped world sit in a state their own genome names, by the measurement above. It is why the
-  founder is two cells — its one gene hands the daughter `child_state = 1` and nothing names 1
-  — and why mean body size in this world is 2.0 for the first 140,000 ticks of a run. It is
-  recorded here as a **known consequence that has not been decided about**; see
-  `docs/PHASE7.md`'s Q31.
+  and this rule is unchanged and is not going to change: it is what makes a `state` an address,
+  and this section's whole argument for a variable-length rule list rests on it. **What was
+  changed is how likely a genome is to be addressing its own cells at all.** It used to be
+  **2.2%** of grown cells, by the measurement above, which is why the founder is two cells — its
+  one gene hands the daughter `child_state = 1` and nothing names 1 — and why mean body size in
+  this world was 2.0 for the first 140,000 ticks of a run. The distribution a re-drawn state
+  comes from is now biased; see **Mutation** below, and `docs/PHASE7.md`'s Group J for the run.
 
 - **The cap is checked *before* a daughter is made, not after.** An earlier draft appended
   and then compared `cells.len() == max_cells_per_organism`, which is correct for every cap
@@ -778,7 +781,8 @@ exactly where duplication finds raw material to diverge — this is a feature, n
 Applied at reproduction, in this order:
 
 1. **Point mutation** — each gene, with `point_rate`: perturb numeric fields by
-   `N(0, point_sigma)`; discrete fields re-draw uniformly.
+   `N(0, point_sigma)`; discrete fields re-draw uniformly. ⭐⭐ **Except the three that are
+   states, two of which re-draw from a mixture — see immediately below.**
 2. **Gene duplication** — with `duplication_rate`: copy a random gene, insert adjacent.
 3. **Gene deletion** — with `deletion_rate`: remove a random gene.
 4. **Gene insertion** — with `insertion_rate`: insert a fully random gene.
@@ -796,6 +800,95 @@ lengthening mutation fails. The project's central operator therefore switches it
 exactly when a lineage is at its most elaborate. `metabolism.gene_cost` is there to keep
 genomes *away* from the ceiling so that duplication stays available: a lineage should be
 pushed back by selection long before it arrives, and never discover that the wall exists.
+
+### ⭐⭐ A state does not re-draw uniformly, and that is what made the genome address itself
+
+*"Discrete fields re-draw uniformly"* above is a sentence about a **field** — it says a state is
+re-drawn rather than nudged, because state 5 and state 6 have nothing to do with one another. It
+leaves the distribution the re-draw comes from open, and **that** is what was wrong.
+
+The measurement is the one recorded at the top of this section, and it is the largest this project
+has taken. Over 6.46 million cell-observations of the shipped world, **a genome contained a gene
+naming its own cell's state for 2.2% of the cells it grew.** Development matches on
+`trigger_state`, so it **stopped at 97.8% of the cells it visited** — which is why mean body size
+sat at 1.98 cells for the first 140,000 ticks of every run ever measured here, and why the founder
+is exactly two cells: its gene hands the daughter `child_state = 1` and nothing names 1.
+
+**The rule was not the thing to change.** The paragraph opening this section rests the whole
+justification for the genome design on it, and a rule has to say which cells a gene acts on.
+Drawing a state uniformly over sixty-four when a genome mentions three is what makes
+duplicate-and-diverge land on nothing.
+
+#### ⚠️ The two state fields want opposite biases
+
+They are not the same kind of thing, and treating them alike breaks the mechanism in one direction
+or the other:
+
+| Field | What it is | Where a re-draw should land | Shipped |
+| --- | --- | --- | --- |
+| `trigger_state` | which cells a gene **acts on** | a state that **already exists in bodies**, or a duplicated gene fires nowhere | **0.75** of re-draws |
+| `child_state`, `new_state` | the identity a gene **hands out** | mostly **a state nothing yet names**, or the space of addressable identities can never grow | **0.25** of re-draws |
+
+The second row is the one that is easy to get backwards, and getting it backwards is the worse
+failure. If a gene could only ever hand out names its own genome already answers to, no state
+nothing yet names could ever be minted, **no new body part could ever be invented**, and a lineage
+would collapse onto the closed set of three or four states its founder happened to be given. Small
+bodies are slow; a closed alphabet is the design not working.
+
+So both are **mixtures rather than replacements**, and the proportions are opposites of each other:
+*a rule reaches for a cell that exists; a name is mostly new.*
+
+**Three quarters, and a quarter.** Large enough that the biased branch is the ordinary case — at or
+below a half the miss would still be the ordinary case and the change would not be measurable — and
+short of one, deliberately. A quarter of `trigger_state` re-draws still going anywhere is what
+leaves a gene able to be switched *off*, which this section calls the raw material duplication feeds
+on, and it is the dial against the failure the change was most likely to produce: if every cell in
+every body became developmentally live, bodies would run straight into
+`limits.max_cells_per_organism` and every organism in the world would be a 64-cell blob.
+
+**They are constants in `mutation.rs`, not configuration keys**, for `behaviour.rs`'s
+`LIGHT_REFERENCE` reason. A key in `[mutation]` is a thing a person turns while watching a world and
+goes into the document a run is replayed from; these are a property of the operator's own
+distribution, mean nothing to anybody setting up an experiment, and a run whose archived
+configuration carried them would be one in which what a `state` *addresses* had been redefined by a
+slider. `mutation.point_rate` already turns the whole operator down.
+
+#### Where "the states that already exist" comes from, and what it costs
+
+**From the genome, not from a body.** Developing the parent to read off the states its cells are
+actually in is exact and costs a whole development pass per reproduction, on top of the one
+reproduction already does for the child; it is also less stable than it looks, because which states
+a body reaches depends on the step windows and on first-match-wins as well as on the states, so the
+answer would move under mutations that have nothing to do with addressing.
+
+What is used instead is read straight off the gene list, in one pass with no allocation — two 64-bit
+masks, one bit per state:
+
+- **occupied** — every gene's `child_state` and `new_state`, **plus state 0**, which the development
+  loop above puts the seed cell in without any gene naming it. ⚠️ Leave state 0 out and a genome
+  whose genes hand out only state 5 draws every trigger onto 5, nothing answers to the seed cell,
+  and every body in that lineage is one cell.
+- **answered** — every gene's `trigger_state`.
+
+`occupied` is a **superset** of what a development pass would report, and provably so: a cell's
+state is written in exactly two places, a gene's `child_state` when it is budded and a gene's
+`new_state` when it is re-made, and the one cell neither touches is the seed. So the estimate can
+over-report — by naming a state that is written down and never reached — and can never under-report,
+which is the right direction for the error to point. `mutation.rs`'s
+`every_state_a_body_reaches_is_one_its_genome_writes_down` is that as a test rather than an argument.
+
+#### What it did, measured
+
+Section 15 has the run. The headline, over 300,000 ticks of the shipped world: **the fraction of
+grown cells sitting in a state their own genome names went from 4.6% to 17.7%** — the 4.6% being
+that same measurement taken on the program *as it ships today*, where the 2.2% above was taken
+before a cell was connected to the gene that built it.
+
+⚠️ **And mean body size did not follow it: 6.09 cells against 6.62.** What moved is the rate rather
+than the level — bodies are 12% larger through the middle of the run and the two curves meet again
+— because living cells and biomass are inside 2.4% of each other in both. **The addressing miss was
+real and it was not what held bodies at two cells.** Section 15 and `docs/PHASE7.md`'s Group J carry
+the numbers and what they leave open.
 
 **At the cap, a mutation that would lengthen the genome simply fails.** It does not truncate.
 This matters more than it sounds: truncating from the end is a silent, *biased* operator, and
@@ -1563,3 +1656,53 @@ could have returned anything, because the controller was not executed. **The rem
 myocyte is rare are now separable, and section 7 names the first of them**: a body is two cells
 for the first hundred thousand ticks of a run, and a two-celled body has one spring and nothing
 to undulate.
+
+### ⭐⭐ Re-measured once more, after a state stopped being re-drawn uniformly
+
+Section 7's Group J change, on the same world, the same seed and the same eight founders, over
+300,000 ticks after the dawn. **Both columns below are one instrument run twice**, which is the only
+honest way to read them: the 2.2% section 7 records was measured on the program *before* a cell was
+connected to the gene that built it, and the same measurement on the program as it shipped
+afterwards is 4.6%.
+
+| | Before | After |
+| --- | --- | --- |
+| **Grown cells in a state their own genome names** | **4.56%** | **17.68%** |
+| Population | 797 | 848 |
+| Mean cells | 6.62 | **6.09** |
+| Largest body in the world (of a cap of 64) | 32 | **17** |
+| Bodies at the cap | 0.00% | **0.00%** |
+| Mean genes | 6.17 | 6.10 |
+| Mean depth (of 1,152) | 488 | 483 |
+| Living cells | 5,276 | 5,164 |
+| Biomass | 33,468 | 32,687 |
+| Myocytes | 4 | **0** |
+| Devorocytes | 0 | **0** |
+| Mean displacement per lifetime | 4.023 | **3.966** |
+
+**The addressing moved by a factor of four and the ecology did not move at all**, and the second
+half of that is the finding. Living cells are inside 2.2% of each other and biomass inside 2.4%,
+which is the carrying-capacity claim holding for the fifth change running. Mean body size went
+*down* by 8%, which is inside the spread between any two runs in this phase — so **the near-certain
+addressing miss was not what held bodies at two cells.** What it did change is the rate: bodies are
+12% larger between 150,000 and 225,000 ticks, and the two curves meet again by 300,000. Body size
+here is living cells over living bodies, and the light decides the numerator.
+
+⚠️ **The failure this change was watched for did not happen, and its opposite did.** If every cell
+became developmentally live, bodies would run into `limits.max_cells_per_organism` and every
+organism would be a 64-cell blob. Not one body was at the cap at any checkpoint of either run, and
+the largest body in the world *fell*, from 32 cells to 17.
+
+**A third run turned the dial up to 1.00 and 0.50 to find out where the blob is**, because a bound
+nobody has measured is not a bound. The addressing goes on rising — 25.4% over the run and 36.7% in
+its last 25,000 ticks — sclerocytes and sensocytes become half as common again, and **the largest
+body in the world becomes 64, with 0.11% of bodies sitting on the cap from tick 275,000 onward.**
+That is where the failure mode begins, and it begins exactly where taking the uniform tail off
+`trigger_state` says it should: with no tail, no gene can ever be switched off by being pointed at
+nothing. Mean body size falls the whole way — 6.62, 6.09, 5.81 — which is the same finding again.
+**0.75 and 0.25 are the last setting at which no body reaches the cap at all.**
+
+⚠️ **And there is still no myocyte signal, no devorocyte signal and nothing that travels.** Nought
+myocytes against four, both noise in five thousand cells; mean displacement per lifetime 3.966
+against 4.023 over a quarter of a million lifetimes, which is a fortieth *shorter*. The
+per-checkpoint counts and the full run are in `docs/PHASE7.md`'s Group J.

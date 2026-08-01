@@ -12,8 +12,8 @@
 | | |
 | --- | --- |
 | **Phase 7** | in progress |
-| **Current group** | D — Darwin in the margin (A, B, C, F, G, H and I are done) |
-| **Suite** | green — **262 tests** |
+| **Current group** | D — Darwin in the margin (A, B, C, F, G, H, I and J are done) |
+| **Suite** | green — **266 tests** |
 
 ⚠️ **Groups F, G and H are out of order and all three had to be.** F is the swimming work, taken
 out of turn because Jonathan's live run had reached tick 2.8 million with one myocyte in it and
@@ -37,6 +37,13 @@ muscle, and it is in Group I and in SPEC section 7: **only 2.2% of grown cells s
 their own genome names**, so development stops at nearly every cell it visits, and that is why
 bodies in this world are two cells for the first hundred thousand ticks of every run ever
 measured.
+
+⚠️⚠️ **Group J is Q31, and it is half a result and half a correction.** The distribution a re-drawn
+state comes from is now biased — towards states some cell is in for `trigger_state`, away from them
+for `child_state` and `new_state` — and the fraction of grown cells a genome addresses went from
+**4.6% to 17.7%** over a 300,000-tick run. **And mean body size did not move**: 6.09 cells against
+6.62, with living cells and biomass inside 2.4% of each other. The addressing was a real defect and
+it was not what was holding bodies at two cells. See Group J.
 
 ---
 
@@ -1208,8 +1215,11 @@ better motivated than it was:
    in the project.
 3. **Not first-match-wins**, and not `trigger_state` itself.
 
-**This is the owner's decision and it has not been made.** It is a bigger change than this group
-and it deserves to be chosen rather than arrived at.
+⭐⭐ *(Taken, in **Group J**, and it is the first candidate exactly as recommended. The two state
+fields turned out to want **opposite** biases, which this paragraph did not anticipate: a
+`trigger_state` towards the states cells are in, a `child_state` mostly away from them, or the space
+of addressable identities can never grow. The addressing went from 4.6% to 17.7% of grown cells —
+and **mean body size did not move**, which is the more interesting half. Group J has the run.)*
 
 #### What Group I decided that SPEC does not say
 
@@ -1238,6 +1248,244 @@ and it deserves to be chosen rather than arrived at.
   — the four myocyte tests and the two sensocyte tests — because their scenes now say which gene
   built each cell and the old code ignored it. That red is what the change was written against.
 - **Three tests added, one deleted: 260 → 262.**
+
+### Group J — the other half of the addressing problem — **done, and the result is mixed**
+
+⚠️ **Out of the phase's plan for the fifth time, and it is Q31.** Group I found that development
+stops at 97.8% of the cells it visits, recorded it as a decision nobody had taken, and named the
+candidate: **bias where a discrete re-draw of a state lands.** This is that, taken.
+
+- [x] **J1. `a_re_drawn_trigger_state_lands_on_a_state_some_cell_is_in`** ⭐⭐ — three quarters of
+  them, and the mask itself checked before the proportions that rest on it.
+- [x] **J2. `a_re_drawn_child_state_can_still_name_a_state_nothing_answers_to`** ⭐⭐ — the
+  opposite bias, and why getting it backwards is the worse failure.
+- [x] **J3. `every_state_a_body_reaches_is_one_its_genome_writes_down`** — the superset claim,
+  which is what makes reading the alphabet off the gene list legitimate rather than merely cheap.
+- [x] **J4. `a_lineage_now_finds_a_body_that_uniform_re_draws_did_not`** — the consequence, with
+  the uniform counterfactual measured on the same fixture rather than argued.
+- [x] **J5. The 300,000-tick run**, against Group I's, on one instrument run twice.
+
+#### ⭐⭐ The decision: two fields, two opposite biases
+
+SPEC section 7 says *"discrete fields re-draw uniformly"*. **That is a sentence about a field** —
+it says a state is re-drawn rather than nudged — and the distribution it re-draws from is exactly
+what it leaves open. Development's rule is untouched, and had to be: section 7 rests the whole
+justification for a variable-length rule list on conditions keying on `state`.
+
+| Field | What it is | Biased towards | Shipped |
+| --- | --- | --- | --- |
+| `trigger_state` | which cells a gene **acts on** | states some cell of the body is in | **0.75** |
+| `child_state`, `new_state` | the identity a gene **hands out** | states some gene answers to | **0.25** |
+
+The second row is the one that matters most to get right. A `child_state` biased the way the
+trigger is would leave a genome able to hand out only names it already answers to — **no state
+nothing yet names could ever be minted, no new body part could ever be invented**, and a lineage
+would collapse onto the closed set of three or four states its founder was given. Small bodies are
+slow; a closed alphabet is the design not working.
+
+Three quarters and a quarter, and neither is one or nought: at or below a half the miss stays the
+ordinary case and the change is unmeasurable, and at one a gene can never be pointed at a state
+nothing occupies, which is one of the two ways a gene goes silent — the neutral material section 7
+says duplication feeds on. It is also the dial against the blob failure the change was watched for.
+
+**The alphabet is read off the genome, not off a developed body.** Two 64-bit masks, one pass over
+the gene list, no allocation. A development pass per reproduction would be exact and would cost the
+whole of `develop` on top of the one reproduction already does; it would also be *less* stable,
+because which states a body reaches depends on the step windows and on first-match-wins as well as
+on the states. What is used is a **superset** of what a pass would report, provably: a cell's state
+is written in exactly two places — a gene's `child_state` when it is budded and a gene's `new_state`
+when it is re-made — and the one cell neither touches is the seed, which is in state 0, which the
+mask therefore always carries. J3 is that as a test.
+
+#### ⭐⭐ J5 — the named fraction moved by a factor of four, and nothing else moved
+
+300,000 ticks after the dawn, shipped world, seed 42, eight founders, release build. **Both columns
+are the same instrument run twice**, which matters: Group I's 2.2% was measured on the program
+*before* Group I landed, and the same measurement on the program as it shipped afterwards is 4.6%.
+The like-for-like comparison is the one below.
+
+| | **Group I** | **Group J** |
+| --- | --- | --- |
+| **Grown cells in a state their genome names** | **4.56%** | **17.68%** |
+| Every living cell, including seeds | 37.97% | 45.34% |
+| Alive | 797 | **848** |
+| Mean cells | 6.62 | **6.09** |
+| **Largest body** | **32** | **17** |
+| **Bodies at `max_cells_per_organism`** | **0.00%** | **0.00%** |
+| Mean genes | 6.17 | **6.10** |
+| Mean depth (of 1,152) | 488 | **483** |
+| Field | 63,128 | **68,663** |
+| Biomass | 33,468 | **32,687** |
+| Living cells | 5,276 | **5,164** |
+| **Myocytes** | **4** | **0** |
+| **Devorocytes** | **0** | **0** |
+| Mean displacement per lifetime | 4.023 | **3.966** |
+| Lifetimes closed | 262,771 | 252,522 |
+
+and by kind, over grown cells — the table Group I's I1 gave, re-taken:
+
+| | photocyte | devorocyte | myocyte | sclerocyte | sensocyte | gonocyte |
+| --- | --- | --- | --- | --- | --- | --- |
+| Group I | 2.2% | 5.1% | 10.0% | 3.3% | 7.9% | 6.5% |
+| **Group J** | **18.9%** | **15.3%** | **15.5%** | **13.5%** | **17.8%** | **16.5%** |
+
+⚠️ **The first row is not I1's row and must not be read as one.** I1 measured 2.5 / 0.9 / 2.1 / 3.4
+/ 2.7 / 2.0 on the program *before* Group I; this is the same measurement on the program Group I
+left behind, which is a different world after tick 38,000. The two rows above are the ones that can
+be laid against each other.
+
+The run over time, with the myocyte count at **every** checkpoint rather than only the last, because
+single end-readings have misled twice in this phase:
+
+| Tick | Alive | Mean cells | Max | At cap | Mean genes | Depth | Myocytes | Devorocytes | Named |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 25,000 | 1,600 | 1.97 | 8 | 0% | 1.42 | 287 | 1 | 0 | 1.4% |
+| 50,000 | 1,909 | 1.99 | 15 | 0% | 1.90 | 368 | 1 | 3 | 4.3% |
+| 75,000 | 2,078 | 2.00 | 5 | 0% | 2.20 | 408 | 3 | 2 | 6.6% |
+| 100,000 | 2,060 | 2.07 | 15 | 0% | 2.43 | 414 | 0 | 0 | 8.7% |
+| 125,000 | 2,005 | 2.20 | 13 | 0% | 2.65 | 428 | 2 | 1 | 10.8% |
+| 150,000 | 1,825 | 2.56 | 11 | 0% | 3.13 | 445 | 1 | 2 | 11.7% |
+| 175,000 | 1,534 | 3.04 | 32 | 0% | 3.53 | 436 | 0 | 3 | 12.6% |
+| 200,000 | 1,335 | 3.73 | 17 | 0% | 4.35 | 441 | 0 | 1 | 13.3% |
+| 225,000 | 1,069 | 4.74 | 18 | 0% | 5.04 | 462 | 2 | 0 | 13.8% |
+| 250,000 | 947 | 5.21 | 17 | 0% | 5.61 | 481 | 2 | 3 | 14.9% |
+| 275,000 | 862 | 6.14 | 17 | 0% | 6.19 | 497 | 0 | 4 | 16.3% |
+| **300,000** | **848** | **6.09** | **17** | **0%** | **6.10** | **483** | **0** | **0** | **17.7%** |
+
+*(The named column is cumulative over every sample taken so far, which is why it is still climbing
+at the end. Measured per interval rather than cumulatively, the last 25,000 ticks alone are at
+**27.1%**, and the trajectory runs 1.4, 5.8, 9.6, 13.1, 16.9, 14.7, 16.3, 16.1, 16.0, 21.0, 25.1,
+27.1. Group I's run measured cumulatively the same way reaches 4.56%.)*
+
+**The world survived and nothing degenerated.** No extinction; 848 alive against a `max_organisms`
+of 4,000, and a peak nowhere near it; mean depth 483 in water 1,152 deep rather than a mat at the
+surface; the ledger checked itself every thousand ticks of all 313,000 and never disagreed.
+
+#### ⚠️⚠️ And the blob did not happen — the *opposite* did
+
+The failure this change was watched for is a world in which every cell is developmentally live,
+bodies slam into `limits.max_cells_per_organism` and every organism is a 64-cell blob. **It is not
+what happened, and the numbers point the other way**: not one body at the cap at any checkpoint of
+either run, and the largest body in the world fell from **32 to 17**. Group I's run touched 64 cells
+at two checkpoints; this one never exceeded 32.
+
+That is worth knowing before anyone reaches for the dial, because it says the dial has room in the
+direction nobody expected to need it.
+
+#### ⭐⭐ So the dial was turned, to find out where the blob actually is
+
+A third 300,000-tick run at the same seed with the two proportions moved to **1.00 and 0.50** —
+`trigger_state` re-drawn onto an occupied state *always*, and `child_state` half the time. Nothing
+else changed. It is the only way to know whether the shipped pair is timid or is the right side of
+something.
+
+| | **Group I** | **shipped, 0.75 / 0.25** | **hard, 1.00 / 0.50** |
+| --- | --- | --- | --- |
+| Grown cells named, over the run | 4.56% | **17.68%** | **25.41%** |
+| Grown cells named, last 25,000 ticks | — | 27.1% | **36.7%** |
+| Alive | 797 | 848 | 870 |
+| Mean cells | 6.62 | 6.09 | 5.81 |
+| **Largest body** | 32 | **17** | **64** |
+| **Bodies at the cap** | 0.00% | **0.00%** | **0.11%** |
+| Mean genes | 6.17 | 6.10 | 5.24 |
+| Biomass | 33,468 | 32,687 | 31,453 |
+| Sclerocyte cell-observations | 4,973 | 6,342 | **7,524** |
+| Sensocyte cell-observations | 2,125 | 2,988 | **4,437** |
+| Myocytes at the end | 4 | 0 | 2 |
+| Mean displacement per lifetime | 4.023 | 3.966 | **3.551** |
+
+**Three things fall out of it, and the third is the one that settles the shipped value.**
+
+The proportion is a **real dial**: the addressing goes 4.6 → 17.7 → 25.4 as it is turned, in the
+direction and roughly the amount the arithmetic predicts.
+
+It buys **cell-kind diversity** rather than size. Sensocyte observations double against Group I and
+sclerocytes rise by half, because a differentiating gene that names a state something is in is a
+gene that gets to differentiate something. Myocytes still do not persist — the run holds 9 at tick
+275,000 and 2 at the end, which is the largest reading in this phase and is still one reading.
+
+⚠️ **And the blob starts here.** At 1.00 the largest body in the world is 64 — the cap — from tick
+275,000 onward, and 0.11% of bodies are sitting on it, where the shipped pair never exceeded 17
+cells and never touched it. One body in a thousand is not a degenerate world, but it is the first
+sign of the failure mode this change was watched for, and it appears exactly where removing the
+uniform tail from `trigger_state` predicted it would: with no tail, no gene can ever be switched off
+by being pointed at nothing. **0.75 and 0.25 are the last setting at which that does not happen at
+all**, which is a better reason for them than the arithmetic they were chosen by.
+
+⚠️ **Mean body size falls as the dial is turned up** — 6.62, 6.09, 5.81 — which is the clearest
+statement of Q32 there is. More addressing does not make bodies larger. It makes a few bodies very
+large and the rest slightly smaller, because the biomass is fixed.
+
+#### ⚠️⚠️ Mean body size did not move, and that is the honest result
+
+**6.09 cells against 6.62.** Down, not up, and by a margin no larger than the difference between any
+two runs in this phase. If the 2.2% figure were the reason bodies were small, this is the number
+that should have moved first and most, and it did not.
+
+What *did* move is the middle of the run. Laid side by side:
+
+| Tick | 100,000 | 125,000 | 150,000 | 175,000 | 200,000 | 225,000 | 250,000 | 300,000 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Group I | 2.05 | 2.13 | 2.29 | 2.69 | 3.57 | 4.23 | 5.26 | **6.62** |
+| Group J | 2.07 | 2.20 | 2.56 | 3.04 | 3.73 | 4.74 | 5.21 | **6.09** |
+
+Bodies are 12% to 13% larger between 150,000 and 225,000 ticks and then the two curves meet again.
+**The addressing changed how fast bodies grow and not how large they end up**, and the reason is
+visible in the accounts rather than in the genome: living cells are 5,164 against 5,276 and biomass
+is 32,687 against 33,468, both inside 2.4%. **The same energy is arranged in the same number of
+cells.** Body size in this world is a quotient — cells over bodies — and the light decides the
+numerator.
+
+⚠️ **So the two-cell plateau is not caused by the addressing miss**, or not only by it. Mean cells
+at 100,000 ticks is 2.07 against 2.05, with four times as much of the genome addressing its own
+body. A body of two cells is what pays while the population is still filling the world; what ends
+the plateau is the population falling, and the population falls because the light runs out. That is
+a **finding about where to look next** and it contradicts the sentence in SPEC section 7 that this
+group was written against.
+
+#### ⚠️ No myocyte signal, no devorocyte signal, and nothing travels
+
+**Nought myocytes at the end against four**, and the per-checkpoint counts are 1, 1, 3, 0, 2, 1, 0,
+0, 2, 2, 0, 0 against Group I's 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 4. Both are noise in a population
+of five thousand cells and neither is a signal. Devorocytes the same: 0, 3, 2, 0, 1, 2, 3, 1, 0, 3,
+4, 0 against 3, 1, 1, 0, 3, 0, 1, 3, 5, 0, 4, 0.
+
+**Mean displacement per lifetime is 3.966 world units against 4.023**, over a quarter of a million
+lifetimes. It went *down*, by a fortieth. ⚠️ **Nothing in this world swims**, which is the same
+answer Groups F, G, H and I each gave, and this change was not an answer to it either. The figure is
+dominated by bodies with no muscle at all — a cell drifting on its own springs and its own
+buoyancy — and the furthest any single body's seed cell travelled in its whole life was 38 units.
+
+*(⚠️ The instrument here is the displacement of a body's **seed cell** between the tick it was born
+and the tick it died, measured on both runs identically. SPEC section 15's 2.028 for the Group I run
+was taken with a different one and the two are not comparable; 4.023 is what this instrument reports
+for that same run. Both say the same thing about swimming.)*
+
+#### What Group J decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **⭐⭐ `trigger_state` re-draws onto an occupied state three times in four** | `mutation.rs`, `TRIGGER_ONTO_AN_OCCUPIED_STATE` | A trigger that names a state no cell is in is a gene that fires nowhere, and at a uniform draw that was the outcome 97.8% of the time. Large, because at or below a half the miss stays the ordinary case; not one, because a gene that can never be switched off is neutral material an operator has deleted — **and because at one, 0.11% of bodies sit on `max_cells_per_organism` and at three quarters nothing in the run exceeds 17 cells.** |
+| **⭐⭐ `child_state` and `new_state` re-draw onto an answered state only one time in four** | `mutation.rs`, `CHILD_ONTO_AN_ANSWERED_STATE` | The opposite way round, deliberately. This field is the only way the set of addressable identities ever grows; bias it towards what the genome already answers to and no new body part can ever be invented. |
+| **⚠️ Neither is a configuration key** | `mutation.rs` | `behaviour.rs`'s `LIGHT_REFERENCE` precedent. A key in `[mutation]` is a thing a person turns while watching a world and goes into the document a run is replayed from; these are a property of the operator's distribution, and a run whose archived settings carried them would be one where what a `state` *addresses* had been redefined by a slider. `point_rate` already turns the whole operator down. |
+| **⭐ The alphabet is read off the gene list, not off a developed body** | `mutation.rs`, `Alphabet` | Two 64-bit masks, one pass, no allocation, against a whole development pass per reproduction. It is a provable superset of what a pass would report, and the error points the safe way: it can name a state that is written down and never reached, and can never miss one a cell is in. |
+| **⚠️ The occupied mask always carries state 0** | `mutation.rs`, `Alphabet::of` | The load-bearing half. Development puts the seed cell in state 0 without any gene naming it, so leave it out and a genome handing out only state 5 draws every trigger onto 5, nothing answers to the seed, and every body in that lineage is one cell. |
+| **The alphabet is read once, before any gene is mutated** | `mutation.rs`, `mutate` | The same rule `physics.rs` follows about reading every body axis before any cell moves. Recomputed as the loop went, the mutations of the genes at the back of a genome would depend on what had happened to the genes at the front — order dependence with nothing to justify it. |
+| **The three state fields are still *re-drawn* rather than nudged** | `mutation.rs` | Unchanged, and it is what SPEC's sentence is actually about: state 5 and state 6 have nothing to do with one another. `genome.rs`'s genetic distance is untouched for the same reason — which distribution a name is drawn from says nothing about how far apart two names are, so no species boundary moves. |
+
+#### ⚠️ What moved
+
+- **`a_run_produces_what_it_produced_before_group_a`** — re-recorded, for the third time in this
+  project. Both previous sets are kept beside the new one. It had to move: the operator draws a
+  different number of times as well as landing somewhere different, so every stream parts company
+  with its old self at the first point mutation of the first birth. **A vector that survived would
+  have meant the operator was not being reached**, which is exactly the reading Groups H and I had
+  to give. The world it describes is very nearly the same one — one more organism born, one more
+  alive, every account inside 4% — because at four thousand ticks the genomes hold one or two genes
+  and almost nothing has yet been addressed differently.
+- **Nothing else was re-recorded.** Every other golden vector and pinned figure in the suite is
+  unchanged, `a_headless_run_reaches_a_living_equilibrium` included.
+- **Four tests added: 262 → 266.**
 
 ### Group E — looking at one organism
 
@@ -1271,14 +1519,24 @@ debug suite for exactly that reason and run by the release pass.
 
 ## Open questions carried forward
 
-**Q31** (new, Group I) — ⭐⭐ **development stops at 97.8% of the cells it visits, and nothing has
-been decided about it.** `trigger_state` matching is the same near-certain miss behaviour was
-just taken off, and it is why every body in this world is two cells for the first hundred
-thousand ticks of a run. It does **not** have the same fix: SPEC section 7 states the rule in as
-many words and rests the whole duplicate-and-diverge argument on it, so there is no second
-reading to take. The recommendation is Group H's first candidate — **bias where a discrete
-re-draw of `trigger_state` or `child_state` lands, towards the states the parent's own genome
-already mentions** — which changes no meaning and is one operator. See Group I.
+**Q31** (Group I) — ⭐⭐ **answered in Group J, and the answer moved the addressing without moving
+the bodies.** The recommendation was taken: development's rule is untouched, and the *distribution*
+a re-drawn state comes from is biased — three quarters of `trigger_state` re-draws onto a state some
+cell is in, one quarter of `child_state` and `new_state` re-draws onto a state some gene answers to.
+Grown cells in a state their own genome names went from **4.6% to 17.7%** over 300,000 ticks.
+**Mean body size did not follow**: 6.09 cells against 6.62, with living cells and biomass inside
+2.4% of one another. See Group J, and **Q32** below for what that leaves open.
+
+**Q32** (new, Group J) — ⚠️⚠️ **if the addressing was not what held bodies at two cells, what
+does?** Group J quadrupled the fraction of its own body a genome addresses and mean cells at
+100,000 ticks went from 2.05 to 2.07. What it did move is the *rate*: bodies are 12% larger between
+150,000 and 225,000 ticks and the two curves then meet again at 6.1 against 6.6. The accounts say
+why — living cells 5,164 against 5,276, biomass 32,687 against 33,468 — **the same energy in the
+same number of cells, arranged in slightly more bodies.** Body size is a quotient and the light
+decides its numerator, so the plateau looks like an economic fact rather than a developmental one:
+two cells is what pays while the population is still filling the world, and what ends the plateau is
+the population falling. That is a claim nobody has tested directly, and the cheapest test of it is
+`light.influx`, not the genome.
 
 **Q3**, **Q5**, **Q6**, **Q8**, **Q9**, **Q12**, **Q16** (`reseed_on_extinction` still does
 nothing), **Q18**, **Q19**, **Q21**, **Q23**, **Q25**, **Q28** (`egui-wgpu` still requires

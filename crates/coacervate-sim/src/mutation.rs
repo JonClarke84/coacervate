@@ -41,6 +41,63 @@
 //! grows *the same structure somewhere new*. That is a new body part rather than a new
 //! accident, and it is what `a_duplicated_gene_that_diverges_is_a_new_body_part` demonstrates.
 //!
+//! # ⭐⭐ Which *distribution* a discrete re-draw uses, which SPEC also leaves open
+//!
+//! SPEC section 7 says *"discrete fields re-draw uniformly"*. That is a sentence about a
+//! **field** - it says a state is re-drawn rather than nudged, because state 5 and state 6 have
+//! nothing to do with one another - and it leaves the distribution the re-draw comes from
+//! entirely open. Two of the three state fields now come from a **mixture**, and the reason is
+//! the largest measurement this project has taken.
+//!
+//! Measured over 6.46 million cell-observations of the shipped world: **a genome contains a gene
+//! naming its own cell's state for 2.2% of the cells it grew**, excluding the seed cell, which
+//! is connected by construction. Uniform across every kind. Development matches on
+//! `trigger_state`, so it **stops at 97.8% of the cells it visits** - which is why mean body size
+//! sat at 1.98 cells for the first 140,000 ticks of every run ever measured here, and why the
+//! founder is exactly two cells: its gene hands the daughter `child_state = 1` and nothing names
+//! 1.
+//!
+//! The rule is not the thing to change. SPEC section 7 rests the whole justification for the
+//! genome design on it - *"because conditions key on `state`, duplicating a gene and changing its
+//! `trigger_state` creates a new body part"* - and a rule has to say which cells a gene acts on.
+//! **What was wrong was the distribution.** Drawing a state uniformly over sixty-four when a
+//! genome mentions three is what makes duplicate-and-diverge land on nothing.
+//!
+//! ## ⚠️ The two state fields want opposite biases
+//!
+//! They are not the same kind of thing and treating them alike would break the mechanism:
+//!
+//! - **`trigger_state` says which cells a gene acts on.** A duplicated gene whose copy is pointed
+//!   at a state no cell is in fires nowhere, and the copy is wasted. So it should land on a state
+//!   that **already exists in bodies**. That is the draw that makes duplicate-and-diverge pay.
+//! - **`child_state` and `new_state` are the identity a gene *hands out*.** If those could only
+//!   ever name states the genome already answers to, the set of addressable identities could
+//!   never grow: no new body part could be invented, and a lineage would collapse onto the closed
+//!   set of three or four states its founder happened to have. That is a different failure and a
+//!   worse one, because it is the one that makes the whole design pointless rather than merely
+//!   slow.
+//!
+//! So both are **mixtures rather than replacements**, in opposite proportions - see
+//! [`TRIGGER_ONTO_AN_OCCUPIED_STATE`] and [`CHILD_ONTO_AN_ANSWERED_STATE`], which carry the
+//! arithmetic.
+//!
+//! ## Where "the states that already exist" comes from, and what it costs
+//!
+//! **From the genome, not from a body.** The alternative is to develop the parent's body and read
+//! off the states its cells are actually in, which is exact - and costs a whole development pass
+//! per reproduction, on top of the one reproduction already does for the child. It is also *less*
+//! stable than it looks: the states a body occupies are a function of the step windows and of
+//! first-match-wins as well as of the states, so the answer would move under mutations that have
+//! nothing to do with addressing.
+//!
+//! [`Alphabet`] is read straight off the gene list instead, in one pass over at most 128 genes
+//! with no allocation - two 64-bit masks, one bit per state. It is a **superset** of what a
+//! development pass would report, and provably so: every state a cell can be in is either state 0,
+//! which SPEC section 7's development puts the seed cell in, or some gene's `child_state` or
+//! `new_state`, because those are the only two ways a cell's state is ever written. So a draw from
+//! it can miss - by naming a state that is written down but never reached - and it can never
+//! exclude a state a cell really is in. That is the right direction for the error to point.
+//!
 //! # Numeric fields are held inside the bounds a random gene is drawn from
 //!
 //! `genome.rs` declares the bounds [`Gene::random`] draws from and explicitly leaves it to
@@ -153,9 +210,17 @@ pub fn mutate(
 
     let cap = usize::try_from(limits.max_genes.get()).expect("a gene cap fits in a word");
 
+    // ⭐⭐ Read once, off the genome **as it arrived**, and handed to every point mutation. Not
+    // recomputed as the loop goes, for the same reason `physics.rs` reads every body axis before
+    // any cell moves: a distribution that shifted under a half-mutated genome would make the
+    // mutations of the genes at the back of a genome depend on what happened to the genes at the
+    // front, which is order dependence with nothing to justify it. See this module's
+    // documentation.
+    let alphabet = Alphabet::of(&genes);
+
     for gene in &mut genes {
         if rng.random_bool(f64::from(mutation.point_rate)) {
-            point_mutate(gene, mutation.point_sigma, limits, rng);
+            point_mutate(gene, alphabet, mutation.point_sigma, limits, rng);
         }
     }
 
@@ -317,8 +382,172 @@ fn duplicate_the_whole_genome(genes: &mut Vec<Gene>, cap: usize) {
     genes.extend_from_within(..);
 }
 
+/// ⭐⭐ How often a re-drawn `trigger_state` lands on a state some cell of the body is in,
+/// rather than anywhere in the sixty-four.
+///
+/// **Three quarters.** The argument for it being large is the whole of this module's section on
+/// the two biases: a `trigger_state` that names a state no cell is in is a gene that fires
+/// nowhere, and at a uniform draw that was the outcome **97.8%** of the time. A bias at or below
+/// a half would leave the miss the ordinary case and would be a change nobody could measure.
+///
+/// The argument for it not being **one** is the part worth writing down, because a replacement is
+/// the tempting thing to write. Two things go if the uniform tail goes.
+///
+/// A gene could then never be pointed at a state nothing occupies, which is one of the two ways a
+/// gene goes *silent* - and SPEC section 7 is explicit that non-firing genes are not waste but
+/// *"exactly where duplication finds raw material to diverge"*. An operator that cannot switch a
+/// gene off is an operator that has quietly deleted the neutral half of the genome.
+///
+/// And it is the dial against the failure this change is most likely to produce. If every cell in
+/// every body became developmentally live, bodies would run straight into
+/// `limits.max_cells_per_organism` and every organism in the world would be a 64-cell blob. A
+/// quarter of re-draws going anywhere at all is what keeps a genome's addressing loose.
+///
+/// A quarter also gives a plain reading: **one re-draw in four still goes anywhere**, so a lineage
+/// is four mutations rather than one from pointing a gene outside everything it currently is.
+///
+/// # ⭐⭐ And the blob was measured rather than feared
+///
+/// Three 300,000-tick runs of the shipped world, seed 42, differing only in this number and in
+/// [`CHILD_ONTO_AN_ANSWERED_STATE`]:
+///
+/// | | uniform | **0.75 / 0.25** | 1.00 / 0.50 |
+/// | --- | --- | --- | --- |
+/// | grown cells in a state their genome names | 4.6% | **17.7%** | 25.4% |
+/// | largest body in the world, of a cap of 64 | 32 | **17** | **64** |
+/// | bodies at the cap | 0.00% | **0.00%** | **0.11%** |
+/// | mean cells | 6.62 | 6.09 | 5.81 |
+///
+/// **At one the failure begins**, and it begins where taking the tail off predicts: with no tail no
+/// gene can ever be switched off by being pointed at nothing, so bodies reach the cap and sit on
+/// it. At three quarters nothing does — the largest body in the whole run was 17 cells. That is a
+/// better reason for this number than the arithmetic it was first chosen by, and it is why it is
+/// three quarters rather than four fifths or nine tenths.
+const TRIGGER_ONTO_AN_OCCUPIED_STATE: f64 = 0.75;
+
+/// ⭐⭐ How often a re-drawn `child_state` or `new_state` lands on a state some gene of the genome
+/// already answers to, rather than anywhere in the sixty-four.
+///
+/// **A quarter — deliberately the opposite way round from
+/// [`TRIGGER_ONTO_AN_OCCUPIED_STATE`]**, and the asymmetry is the whole of the decision.
+///
+/// This field is the identity a gene *hands out*. A quarter of re-draws landing on a name some
+/// rule already answers to is what closes the addressing loop from the other end - a daughter
+/// given a live name is a daughter development can carry on with, which is how a body gets deeper
+/// than two cells - and it is deliberately the *minority* case, because the three quarters that go
+/// anywhere are what keeps the space of identities **open**. A genome that could only ever hand out
+/// names it already answers to could never mint a state nothing yet names, so no new body part
+/// could ever be invented and a lineage would be trapped inside the three or four states its
+/// founder was given. That is a worse failure than small bodies, and it is the one this number
+/// exists to prevent.
+///
+/// So the two together read: **a rule reaches for a cell that exists; a name is mostly new.** The
+/// first is what makes a duplicated gene fire; the second is what makes there be somewhere new for
+/// the next duplicate to fire.
+///
+/// # ⚠️ Neither of these is a configuration key
+///
+/// `behaviour.rs`'s `LIGHT_REFERENCE` is the precedent and the reason is the same one. A setting
+/// in `[mutation]` is a thing a person turns while watching a world - how often mutation happens,
+/// how large a step it takes - and it goes into the document a run is replayed from. These two are
+/// neither: they are a property of the *operator's own distribution*, they mean nothing to anybody
+/// setting up an experiment, and a run whose archived configuration carried them would be a run in
+/// which what a `state` addresses had been quietly redefined by a slider. `mutation.point_rate` is
+/// the dial that already turns this whole operator down.
+const CHILD_ONTO_AN_ANSWERED_STATE: f64 = 0.25;
+
+/// The alphabet of developmental states a genome writes, in the two halves that mean different
+/// things: the states its cells end up **in**, and the states its genes **answer to**.
+///
+/// One bit per state, so a genome's whole alphabet is two 64-bit words and reading it is one pass
+/// over the gene list with no allocation. See this module's documentation for why it is read off
+/// the genome rather than off a developed body.
+#[derive(Clone, Copy)]
+struct Alphabet {
+    /// A bit set for every state a cell of the body this genome grows could be in.
+    ///
+    /// The `child_state` of every dividing gene and the `new_state` of every differentiating one,
+    /// because those are the only two ways a cell's state is ever written — **and state 0**, which
+    /// SPEC section 7's development puts the seed cell in without any gene having to name it.
+    ///
+    /// ⚠️ **The seed cell's state is what makes this work at all.** Without it a genome whose genes
+    /// hand out only state 5 would draw every `trigger_state` onto 5, nothing would answer to the
+    /// seed cell, and every body in that lineage would be one cell.
+    occupied: u64,
+
+    /// A bit set for every state some gene of this genome triggers on: the names the program
+    /// answers to.
+    answered: u64,
+}
+
+impl Alphabet {
+    /// Read a genome's alphabet off its genes.
+    fn of(genes: &[Gene]) -> Self {
+        // SPEC section 7: development begins with one photocyte in state 0. Every body in the
+        // world therefore has a cell in state 0, whatever its genome says.
+        let mut occupied = bit(State::ZERO);
+        let mut answered = 0;
+
+        for gene in genes {
+            occupied |= bit(gene.child_state) | bit(gene.new_state);
+            answered |= bit(gene.trigger_state);
+        }
+
+        Self { occupied, answered }
+    }
+
+    /// A state for a gene to answer to: one some cell is in, three times in four.
+    ///
+    /// See [`TRIGGER_ONTO_AN_OCCUPIED_STATE`].
+    fn trigger(self, rng: &mut ChaCha8Rng) -> State {
+        if rng.random_bool(TRIGGER_ONTO_AN_OCCUPIED_STATE) {
+            one_of(self.occupied, rng)
+        } else {
+            State::random(rng)
+        }
+    }
+
+    /// A state for a gene to hand out: one some gene answers to, one time in four.
+    ///
+    /// See [`CHILD_ONTO_AN_ANSWERED_STATE`].
+    fn handed_out(self, rng: &mut ChaCha8Rng) -> State {
+        if rng.random_bool(CHILD_ONTO_AN_ANSWERED_STATE) {
+            one_of(self.answered, rng)
+        } else {
+            State::random(rng)
+        }
+    }
+}
+
+/// Which bit of an [`Alphabet`]'s two words stands for this state.
+const fn bit(state: State) -> u64 {
+    1 << state.get()
+}
+
+/// One of the states in a mask, drawn uniformly from the ones that are there.
+///
+/// The `n`th set bit, found by clearing the lowest set bit `n` times — `left & (left - 1)` is the
+/// standard idiom for that and it is exact under CLAUDE.md's release-mode overflow checking,
+/// because the loop runs strictly fewer times than there are bits to clear and so never sees a
+/// word that has run out of them.
+///
+/// # Panics
+///
+/// If the mask is empty, because there is then no state to answer with. **Neither of the two masks
+/// can be**, and both reasons are structural rather than hopeful: `Alphabet::occupied` always
+/// carries state 0, and `Alphabet::answered` carries one bit per gene, while the only caller is a
+/// point mutation, which by construction is looking at a gene of a genome that has one.
+fn one_of(states: u64, rng: &mut ChaCha8Rng) -> State {
+    let mut left = states;
+    for _ in 0..rng.random_range(0..states.count_ones()) {
+        left &= left - 1;
+    }
+
+    State::new(u8::try_from(left.trailing_zeros()).expect("a state is one of sixty-four"))
+}
+
 /// Change exactly one of a gene's sixteen fields: perturb it if it is a number, re-draw it
-/// uniformly if it is a choice from a fixed set.
+/// if it is a choice from a fixed set.
 ///
 /// Which of the two a field gets is not a judgement call - it is what the field *is*. There
 /// is no sense in which a cell kind is 0.12 away from another cell kind, and no sense in
@@ -326,26 +555,38 @@ fn duplicate_the_whole_genome(genes: &mut Vec<Gene>, cap: usize) {
 /// nudged, and held inside the bounds `genome.rs` declares; see this module's documentation
 /// for why they are held rather than let wander, and why the two that are angles wrap instead.
 ///
+/// ⭐⭐ **Three of the discrete fields are states, and two of the three are re-drawn from a
+/// mixture rather than uniformly.** `trigger_state` mostly lands on a state some cell is in;
+/// `child_state` and `new_state` mostly land anywhere. See [`Alphabet`] and this module's
+/// documentation for the measurement that forced it and for why the two want opposite biases.
+/// Everything else here re-draws uniformly exactly as SPEC section 7 says.
+///
 /// The step window's two ends are re-drawn *independently*, which means one point mutation
 /// can put a gene's `min_step` above its `max_step` and switch the gene off entirely. That is
 /// deliberate and `genome.rs` says why: a gene that can never fire is not broken, it is
 /// neutral material, and material is what duplication diverges from. Because the two ends are
 /// drawn independently, the same operator switches such a gene back on again - so the
 /// difference between a silent gene and a live one is one mutation in either direction.
-fn point_mutate(gene: &mut Gene, sigma: f32, limits: &LimitsConfig, rng: &mut ChaCha8Rng) {
+fn point_mutate(
+    gene: &mut Gene,
+    alphabet: Alphabet,
+    sigma: f32,
+    limits: &LimitsConfig,
+    rng: &mut ChaCha8Rng,
+) {
     // Re-drawn step numbers stay inside the run's actual budget for the reason `Gene::random`
     // gives: a gene naming step 200 in a run that takes sixteen is a gene that has been
     // switched off by arithmetic rather than by selection.
     let last = crate::genome::last_step(limits);
 
     match rng.random_range(0..FIELDS_IN_A_GENE) {
-        0 => gene.trigger_state = State::random(rng),
+        0 => gene.trigger_state = alphabet.trigger(rng),
         1 => gene.min_step = rng.random_range(0..=last),
         2 => gene.max_step = rng.random_range(0..=last),
         3 => gene.action = Action::ALL[rng.random_range(0..Action::ALL.len())],
         4 => gene.angle = wrapped_onto_the_circle(gene.angle + gaussian(rng, sigma)),
         5 => gene.adhere = rng.random(),
-        6 => gene.child_state = State::random(rng),
+        6 => gene.child_state = alphabet.handed_out(rng),
         7 => gene.child_kind = CellKind::ALL[rng.random_range(0..CellKind::ALL.len())],
         8 => {
             gene.rest_length =
@@ -353,7 +594,7 @@ fn point_mutate(gene: &mut Gene, sigma: f32, limits: &LimitsConfig, rng: &mut Ch
         }
         9 => gene.stiffness = (gene.stiffness + gaussian(rng, sigma)).clamp(0.0, MAX_STIFFNESS),
         10 => gene.new_kind = CellKind::ALL[rng.random_range(0..CellKind::ALL.len())],
-        11 => gene.new_state = State::random(rng),
+        11 => gene.new_state = alphabet.handed_out(rng),
         12 => gene.osc_freq = (gene.osc_freq + gaussian(rng, sigma)).clamp(0.0, MAX_OSC_FREQ),
         13 => gene.osc_phase = (gene.osc_phase + gaussian(rng, sigma)).rem_euclid(TAU),
         14 => {
@@ -660,6 +901,325 @@ mod tests {
                 "a genome mutated with every rate at zero came back changed"
             );
         }
+    }
+
+    /// Three genes whose triggers and whose handed-out states have **nothing in common**.
+    ///
+    /// The fixture the two distribution tests below are both written against, and the disjointness
+    /// is the whole of what makes them readable: a re-drawn state that comes back in `{1, 2, 3}`
+    /// can only have come from the *answered* half of the alphabet, and one that comes back in
+    /// `{0, 20..=25}` can only have come from the *occupied* half. Anything else came from the
+    /// uniform tail.
+    fn two_disjoint_alphabets() -> Vec<Gene> {
+        (0..3_u8)
+            .map(|n| Gene {
+                // answered: 1, 2, 3
+                trigger_state: State::new(1 + n),
+                action: Action::Divide,
+                // occupied: 20, 22, 24 and 21, 23, 25 — and 0, which the seed cell is in
+                child_state: State::new(20 + 2 * n),
+                new_state: State::new(21 + 2 * n),
+                ..a_quiet_gene()
+            })
+            .collect()
+    }
+
+    /// Every state written anywhere in `two_disjoint_alphabets`, plus the seed cell's.
+    const WHOLE_ALPHABET: [u8; 10] = [0, 1, 2, 3, 20, 21, 22, 23, 24, 25];
+
+    /// Which of a mutant's three state fields moved, and where each landed.
+    ///
+    /// A re-draw that lands on the value that was already there is invisible, and that is fine
+    /// and is accounted for where the expected proportions are worked out: the parent's own
+    /// states are, by construction, in the *other* half of the alphabet from the one each field
+    /// is biased towards, so the invisible draws are all draws this test would have counted as
+    /// misses.
+    fn where_the_states_landed(parent: &[Gene], child: &[Gene]) -> (Vec<u8>, Vec<u8>) {
+        let mut triggers = Vec::new();
+        let mut handed_out = Vec::new();
+
+        for (was, now) in parent.iter().zip(child) {
+            if was.trigger_state != now.trigger_state {
+                triggers.push(now.trigger_state.get());
+            }
+            if was.child_state != now.child_state {
+                handed_out.push(now.child_state.get());
+            }
+            if was.new_state != now.new_state {
+                handed_out.push(now.new_state.get());
+            }
+        }
+
+        (triggers, handed_out)
+    }
+
+    /// Twenty thousand reproductions with nothing but point mutation firing, and every state
+    /// field that moved, sorted into the two halves it could have come from.
+    fn state_redraws(parent: &[Gene], limits: &LimitsConfig) -> (Vec<u8>, Vec<u8>) {
+        let rates = mutation_with(|rates| {
+            rates.point_rate = 1.0;
+            rates.duplication_rate = 0.0;
+            rates.deletion_rate = 0.0;
+            rates.insertion_rate = 0.0;
+            rates.reorder_rate = 0.0;
+            rates.genome_duplication_rate = 0.0;
+        });
+        let genome = Genome::new(parent.to_vec(), limits);
+        let mut rng = organism_rng(42, 0);
+
+        let mut triggers = Vec::new();
+        let mut handed_out = Vec::new();
+        for _ in 0..20_000 {
+            let child = mutate(&genome, &rates, limits, &mut rng);
+            let (mine, theirs) = where_the_states_landed(parent, child.genes());
+            triggers.extend(mine);
+            handed_out.extend(theirs);
+        }
+
+        (triggers, handed_out)
+    }
+
+    /// What share of these states is in that set.
+    fn share_inside(landed: &[u8], set: &[u8]) -> f64 {
+        let inside = landed.iter().filter(|state| set.contains(state)).count();
+        let inside = u32::try_from(inside).expect("a sample count of thousands is a word");
+        let total = u32::try_from(landed.len()).expect("a sample count of thousands is a word");
+
+        f64::from(inside) / f64::from(total)
+    }
+
+    /// ⭐⭐ **A re-drawn `trigger_state` lands on a state some cell of the body actually is
+    /// in** — three times in four, and not always.
+    ///
+    /// This is the half of the change that makes duplicate-and-diverge pay. SPEC section 7 rests
+    /// the entire genome design on *"duplicating a gene and changing its `trigger_state` creates a
+    /// new body part"*, and measured over 6.46 million cell-observations of the shipped world only
+    /// **2.2%** of grown cells sat in a state their own genome named. A copy pointed at a state no
+    /// cell is in fires nowhere, so the operator the project is built on was landing on nothing
+    /// ninety-eight times in a hundred.
+    ///
+    /// The fixture's two halves are disjoint on purpose — see [`two_disjoint_alphabets`] — so
+    /// every re-draw can be attributed. Three claims, and the second and third are why this is a
+    /// **mixture** rather than a replacement:
+    ///
+    /// **It mostly lands where cells are.** `0.75 + 0.25 × 7/64 = 0.777` of all draws, which is
+    /// `0.780` of the ones that visibly moved.
+    ///
+    /// **It does not always.** A quarter of re-draws still go anywhere at all, which is what
+    /// leaves a gene able to be switched *off* — SPEC section 7 calls non-firing genes the raw
+    /// material duplication feeds on — and what stops every cell in every body becoming
+    /// developmentally live and every organism becoming a 64-cell blob.
+    ///
+    /// **And it can still leave the genome's alphabet entirely**, which is the same claim seen
+    /// from outside: about a fifth of re-draws name a state the genome does not mention anywhere.
+    ///
+    /// The mask itself is checked first, because every proportion below is a fact about it.
+    #[test]
+    fn a_re_drawn_trigger_state_lands_on_a_state_some_cell_is_in() {
+        let limits = spec_limits();
+        let parent = two_disjoint_alphabets();
+        let alphabet = Alphabet::of(&parent);
+
+        let occupied: Vec<u8> = (0..State::COUNT)
+            .filter(|state| alphabet.occupied & (1 << state) != 0)
+            .collect();
+        assert_eq!(
+            occupied,
+            vec![0, 20, 21, 22, 23, 24, 25],
+            "the states a body could be in are the ones its genes hand out, and state 0, which \
+             SPEC section 7's development puts the seed cell in without any gene naming it. \
+             Leave state 0 out and a genome whose genes hand out only state 5 would draw every \
+             trigger onto 5, nothing would answer to the seed cell, and every body in that \
+             lineage would be a single cell"
+        );
+
+        let answered: Vec<u8> = (0..State::COUNT)
+            .filter(|state| alphabet.answered & (1 << state) != 0)
+            .collect();
+        assert_eq!(answered, vec![1, 2, 3], "the states its genes answer to");
+
+        let (triggers, _) = state_redraws(&parent, &limits);
+        assert!(
+            triggers.len() > 3_000,
+            "only {} trigger states moved in twenty thousand reproductions of a three-gene \
+             genome, where one field in sixteen of every gene is re-drawn - so this test has \
+             almost no evidence in it",
+            triggers.len()
+        );
+
+        let landed_on_a_cell = share_inside(&triggers, &occupied);
+        assert!(
+            (0.72..=0.84).contains(&landed_on_a_cell),
+            "{landed_on_a_cell} of re-drawn trigger states named a state some cell is in, where \
+             the mixture asks for 0.78. A uniform draw over the sixty-four would give 7/64 = \
+             0.11, which is the 2.2% that made development stop at nearly every cell it visited"
+        );
+
+        let left_the_alphabet = 1.0 - share_inside(&triggers, &WHOLE_ALPHABET);
+        assert!(
+            (0.12..=0.30).contains(&left_the_alphabet),
+            "{left_the_alphabet} of re-drawn trigger states named a state this genome does not \
+             mention anywhere, where the quarter that is drawn uniformly asks for about 0.21. \
+             Nought would mean this is a replacement rather than a mixture: a gene could never be \
+             pointed at a state nothing occupies, so it could never be switched off, and the \
+             neutral material SPEC section 7 says duplication feeds on would have been deleted \
+             by an operator"
+        );
+    }
+
+    /// ⭐⭐ **A re-drawn `child_state` or `new_state` can still name a state nothing answers
+    /// to** — three times in four, which is the opposite way round from the field above.
+    ///
+    /// The two fields are not the same kind of thing and this is the test that says so. A
+    /// `trigger_state` reaches *for* a cell; a `child_state` is the identity a gene **hands out**,
+    /// and it is the only way the set of addressable identities ever grows. Bias it the way the
+    /// trigger is biased and a genome could only ever hand out names it already answers to: no
+    /// state nothing yet names could ever be minted, no new body part could ever be invented, and
+    /// a lineage would be trapped inside the three or four states its founder happened to be
+    /// given. **That is a worse failure than small bodies**, because small bodies are slow and a
+    /// closed alphabet is the design not working at all.
+    ///
+    /// So the minority case is the biased one, and it is there for a real reason rather than as a
+    /// hedge: `0.25 + 0.75 × 3/64 = 0.285` of these re-draws hand a daughter a name some rule
+    /// already answers to, which is a daughter development can carry on with, and that is the
+    /// other end of how a body gets deeper than two cells.
+    #[test]
+    fn a_re_drawn_child_state_can_still_name_a_state_nothing_answers_to() {
+        let limits = spec_limits();
+        let parent = two_disjoint_alphabets();
+        let answered = [1_u8, 2, 3];
+
+        let (_, handed_out) = state_redraws(&parent, &limits);
+        assert!(
+            handed_out.len() > 6_000,
+            "only {} handed-out states moved in twenty thousand reproductions, and there are two \
+             such fields per gene - so this test has almost no evidence in it",
+            handed_out.len()
+        );
+
+        let named_a_rule = share_inside(&handed_out, &answered);
+        assert!(
+            (0.24..=0.34).contains(&named_a_rule),
+            "{named_a_rule} of re-drawn child and new states named a state some gene already \
+             answers to, where the mixture asks for 0.29. This is deliberately the minority case: \
+             it is what lets a body grow past its first daughter, and it must stay a minority or \
+             the set of identities a lineage can address stops growing"
+        );
+
+        let minted_something_new = 1.0 - share_inside(&handed_out, &WHOLE_ALPHABET);
+        assert!(
+            minted_something_new > 0.55,
+            "only {minted_something_new} of re-drawn child and new states named a state this \
+             genome does not mention anywhere. A lineage that cannot hand out a name nothing yet \
+             answers to can never invent a body part, and the genome collapses onto the closed set \
+             of states it started with - which is a worse outcome than the small bodies this whole \
+             change is about"
+        );
+    }
+
+    /// ⭐⭐ **A lineage now finds the gene it was already carrying.**
+    ///
+    /// The consequence the whole change is for, made concrete. The genome here is the shape every
+    /// genome in this world has been in since Phase 3: **a perfectly good growth gene that nothing
+    /// is ever in the state of**. Its first gene turns the seed cell into state 1 and stops, so
+    /// the body is one cell; its second gene would divide a cell in state 40 into more cells in
+    /// state 40, for ever, and no cell is ever in state 40. The two are one number apart and the
+    /// number is a name.
+    ///
+    /// Two mutations reach it and both are re-draws of a state: point the second gene's
+    /// `trigger_state` at a state a cell is in, or make the first gene hand out the name the
+    /// second answers to. **Under a uniform re-draw each is one chance in sixty-four**, on one
+    /// field in sixteen. Under the mixture the first is one in five and the second one in seven,
+    /// because the alphabet this genome writes holds four states and two.
+    ///
+    /// The criterion is a body of **more than two** cells rather than more than one, and that is
+    /// deliberate: the other way this genome can grow is a re-drawn `action`, which turns its first
+    /// gene into a divider and gives a body of exactly two. Ruling that out is what leaves the
+    /// count a count of the addressing.
+    ///
+    /// Measured over a thousand lineages of twenty-four point mutations each: **207** find it,
+    /// against **68** under the uniform re-draw this replaces — the same fixture, the same seed,
+    /// the same generations, with only the three match arms in [`point_mutate`] put back. Three
+    /// times as many, and eleven standard deviations apart, so the band below sits between the two
+    /// and far enough from both to be about the operator rather than about the seed.
+    ///
+    /// ⚠️ **Three times rather than the thirty the arithmetic above suggests**, and the difference
+    /// is worth knowing: a lineage of twenty-four mutations has many roads to a larger body that
+    /// have nothing to do with addressing — a re-drawn action, a re-drawn step window, a second
+    /// mutation rescuing the first — and 68 of the 1,000 find one of those. What the mixture adds
+    /// is the 139 that find the *gene they were carrying*.
+    #[test]
+    fn a_lineage_now_finds_a_body_that_uniform_re_draws_did_not() {
+        let limits = spec_limits();
+        let only_point_mutations = mutation_with(|rates| {
+            rates.point_rate = 1.0;
+            rates.duplication_rate = 0.0;
+            rates.deletion_rate = 0.0;
+            rates.insertion_rate = 0.0;
+            rates.reorder_rate = 0.0;
+            rates.genome_duplication_rate = 0.0;
+        });
+
+        let stunted = Genome::new(
+            vec![
+                // Turns the seed cell into state 1 on the first step, and nothing answers to 1.
+                Gene {
+                    trigger_state: State::ZERO,
+                    min_step: 0,
+                    max_step: 0,
+                    action: Action::Differentiate,
+                    new_kind: CellKind::Photocyte,
+                    new_state: State::new(1),
+                    child_state: State::new(55),
+                    ..a_quiet_gene()
+                },
+                // A growth gene with nothing to grow on.
+                Gene {
+                    trigger_state: State::new(40),
+                    min_step: 0,
+                    max_step: 15,
+                    action: Action::Divide,
+                    adhere: true,
+                    child_state: State::new(40),
+                    child_kind: CellKind::Photocyte,
+                    rest_length: 8.0,
+                    stiffness: 10.0,
+                    ..a_quiet_gene()
+                },
+            ],
+            &limits,
+        );
+        assert_eq!(
+            develop(&stunted, &limits).cells.len(),
+            1,
+            "this genome is supposed to grow a single cell while carrying a gene that would fill \
+             a body, so that what the lineages below find is the connection between the two"
+        );
+
+        const LINEAGES: u64 = 1_000;
+        let mut found = 0_u32;
+        for lineage in 0..LINEAGES {
+            let mut rng = organism_rng(42, lineage);
+            let mut genome = stunted.clone();
+            let mut largest = 1;
+
+            for _ in 0..12 {
+                genome = mutate(&genome, &only_point_mutations, &limits, &mut rng);
+                largest = largest.max(develop(&genome, &limits).cells.len());
+            }
+
+            found += u32::from(largest > 2);
+        }
+
+        assert!(
+            (140..=350).contains(&found),
+            "{found} of {LINEAGES} lineages grew a body of more than two cells in twenty-four \
+             point mutations. The uniform re-draw this replaces manages 68, because a gene and a \
+             cell had to agree about one number out of sixty-four; the mixture measures 207. Far \
+             below the band means the bias is not reaching the operator, and far above it means \
+             the re-draw has stopped being a mixture - a genome whose every gene fires is a body \
+             that runs straight into max_cells_per_organism"
+        );
     }
 
     /// ⭐ Duplication copies one gene and puts the copy immediately after it — and the
@@ -998,6 +1558,85 @@ mod tests {
                  replaced structure rather than adding to it"
             );
         }
+    }
+
+    /// ⭐⭐ **Every state a body reaches is one its genome writes down.**
+    ///
+    /// The claim that makes reading the alphabet off the *gene list* legitimate rather than merely
+    /// cheap. The exact answer to "which states are occupied" is what a development pass would
+    /// report, and a pass costs the whole of `develop` per reproduction on top of the one
+    /// reproduction already does for the child. What is used instead is a **superset** of it, and
+    /// the reason it is one is structural: a cell's state is written in exactly two places — a
+    /// gene's `child_state` when it is budded and a gene's `new_state` when it is re-made — and
+    /// the one cell neither of those touches is the seed cell, which SPEC section 7 puts in state
+    /// 0.
+    ///
+    /// So [`Alphabet::occupied`] can *over*-report — by naming a state that is written down and
+    /// never reached, because of a step window or because a gene in front of it answers first —
+    /// and it can never under-report. That is the right direction: a `trigger_state` drawn onto a
+    /// written-but-unreached state is a gene that does not fire, which is an ordinary silent gene;
+    /// a state that a cell is in and the alphabet had not heard of would be a cell the operator
+    /// could never point anything at, and this test would be the only thing that could ever say so.
+    ///
+    /// Five hundred genomes, each built from genes the real [`Gene::random`] drew and then squeezed
+    /// onto a four-state alphabet so that genes actually fire — a genome of genes drawn over all
+    /// sixty-four states usually grows one cell and would make this test a comparison of empty
+    /// bodies — and each of them checked again after eight generations of the real mutation
+    /// operators, because the claim has to survive the thing that changes genomes.
+    #[test]
+    fn every_state_a_body_reaches_is_one_its_genome_writes_down() {
+        let limits = spec_limits();
+        let rates = mutation_with(|rates| {
+            rates.point_rate = 1.0;
+            rates.duplication_rate = 0.5;
+            rates.deletion_rate = 0.2;
+            rates.insertion_rate = 0.5;
+            rates.reorder_rate = 0.5;
+            rates.genome_duplication_rate = 0.1;
+        });
+        let mut rng = organism_rng(42, 0);
+        let mut multicellular = 0_u32;
+
+        for _ in 0..500 {
+            let genes: Vec<Gene> = (0..4)
+                .map(|_| {
+                    let drawn = Gene::random(&mut rng, &limits);
+                    Gene {
+                        trigger_state: State::new(rng.random_range(0..4_u8)),
+                        child_state: State::new(rng.random_range(0..4_u8)),
+                        new_state: State::new(rng.random_range(0..4_u8)),
+                        ..drawn
+                    }
+                })
+                .collect();
+            let mut genome = Genome::new(genes, &limits);
+
+            for generation in 0..=8 {
+                let alphabet = Alphabet::of(genome.genes());
+                let body = develop(&genome, &limits);
+                multicellular += u32::from(body.cells.len() > 1);
+
+                for cell in &body.cells {
+                    assert!(
+                        alphabet.occupied & bit(cell.state) != 0,
+                        "generation {generation}: a cell of this body is in state {}, which its \
+                         own genome writes down nowhere. Every state a cell can be in is either \
+                         state 0, which development puts the seed cell in, or some gene's \
+                         child_state or new_state - so an alphabet read off the gene list is a \
+                         superset of what a body occupies, and this says it is",
+                        cell.state.get()
+                    );
+                }
+
+                genome = mutate(&genome, &rates, &limits, &mut rng);
+            }
+        }
+
+        assert!(
+            multicellular > 1_000,
+            "only {multicellular} of the 4,500 bodies grown here had more than one cell in them, \
+             so this test has been comparing seed cells with seed cells"
+        );
     }
 
     /// Deletion takes out one gene and leaves the rest where they were.

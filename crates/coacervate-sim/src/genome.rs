@@ -105,8 +105,14 @@ impl State {
 
     /// A state drawn uniformly from all sixty-four.
     ///
-    /// Used by [`Gene::random`] and, from Group C, by the point mutation that re-draws a
-    /// discrete field.
+    /// Used by [`Gene::random`], which has no genome to be relative to, and by the **uniform
+    /// branch** of the point mutation that re-draws a state.
+    ///
+    /// ⭐⭐ **The other branch does not come from here, and that is Phase 7's Group J.** A state
+    /// drawn uniformly over sixty-four when a genome mentions three is what left only 2.2% of grown
+    /// cells in a state their own genome named, and development stops at every cell it does not
+    /// name. `mutation.rs`'s `Alphabet` is where a re-drawn `trigger_state`, `child_state` or
+    /// `new_state` mostly comes from now; see SPEC section 7.
     #[must_use]
     pub fn random(rng: &mut ChaCha8Rng) -> Self {
         Self::new(rng.random())
@@ -647,7 +653,9 @@ impl Genome {
     ///   There is no sense in which a myocyte is a third of the way to a sclerocyte, and a state
     ///   is a *name* for which genes answer to a cell rather than a quantity: state 5 and state 6
     ///   have nothing to do with one another, which is exactly why `mutation.rs` re-draws them
-    ///   uniformly instead of nudging them.
+    ///   instead of nudging them. (⭐ *Re-draws*, and from Phase 7's Group J not uniformly — but
+    ///   which distribution a name is drawn from says nothing about how far apart two names are,
+    ///   and this measure is unchanged by it.)
     /// - **The six linear numbers** are the gap between the two values over the width of the
     ///   range a gene is drawn from, so half a range is half a field, and a value walked past the
     ///   end of its range - which nothing forbids - does not go on counting past one.

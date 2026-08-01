@@ -182,11 +182,16 @@ fn dawn(world: &mut World) -> u64 {
 /// and hands its daughter a state no gene answers to - which is what makes the body two cells
 /// rather than a chain of them.
 ///
-/// ⚠️ **That last clause is also the whole of why every body in this world is two cells for the
-/// first hundred thousand ticks of a run**, and it is a fact about the founder only by
-/// accident: development stops at *any* cell whose state no gene names, and measured over the
-/// shipped world only **2.2%** of grown cells sit in a state their own genome names. See SPEC
-/// section 7 and `docs/PHASE7.md`'s Group I.
+/// ⚠️ **That last clause was long thought to be the whole of why every body in this world is two
+/// cells for the first hundred thousand ticks of a run**, and it is a fact about the founder only
+/// by accident: development stops at *any* cell whose state no gene names, and only **2.2%** of
+/// grown cells sat in a state their own genome named when that was first measured.
+///
+/// ⭐⭐ **Phase 7's Group J biased where a re-drawn state lands and took that fraction to 17.7%,
+/// and mean body size did not move.** So the founder being two cells is still true of the founder
+/// and is no longer an explanation of the population: what holds bodies at two cells while the
+/// world is filling appears to be the energy budget rather than the addressing. See SPEC sections
+/// 7 and 15, and `docs/PHASE7.md`'s Group J and Q32.
 #[must_use]
 pub fn founder_genome(limits: &LimitsConfig) -> Genome {
     Genome::new(
