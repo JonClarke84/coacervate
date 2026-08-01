@@ -1209,6 +1209,23 @@ mod tests {
     /// land. It is the cheapest possible statement that the code path was never taken - and it
     /// was the first sign of where the real problem is. See `docs/PHASE7.md`, Group H.
     ///
+    /// # ⚠️ Group I did not move it either, and the reason is a different one worth keeping
+    ///
+    /// Group I is the fix to Group H's finding: a cell now takes its behaviour from **the gene
+    /// that built it** rather than from a gene looked up by its `state`, so every myocyte in
+    /// the world is wired to a gene instead of one in fifty. This vector is still unchanged to
+    /// the last bit, and this time it is **not** because the path is unreachable.
+    ///
+    /// It is because a myocyte needs *two* mutations before it moves anything, and 4,000 ticks
+    /// is not long enough for the second. `mutation.rs` perturbs **one field of a hit gene**,
+    /// so the mutation that makes a gene's `child_kind` a myocyte leaves that gene's `osc_freq`
+    /// at whatever it was - and the founder's is nought. A myocyte therefore arrives silent and
+    /// stays silent until the *same gene* is hit again on `osc_freq` or `osc_phase`. What Group
+    /// I changed is that both of those now land on one gene in a genome of three or four,
+    /// instead of one having to land on a state in a space of sixty-four; the same run measured
+    /// to 313,000 ticks diverges from its own baseline at about tick 50,000 and ends with a
+    /// different world. See `docs/PHASE7.md`, Group I.
+    ///
     /// # Why the field's total is the sensitive one
     ///
     /// It is a 64-bit sum over every tile in the world, and every body in the world has been

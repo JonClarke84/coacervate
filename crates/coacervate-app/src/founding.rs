@@ -181,6 +181,12 @@ fn dawn(world: &mut World) -> u64 {
 /// to be asked for is the second one, and the gene that asks for it fires on step nought only
 /// and hands its daughter a state no gene answers to - which is what makes the body two cells
 /// rather than a chain of them.
+///
+/// ⚠️ **That last clause is also the whole of why every body in this world is two cells for the
+/// first hundred thousand ticks of a run**, and it is a fact about the founder only by
+/// accident: development stops at *any* cell whose state no gene names, and measured over the
+/// shipped world only **2.2%** of grown cells sit in a state their own genome names. See SPEC
+/// section 7 and `docs/PHASE7.md`'s Group I.
 #[must_use]
 pub fn founder_genome(limits: &LimitsConfig) -> Genome {
     Genome::new(

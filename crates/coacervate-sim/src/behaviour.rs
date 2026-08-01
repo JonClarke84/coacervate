@@ -67,7 +67,7 @@
 
 use crate::cell::{Cell, CellKind, Vec2};
 use crate::config::Config;
-use crate::genome::{Gene, Genome, MAX_REST_LENGTH, SensorTarget};
+use crate::genome::{Gene, MAX_REST_LENGTH, SensorTarget};
 use crate::grid::Grid;
 use crate::ledger::Ledger;
 use crate::organism::Organism;
@@ -554,12 +554,6 @@ pub struct Behaviour {
     flow: Vec<f32>,
 }
 
-/// How many developmental identities there are, as a length rather than as a count.
-///
-/// `genome.rs` owns the number; this is the same number in the form an array wants it, and
-/// `the_state_table_covers_every_state_a_gene_can_name` is what stops the two drifting apart.
-const STATES: usize = 64;
-
 impl Behaviour {
     /// Build the working room a configuration implies.
     #[must_use]
@@ -662,9 +656,6 @@ impl Behaviour {
             width: *width,
         };
 
-        let mut inside = usize::MAX;
-        let mut rules = [usize::MAX; STATES];
-
         for (index, cell) in cells.iter().enumerate() {
             // Shading is worked out only where somebody is about to eat. It is the most
             // expensive question in the pass - a box of fifteen buckets per cell - and a
@@ -682,22 +673,18 @@ impl Behaviour {
                 continue;
             }
 
-            let slot = owner[index];
-            let Some(organism) = organisms[slot].as_ref() else {
+            let Some(organism) = organisms[owner[index]].as_ref() else {
                 continue;
             };
-            if slot != inside {
-                inside = slot;
-                rules = first_match(organism.genome());
-            }
-
-            let gene = rules[usize::from(cell.state)];
-            if gene == usize::MAX {
+            // What a sensocyte is tuned to is the `sensor_target` of the gene that made it a
+            // sensocyte. See [`Behaviour::contract`] for the argument, which is one argument
+            // for both kinds that have any behaviour at all.
+            let Some(gene) = cell.gene else {
                 continue;
-            }
+            };
 
             signal[index] = sense(
-                organism.genome().genes()[gene].sensor_target,
+                organism.genome().genes()[usize::from(gene)].sensor_target,
                 &around,
                 index,
             );
@@ -712,24 +699,44 @@ impl Behaviour {
     /// means two muscles pulling against each other cancel rather than one of them winning by
     /// being looked at second.
     ///
-    /// # Where a myocyte's rhythm comes from, which SPEC does not say
+    /// # ⭐⭐ Where a myocyte's rhythm comes from: **the gene that built it**
     ///
     /// `osc_freq`, `osc_phase` and `sensor_gain` live on a *gene*, and a cell is not a gene.
-    /// SPEC section 7 never says which gene a grown cell's behaviour comes from, so this is
-    /// decided here: **the first gene whose `trigger_state` matches the cell's state**, which
-    /// is development's own first-match-wins rule with the step window taken off.
+    /// SPEC section 7 never says in as many words which gene a grown cell's behaviour comes
+    /// from, but it puts those three fields, and `sensor_target`, in **the same fixed record**
+    /// as `child_kind` and `new_kind`. The natural reading of one record is that it describes
+    /// one thing: a gene that divides a parent into a myocyte says how that myocyte oscillates.
+    /// So a cell carries the position of the gene that made it what it is - see
+    /// [`crate::development::develop`] - and this reads it.
     ///
-    /// It was chosen over the alternative - the gene that *made* the cell - for two reasons.
-    /// A cell's state is what a genome uses to say what a cell *is*, so keying behaviour on it
-    /// means one rule per identity says both what that identity does while growing and how it
-    /// behaves afterwards. And it keeps gene *order* meaningful for behaviour exactly as it is
-    /// for development, so duplicating a gene and changing what it answers to creates a new
-    /// body part with its own rhythm - which is the operator the whole genome design exists
-    /// for.
+    /// **Phase 4 decided the other way and the evidence is that it connected almost nothing.**
+    /// It looked a cell's behaviour up by matching its `state` against `trigger_state`, which
+    /// is development's own first-match-wins rule with the step window taken off, on the
+    /// grounds that a state is what a genome uses to say what a cell *is*. Measured over
+    /// 120,000 ticks of the shipped world, over every cell of every body except the seed cell
+    /// it started as: **0.05% were in a state their own genome named.** Not one myocyte,
+    /// devorocyte or sclerocyte in the population was. A state is one of 64, a genome of that
+    /// age holds about three genes, `trigger_state` is not where mutation spends its time, and
+    /// development scatters daughters across the whole range through `child_state` - so a
+    /// muscle was overwhelmingly likely to be grown into a state nothing in its own genome was
+    /// listening to. **Anatomically present and behaviourally disconnected**: a muscle with no
+    /// nerve to it. Three separate changes to what movement was *worth* - the anisotropic
+    /// water, the drifting light and the stroke - all came back null against a code path the
+    /// world took about once in every two hundred thousand spring-ticks.
     ///
-    /// A cell whose state no gene answers to has no behaviour at all: no frequency, no gain.
-    /// That is an ordinary thing for a genome to produce and it must not fall back on some
-    /// default rhythm, or a lineage would be swimming to a tune nobody selected.
+    /// What the old rule offered and this one does not is that a duplicated gene could take
+    /// over an existing cell's behaviour by naming its state. What this one keeps is the thing
+    /// duplication is actually for: duplicate a dividing gene, point the copy at another state,
+    /// and the new body part it grows arrives **with its own rhythm** - because the rhythm
+    /// travels with the gene instead of being looked up afterwards. Gene order still decides
+    /// which gene builds a cell, so order still carries information.
+    ///
+    /// A cell no gene speaks for has no behaviour at all: no frequency, no gain. It must not
+    /// fall back on some default rhythm, or a lineage would be swimming to a tune nobody
+    /// selected. Under this rule that case is **unreachable in a grown body** - only a seed
+    /// cell can lack a gene and a seed cell is always a photocyte, which
+    /// `development.rs`'s `a_cell_with_no_gene_is_the_seed_cell_and_needs_none` proves - so
+    /// the fallback is a rule about a case rather than the ordinary path it used to be.
     ///
     /// # What the work is
     ///
@@ -795,21 +802,11 @@ impl Behaviour {
         let seconds = elapsed(ticks);
         let a_tick_ago = seconds - f64::from(DT);
 
-        // Which gene answers to which state, for whichever organism the walk is inside. The
-        // springs arrive grouped by organism, in slot order, so this is rebuilt once per body
-        // rather than looked up once per spring.
-        let mut inside = usize::MAX;
-        let mut rules = [usize::MAX; STATES];
-
         for spring in springs.iter_mut() {
             let slot = owner[spring.a];
             let Some(organism) = organisms[slot].as_ref() else {
                 continue;
             };
-            if slot != inside {
-                inside = slot;
-                rules = first_match(organism.genome());
-            }
 
             let mut now = 0.0f32;
             let mut a_moment_ago = 0.0f32;
@@ -819,11 +816,14 @@ impl Behaviour {
                 if cells[end].kind != CellKind::Myocyte {
                     continue;
                 }
-                let gene = rules[usize::from(cells[end].state)];
-                if gene == usize::MAX {
+                // The gene that made this cell a myocyte is the gene that says how it moves.
+                // A cell carrying an index into its own organism's genome is an invariant
+                // `development.rs` establishes and nothing afterwards can disturb: a body and
+                // the genome it was grown from are made and replaced together.
+                let Some(which) = cells[end].gene else {
                     continue;
-                }
-                let gene = &organism.genome().genes()[gene];
+                };
+                let gene = &organism.genome().genes()[usize::from(which)];
 
                 let heard = if sensors[end] > 0 {
                     sensed[end] / narrowed(f64::from(sensors[end]))
@@ -1409,26 +1409,6 @@ fn contraction(drive: Drive, gene: &Gene, signal: f32, angle: f64) -> f32 {
     amplitude.mul_add(drive.stroke * narrowed(angle.sin()), 1.0)
 }
 
-/// Which gene answers to each developmental state: the first one that names it, or
-/// `usize::MAX` for a state no gene answers to at all.
-///
-/// The same first-match-wins rule `development.rs` applies, so where a gene sits in a genome
-/// decides whether it is heard as well as whether it fires - and a gene sitting behind another
-/// is silent rather than absent, which SPEC section 7 says is where duplication finds its raw
-/// material.
-fn first_match(genome: &Genome) -> [usize; STATES] {
-    let mut rules = [usize::MAX; STATES];
-
-    for (index, gene) in genome.genes().iter().enumerate() {
-        let state = usize::from(gene.trigger_state.get());
-        if rules[state] == usize::MAX {
-            rules[state] = index;
-        }
-    }
-
-    rules
-}
-
 /// How many simulated seconds a run has taken.
 ///
 /// SPEC section 2 fixes a tick at a sixtieth of a second, so this is only a multiplication -
@@ -1556,12 +1536,23 @@ mod tests {
         ///
         /// The genome matters only where a test is about a gene - a photocyte harvesting
         /// needs no rule to tell it to.
-        fn add(&mut self, genome: Genome, energy: f64, body: &[(CellKind, Vec2, u8)]) -> usize {
+        ///
+        /// ⭐ **A cell is given the gene that built it, not a developmental state**, which is
+        /// Phase 7's change to where behaviour comes from. `development.rs` is what stamps
+        /// that on in a real body; a scene builds its bodies by hand, so it says so by hand.
+        /// A cell's `state` is left at nought throughout this file, because after that change
+        /// nothing in this module reads one.
+        fn add(
+            &mut self,
+            genome: Genome,
+            energy: f64,
+            body: &[(CellKind, Vec2, Option<u8>)],
+        ) -> usize {
             let slot = self.organisms.len();
 
-            for &(kind, at, state) in body {
+            for &(kind, at, gene) in body {
                 let mut cell = Cell::new(kind, at);
-                cell.state = State::new(state).get();
+                cell.gene = gene;
                 self.cells.push(cell);
                 self.owner.push(slot);
             }
@@ -1782,12 +1773,12 @@ mod tests {
         let bright = scene.add(
             genome.clone(),
             0.0,
-            &[(CellKind::Photocyte, Vec2::new(40.0, 12.0), 0)],
+            &[(CellKind::Photocyte, Vec2::new(40.0, 12.0), None)],
         );
         let dim = scene.add(
             genome,
             0.0,
-            &[(CellKind::Photocyte, Vec2::new(200.0, 132.0), 0)],
+            &[(CellKind::Photocyte, Vec2::new(200.0, 132.0), None)],
         );
 
         let shallow_tile = scene.grid.tile_at(Vec2::new(40.0, 12.0));
@@ -1873,12 +1864,12 @@ mod tests {
         let first = scene.add(
             genome.clone(),
             0.0,
-            &[(CellKind::Photocyte, Vec2::new(41.0, 72.0), 0)],
+            &[(CellKind::Photocyte, Vec2::new(41.0, 72.0), None)],
         );
         let second = scene.add(
             genome,
             0.0,
-            &[(CellKind::Photocyte, Vec2::new(46.0, 72.0), 0)],
+            &[(CellKind::Photocyte, Vec2::new(46.0, 72.0), None)],
         );
 
         let tile = scene.grid.tile_at(Vec2::new(41.0, 72.0));
@@ -1937,9 +1928,9 @@ mod tests {
         scene.fill_with_light();
 
         let genome = scene.no_genome();
-        let eater = scene.add(genome.clone(), 0.0, &[(CellKind::Photocyte, at, 0)]);
+        let eater = scene.add(genome.clone(), 0.0, &[(CellKind::Photocyte, at, None)]);
         for &(kind, where_it_is) in blockers {
-            scene.add(genome.clone(), 0.0, &[(kind, where_it_is, 0)]);
+            scene.add(genome.clone(), 0.0, &[(kind, where_it_is, None)]);
         }
 
         scene.run();
@@ -2068,8 +2059,8 @@ mod tests {
                 genome,
                 0.0,
                 &[
-                    (CellKind::Photocyte, at, 0),
-                    (CellKind::Sclerocyte, Vec2::new(40.0, 66.0), 0),
+                    (CellKind::Photocyte, at, None),
+                    (CellKind::Sclerocyte, Vec2::new(40.0, 66.0), None),
                 ],
             );
             scene.run();
@@ -2128,12 +2119,12 @@ mod tests {
             let mut scene = Scene::new(&evenly_lit());
             scene.fill_with_light();
             let genome = scene.no_genome();
-            let body: Vec<(CellKind, Vec2, u8)> = (0..4u8)
+            let body: Vec<(CellKind, Vec2, Option<u8>)> = (0..4u8)
                 .map(|n| {
                     (
                         CellKind::Photocyte,
                         Vec2::new(40.0 + f32::from(n) * 8.0, 72.0),
-                        0,
+                        None,
                     )
                 })
                 .collect();
@@ -2145,12 +2136,12 @@ mod tests {
             let mut scene = Scene::new(&evenly_lit());
             scene.fill_with_light();
             let genome = scene.no_genome();
-            let body: Vec<(CellKind, Vec2, u8)> = (0..4u8)
+            let body: Vec<(CellKind, Vec2, Option<u8>)> = (0..4u8)
                 .map(|n| {
                     (
                         CellKind::Photocyte,
                         Vec2::new(140.0, 60.0 + f32::from(n) * 8.0),
-                        0,
+                        None,
                     )
                 })
                 .collect();
@@ -2203,18 +2194,18 @@ mod tests {
         let feeding = scene.add(
             genome.clone(),
             0.0,
-            &[(CellKind::Devorocyte, Vec2::new(40.0, 72.0), 0)],
+            &[(CellKind::Devorocyte, Vec2::new(40.0, 72.0), None)],
         );
         let hungry = scene.add(
             genome.clone(),
             0.0,
-            &[(CellKind::Devorocyte, Vec2::new(120.0, 72.0), 0)],
+            &[(CellKind::Devorocyte, Vec2::new(120.0, 72.0), None)],
         );
         // And one on a grain holding far less than a bite.
         let scraping = scene.add(
             genome,
             0.0,
-            &[(CellKind::Devorocyte, Vec2::new(200.0, 72.0), 0)],
+            &[(CellKind::Devorocyte, Vec2::new(200.0, 72.0), None)],
         );
 
         let full_grain = scene.drop_detritus(Vec2::new(42.0, 72.0), 1.0);
@@ -2327,32 +2318,32 @@ mod tests {
         let soft_eater = scene.add(
             genome.clone(),
             0.0,
-            &[(CellKind::Devorocyte, Vec2::new(40.0, 72.0), 0)],
+            &[(CellKind::Devorocyte, Vec2::new(40.0, 72.0), None)],
         );
         let soft_prey = scene.add(
             genome.clone(),
             4.0,
-            &[(CellKind::Gonocyte, Vec2::new(44.0, 72.0), 0)],
+            &[(CellKind::Gonocyte, Vec2::new(44.0, 72.0), None)],
         );
         let armoured_eater = scene.add(
             genome.clone(),
             0.0,
-            &[(CellKind::Devorocyte, Vec2::new(120.0, 72.0), 0)],
+            &[(CellKind::Devorocyte, Vec2::new(120.0, 72.0), None)],
         );
         let _armoured_prey = scene.add(
             genome.clone(),
             4.0,
-            &[(CellKind::Sclerocyte, Vec2::new(124.0, 72.0), 0)],
+            &[(CellKind::Sclerocyte, Vec2::new(124.0, 72.0), None)],
         );
         let out_of_reach = scene.add(
             genome.clone(),
             0.0,
-            &[(CellKind::Devorocyte, Vec2::new(190.0, 72.0), 0)],
+            &[(CellKind::Devorocyte, Vec2::new(190.0, 72.0), None)],
         );
         let untouched = scene.add(
             genome.clone(),
             4.0,
-            &[(CellKind::Gonocyte, Vec2::new(197.0, 72.0), 0)],
+            &[(CellKind::Gonocyte, Vec2::new(197.0, 72.0), None)],
         );
 
         // And one organism that is a devorocyte sitting against its own gonocyte.
@@ -2360,8 +2351,8 @@ mod tests {
             genome,
             4.0,
             &[
-                (CellKind::Devorocyte, Vec2::new(60.0, 20.0), 0),
-                (CellKind::Gonocyte, Vec2::new(64.0, 20.0), 0),
+                (CellKind::Devorocyte, Vec2::new(60.0, 20.0), None),
+                (CellKind::Gonocyte, Vec2::new(64.0, 20.0), None),
             ],
         );
 
@@ -2447,17 +2438,17 @@ mod tests {
         let left = scene.add(
             genome.clone(),
             0.0,
-            &[(CellKind::Devorocyte, Vec2::new(36.0, 72.0), 0)],
+            &[(CellKind::Devorocyte, Vec2::new(36.0, 72.0), None)],
         );
         let right = scene.add(
             genome.clone(),
             0.0,
-            &[(CellKind::Devorocyte, Vec2::new(44.0, 72.0), 0)],
+            &[(CellKind::Devorocyte, Vec2::new(44.0, 72.0), None)],
         );
         let prey = scene.add(
             genome,
             0.009,
-            &[(CellKind::Gonocyte, Vec2::new(40.0, 72.0), 0)],
+            &[(CellKind::Gonocyte, Vec2::new(40.0, 72.0), None)],
         );
         let held = scene.energy(prey);
 
@@ -2483,8 +2474,15 @@ mod tests {
         );
     }
 
-    /// A gene that says nothing about development and everything about behaviour: which
-    /// cells it answers to, how they oscillate, and how they respond to what they sense.
+    /// A gene that says nothing about development and everything about behaviour: how the
+    /// cells it built oscillate, and how they respond to what they sense.
+    ///
+    /// ⚠️ The `state` is which cells this gene *fires on* during development, and since Phase
+    /// 7 it has nothing to do with whose behaviour the gene carries - that is decided by which
+    /// cells name it in their `gene`, which a scene sets by hand. It is kept as an argument
+    /// because a genome of several genes wants them told apart, and
+    /// `a_myocyte_takes_its_rhythm_from_the_gene_that_built_it` deliberately points a cell at
+    /// a gene whose trigger state nothing in the body is in.
     fn a_behaviour_gene(
         state: u8,
         osc_freq: f32,
@@ -2510,6 +2508,105 @@ mod tests {
             sensor_gain,
             sensor_target,
         }
+    }
+
+    /// ⭐⭐ **A myocyte takes its rhythm from the gene that built it**, and not from a gene
+    /// looked up by the state it happens to be in.
+    ///
+    /// **This is the change that connected the muscles to the genome**, and the test is written
+    /// so that it can only pass under the new rule. The body below is the case the shipped
+    /// world is almost entirely made of and the old rule could not reach: a myocyte sitting in
+    /// state 44, with **no gene in its genome naming state 44**, built by a gene that names a
+    /// state nothing in the body is in. Under the state lookup that muscle is silent - it has
+    /// no frequency, no phase and no gain, and its spring is never touched. Under this rule it
+    /// works the full stroke, because the gene that said "make a myocyte here" is the gene that
+    /// says how that myocyte moves.
+    ///
+    /// Measured over 120,000 ticks of the shipped world before the change: **0.05% of grown
+    /// cells** were in a state their own genome named, and **not one myocyte in the world was**.
+    /// See [`crate::development::develop`] for the full argument and `docs/PHASE7.md` for the
+    /// count.
+    ///
+    /// # The second half is what stops this being a rule with a hole in it
+    ///
+    /// A myocyte with **no gene at all** still does nothing, and pays nothing. That case is not
+    /// hypothetical in this file - a scene can build one - and it is unreachable in a real body,
+    /// which `development.rs`'s `a_cell_with_no_gene_is_the_seed_cell_and_needs_none` proves:
+    /// only a seed cell can lack a gene and a seed cell is always a photocyte. The fallback is
+    /// still asserted here rather than assumed, because the alternative to asserting it is a
+    /// default rhythm nobody selected.
+    #[test]
+    fn a_myocyte_takes_its_rhythm_from_the_gene_that_built_it() {
+        let settings = evenly_lit();
+        let mut scene = Scene::new(&settings);
+        scene.fill_with_light();
+
+        // One gene, and it answers to a state no cell in this body is in. The old rule found a
+        // myocyte's gene by matching its `state`; this genome offers that rule nothing.
+        let genome = Genome::new(
+            vec![a_behaviour_gene(7, 3.0, 0.0, 0.0, SensorTarget::Light)],
+            &settings.limits,
+        );
+
+        let wired = scene.add(
+            genome,
+            4.0,
+            &[
+                (CellKind::Myocyte, Vec2::new(40.0, 72.0), Some(0)),
+                (CellKind::Sclerocyte, Vec2::new(48.0, 72.0), None),
+            ],
+        );
+        scene.adhere(0, 1, 8.0, 10.0);
+        scene.cells[0].state = 44;
+
+        // The same body with nothing speaking for the muscle at all.
+        let deaf = scene.add(
+            Genome::new(
+                vec![a_behaviour_gene(7, 3.0, 0.0, 0.0, SensorTarget::Light)],
+                &settings.limits,
+            ),
+            4.0,
+            &[
+                (CellKind::Myocyte, Vec2::new(140.0, 72.0), None),
+                (CellKind::Sclerocyte, Vec2::new(148.0, 72.0), None),
+            ],
+        );
+        scene.adhere(2, 3, 8.0, 10.0);
+        scene.cells[2].state = 44;
+
+        let (mut longest, mut shortest) = (0.0f32, f32::MAX);
+        for _ in 0..130 {
+            scene.run();
+            longest = longest.max(scene.springs[0].rest_length);
+            shortest = shortest.min(scene.springs[0].rest_length);
+
+            assert!(
+                (scene.springs[1].rest_length - 8.0).abs() < f32::EPSILON,
+                "a myocyte with no gene at all worked its spring to {}, so it is oscillating \
+                 to a rhythm nobody selected",
+                scene.springs[1].rest_length
+            );
+        }
+
+        // The full stroke: `resting_amplitude × stroke` of eight units either way, which at
+        // the shipped 0.8 and 1.0 is 1.6 to 14.4. The same figures
+        // `a_myocyte_oscillates_its_springs_and_pays_for_the_work` records for a muscle the old
+        // rule *could* reach.
+        assert!(
+            (shortest - 1.6).abs() < 0.01 && (longest - 14.4).abs() < 0.01,
+            "a myocyte built by a gene worked its spring between {shortest} and {longest}, \
+             against the 1.6 to 14.4 SPEC section 9's controller gives - so a cell is not \
+             taking its behaviour from the gene that made it"
+        );
+        assert!(
+            scene.energy(wired) < 4.0,
+            "a muscle that moved a spring paid nothing for the work"
+        );
+        assert!(
+            (scene.energy(deaf) - 4.0).abs() < f64::EPSILON,
+            "a myocyte no gene speaks for paid {} for movement",
+            4.0 - scene.energy(deaf)
+        );
     }
 
     /// ⭐⭐ **Phase 7, Group H.** How far a myocyte works its spring is a setting, and both ends
@@ -2556,8 +2653,8 @@ mod tests {
                 genome,
                 4.0,
                 &[
-                    (CellKind::Myocyte, Vec2::new(40.0, 72.0), 1),
-                    (CellKind::Sclerocyte, Vec2::new(48.0, 72.0), 0),
+                    (CellKind::Myocyte, Vec2::new(40.0, 72.0), Some(0)),
+                    (CellKind::Sclerocyte, Vec2::new(48.0, 72.0), None),
                 ],
             );
             scene.adhere(0, 1, 8.0, 10.0);
@@ -2659,8 +2756,8 @@ mod tests {
             genome.clone(),
             4.0,
             &[
-                (CellKind::Myocyte, Vec2::new(40.0, 72.0), 1),
-                (CellKind::Sclerocyte, Vec2::new(48.0, 72.0), 0),
+                (CellKind::Myocyte, Vec2::new(40.0, 72.0), Some(0)),
+                (CellKind::Sclerocyte, Vec2::new(48.0, 72.0), None),
             ],
         );
         scene.adhere(0, 1, 8.0, 10.0);
@@ -2670,8 +2767,8 @@ mod tests {
             genome,
             4.0,
             &[
-                (CellKind::Myocyte, Vec2::new(140.0, 72.0), 1),
-                (CellKind::Sclerocyte, Vec2::new(148.0, 72.0), 0),
+                (CellKind::Myocyte, Vec2::new(140.0, 72.0), Some(0)),
+                (CellKind::Sclerocyte, Vec2::new(148.0, 72.0), None),
             ],
         );
         scene.adhere(2, 3, 8.0, 20.0);
@@ -2681,8 +2778,8 @@ mod tests {
             inert,
             4.0,
             &[
-                (CellKind::Sclerocyte, Vec2::new(40.0, 20.0), 1),
-                (CellKind::Sclerocyte, Vec2::new(48.0, 20.0), 0),
+                (CellKind::Sclerocyte, Vec2::new(40.0, 20.0), None),
+                (CellKind::Sclerocyte, Vec2::new(48.0, 20.0), None),
             ],
         );
         scene.adhere(4, 5, 8.0, 10.0);
@@ -2783,9 +2880,12 @@ mod tests {
     ///
     /// Two ways of doing nothing, and both have to come to nought. A myocyte whose gene gives
     /// it no frequency never changes its rest length, so it moves nothing through no distance.
-    /// And a myocyte with no gene answering to its state at all - which is an ordinary thing
-    /// for a genome to produce - behaves as though it had a frequency of nought rather than
-    /// falling back on some default rhythm nobody asked for.
+    /// And a myocyte **no gene built** behaves as though it had a frequency of nought rather
+    /// than falling back on some default rhythm nobody asked for. Since Phase 7 the second of
+    /// those is unreachable in a grown body - see
+    /// [`crate::development::develop`] - so it is a rule about the boundary rather than about
+    /// the ordinary case it used to describe; a scene can still build one, and this is what
+    /// says what happens when it does.
     #[test]
     fn a_myocyte_that_does_nothing_pays_nothing() {
         let settings = evenly_lit();
@@ -2802,8 +2902,8 @@ mod tests {
             motionless,
             4.0,
             &[
-                (CellKind::Myocyte, Vec2::new(40.0, 72.0), 1),
-                (CellKind::Sclerocyte, Vec2::new(48.0, 72.0), 0),
+                (CellKind::Myocyte, Vec2::new(40.0, 72.0), Some(0)),
+                (CellKind::Sclerocyte, Vec2::new(48.0, 72.0), None),
             ],
         );
         scene.adhere(0, 1, 8.0, 10.0);
@@ -2812,8 +2912,8 @@ mod tests {
             silent,
             4.0,
             &[
-                (CellKind::Myocyte, Vec2::new(140.0, 72.0), 7),
-                (CellKind::Sclerocyte, Vec2::new(148.0, 72.0), 0),
+                (CellKind::Myocyte, Vec2::new(140.0, 72.0), None),
+                (CellKind::Sclerocyte, Vec2::new(148.0, 72.0), None),
             ],
         );
         scene.adhere(2, 3, 8.0, 10.0);
@@ -2831,8 +2931,8 @@ mod tests {
         );
         assert!(
             (scene.energy(unwired) - 4.0).abs() < f64::EPSILON,
-            "a myocyte whose state no gene answers to paid {}, so it is oscillating to some \
-             rhythm that is not in its genome",
+            "a myocyte no gene built paid {}, so it is oscillating to some rhythm that is not \
+             in its genome",
             4.0 - scene.energy(unwired)
         );
         assert!(
@@ -2907,7 +3007,7 @@ mod tests {
 
         // A hundred mouths and fifty noses, on a coarse lattice of their own so that every one
         // of them has grains around it.
-        let mouths: Vec<(CellKind, Vec2, u8)> = (0..100u32)
+        let mouths: Vec<(CellKind, Vec2, Option<u8>)> = (0..100u32)
             .map(|index| {
                 (
                     CellKind::Devorocyte,
@@ -2915,11 +3015,11 @@ mod tests {
                         f32::from(u8::try_from(index % 10).expect("under ten")) * 25.0 + 5.0,
                         f32::from(u8::try_from(index / 10).expect("under ten")) * 14.0 + 5.0,
                     ),
-                    0,
+                    None,
                 )
             })
             .collect();
-        let noses: Vec<(CellKind, Vec2, u8)> = (0..50u32)
+        let noses: Vec<(CellKind, Vec2, Option<u8>)> = (0..50u32)
             .map(|index| {
                 (
                     CellKind::Sensocyte,
@@ -2927,7 +3027,7 @@ mod tests {
                         f32::from(u8::try_from(index % 10).expect("under ten")) * 25.0 + 15.0,
                         f32::from(u8::try_from(index / 10).expect("under five")) * 28.0 + 12.0,
                     ),
-                    1,
+                    Some(0),
                 )
             })
             .collect();
@@ -3018,8 +3118,8 @@ mod tests {
             genome,
             0.0,
             &[
-                (CellKind::Myocyte, Vec2::new(40.0, 72.0), 1),
-                (CellKind::Sensocyte, Vec2::new(46.0, 72.0), 2),
+                (CellKind::Myocyte, Vec2::new(40.0, 72.0), Some(0)),
+                (CellKind::Sensocyte, Vec2::new(46.0, 72.0), Some(1)),
             ],
         );
         scene.adhere(0, 1, 8.0, 10.0);
@@ -3084,7 +3184,7 @@ mod tests {
         nearby.add(
             stranger,
             0.0,
-            &[(CellKind::Sclerocyte, Vec2::new(54.0, 72.0), 0)],
+            &[(CellKind::Sclerocyte, Vec2::new(54.0, 72.0), None)],
         );
         nearby.run();
         assert!(
@@ -3101,7 +3201,7 @@ mod tests {
         closer.add(
             stranger,
             0.0,
-            &[(CellKind::Sclerocyte, Vec2::new(50.0, 72.0), 0)],
+            &[(CellKind::Sclerocyte, Vec2::new(50.0, 72.0), None)],
         );
         closer.run();
         assert!(
@@ -3118,12 +3218,12 @@ mod tests {
         surrounded.add(
             stranger.clone(),
             0.0,
-            &[(CellKind::Sclerocyte, Vec2::new(54.0, 72.0), 0)],
+            &[(CellKind::Sclerocyte, Vec2::new(54.0, 72.0), None)],
         );
         surrounded.add(
             stranger,
             0.0,
-            &[(CellKind::Sclerocyte, Vec2::new(38.0, 72.0), 0)],
+            &[(CellKind::Sclerocyte, Vec2::new(38.0, 72.0), None)],
         );
         surrounded.run();
         assert!(
@@ -3226,7 +3326,7 @@ mod tests {
             scene.add(
                 stranger,
                 0.0,
-                &[(CellKind::Sclerocyte, Vec2::new(54.0, 72.0), 0)],
+                &[(CellKind::Sclerocyte, Vec2::new(54.0, 72.0), None)],
             );
             scene.run();
             amplitude(&scene)
@@ -3237,7 +3337,7 @@ mod tests {
             scene.add(
                 stranger,
                 0.0,
-                &[(CellKind::Sclerocyte, Vec2::new(54.0, 72.0), 0)],
+                &[(CellKind::Sclerocyte, Vec2::new(54.0, 72.0), None)],
             );
             scene.run();
             amplitude(&scene)
@@ -3261,22 +3361,6 @@ mod tests {
             put_off > 0.0 && drawn_to < 1.0,
             "one of the two responses has been flattened against an end of SPEC section 9's \
              clamp, so this test is measuring the clamp rather than the sign"
-        );
-    }
-
-    /// Every state a gene can name has a place in the table behaviour is looked up in.
-    ///
-    /// `genome.rs` owns how many developmental identities there are and this file keeps an
-    /// array of exactly that many. A seventh bit added to a state would silently walk off the
-    /// end of it, and the two numbers live in different files.
-    #[test]
-    fn the_state_table_covers_every_state_a_gene_can_name() {
-        assert_eq!(
-            STATES,
-            usize::from(State::COUNT),
-            "`genome.rs` allows {} developmental states and behaviour is looked up in a \
-             table of {STATES}",
-            State::COUNT
         );
     }
 }

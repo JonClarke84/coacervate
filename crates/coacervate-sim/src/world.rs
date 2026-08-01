@@ -973,6 +973,9 @@ mod tests {
                     cell.radius.to_bits(),
                     cell.energy_flow.to_bits(),
                     u32::from(cell.state),
+                    // A cell with no gene is written as a number no gene can be, rather than
+                    // as nought, which is gene zero and a perfectly ordinary answer.
+                    cell.gene.map_or(u32::MAX, u32::from),
                 ]);
             }
         }
@@ -1948,10 +1951,19 @@ mod tests {
     /// A genome that grows one photocyte with one myocyte sprung to it, and gives that myocyte
     /// a rhythm.
     ///
-    /// Two genes, and the second is the one that matters here: it answers to the daughter's
-    /// state, so it is what `behaviour.rs` looks up when it asks how that myocyte oscillates.
-    /// Its action is `Terminate`, so it does nothing at all to the body - which is the point.
-    /// A gene can carry a cell's behaviour without carrying any of its development.
+    /// ⚠️ **Rewritten in Phase 7, and the rewrite is the change it is testing.** It used to be
+    /// two genes - one that budded the myocyte and a second, silent `Terminate` gene answering
+    /// to the daughter's *state*, which is where `behaviour.rs` used to look a cell's rhythm
+    /// up. A cell now takes its behaviour from the gene that **built** it, so the rhythm
+    /// belongs on the gene that says `child_kind: Myocyte`, and the second gene has nothing
+    /// left to do. See `development.rs`'s [`crate::development::develop`] for why, and for the
+    /// measurement that says the old arrangement almost never happened by accident: **0.05% of
+    /// grown cells** in the shipped world were in a state their own genome named.
+    ///
+    /// The silent gene is kept anyway, unchanged, because it costs nothing and it is a second
+    /// claim: a gene that answers to the myocyte's state and carries no frequency does **not**
+    /// take that myocyte's behaviour over. Delete the `osc_freq` below and this genome stops
+    /// swimming, which is what `a_tick_feeds_the_bodies_in_the_world` would then say.
     fn a_swimmer(limits: &LimitsConfig) -> Genome {
         let blank = Gene {
             trigger_state: State::ZERO,
@@ -1981,12 +1993,12 @@ mod tests {
                     child_kind: CellKind::Myocyte,
                     rest_length: 8.0,
                     stiffness: 10.0,
+                    osc_freq: 3.0,
                     ..blank
                 },
                 Gene {
                     trigger_state: State::new(1),
                     max_step: u8::MAX,
-                    osc_freq: 3.0,
                     ..blank
                 },
             ],

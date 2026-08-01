@@ -660,6 +660,7 @@ pub(crate) fn lay_out(
             Vec2::new(wrapped(put.x, world.width), put.y.clamp(0.0, world.height)),
         );
         cell.state = grown.state.get();
+        cell.gene = grown.gene;
         cells[first_cell + local] = cell;
     }
 

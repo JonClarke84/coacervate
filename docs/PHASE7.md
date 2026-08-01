@@ -12,8 +12,8 @@
 | | |
 | --- | --- |
 | **Phase 7** | in progress |
-| **Current group** | D — Darwin in the margin (A, B, C, F, G and H are done) |
-| **Suite** | green — **260 tests** |
+| **Current group** | D — Darwin in the margin (A, B, C, F, G, H and I are done) |
+| **Suite** | green — **262 tests** |
 
 ⚠️ **Groups F, G and H are out of order and all three had to be.** F is the swimming work, taken
 out of turn because Jonathan's live run had reached tick 2.8 million with one myocyte in it and
@@ -29,6 +29,14 @@ it found that a myocyte is only heard if some gene in its own genome names its `
 state is one of sixty-four against a genome of about three genes, and that **over 120,000 ticks
 of the shipped world not one muscle anywhere moved a spring**. Three phases of work on the
 *payoff* have all acted on a code path the world essentially never takes. See Group H.
+
+⚠️⚠️ **Group I is the wiring Group H asked for, and it took Group H's third candidate**: a cell
+now takes its behaviour from **the gene that built it**. Muscles fire — 9,901 spring-ticks of
+genuine movement against nought. What the measurement that preceded it found is bigger than
+muscle, and it is in Group I and in SPEC section 7: **only 2.2% of grown cells sit in a state
+their own genome names**, so development stops at nearly every cell it visits, and that is why
+bodies in this world are two cells for the first hundred thousand ticks of every run ever
+measured.
 
 ---
 
@@ -1020,6 +1028,10 @@ sit in a state their own genome names?** If that number is low for photocytes to
 a fact about muscle at all — it is a fact about the genome, and it has been quietly shaping
 everything since Phase 3.
 
+⭐⭐ *(Taken, in Group I. It is low for photocytes too — **2.2% of grown cells**, of every kind —
+so the last sentence above was right, and Group H's third candidate was the one written. Group I
+has the number, the change and the run.)*
+
 #### What Group H decided that SPEC does not say
 
 | Decision | Where | Short version |
@@ -1052,6 +1064,181 @@ everything since Phase 3.
   The first reads the signal directly rather than through an offset, and the second sits exactly
   half way up the clamp so the two directions have identical room.
 
+### Group I — connecting a cell to its own genome — **done, and it is half a positive result**
+
+⚠️ **Out of the phase's plan for the fourth time, and it is Group H's own closing instruction**:
+*"the wiring, not the reward"*. Group H named three candidates and asked for one measurement
+first. The measurement was taken, and it is larger than the muscle question.
+
+- [x] **I1. The measurement Group H asked for** ⭐⭐ — what fraction of *all* cells sit in a state
+  their own genome names, by kind, over a 300,000-tick run of the shipped world.
+- [x] **I2. `a_cell_remembers_which_gene_built_it`** — development stamps the position of the
+  gene that made or re-made a cell onto that cell. `Divide` and `Differentiate` stamp;
+  `Terminate` does not, because stopping a cell says nothing about what it is.
+- [x] **I3. `a_cell_with_no_gene_is_the_seed_cell_and_needs_none`** ⭐ *(property test)* — the
+  whole justification for giving the seed cell nothing rather than gene zero.
+- [x] **I4. `a_myocyte_takes_its_rhythm_from_the_gene_that_built_it`** ⭐⭐ — the headline, and
+  it is written so that it can only pass under the new rule: a myocyte in state 44 that no gene
+  names, built by a gene whose trigger state nothing in the body is in.
+- [x] **I5. The 313,000-tick run**, and the spring-tick count re-taken on it.
+
+#### ⭐⭐ I1 — the measurement, and it is a fact about the genome rather than about muscle
+
+Shipped world, seed 42, eight founders, 300,000 ticks after the dawn, sampled every 200 ticks —
+**6.46 million cell-observations**. *Does this cell's own genome contain a gene whose
+`trigger_state` is this cell's `state`?*
+
+| | Named | Of | |
+| --- | --- | --- | --- |
+| **Every living cell** | 2,610,738 | 6,458,391 | **40.4%** |
+| **Every cell except the seed cell it grew from** | 86,418 | 3,905,138 | **2.2%** |
+
+and by kind, over grown cells:
+
+| | photocyte | devorocyte | myocyte | sclerocyte | sensocyte | gonocyte |
+| --- | --- | --- | --- | --- | --- | --- |
+| Grown cells in a state their genome names | **2.5%** | **0.9%** | **2.1%** | **3.4%** | **2.7%** | **2.0%** |
+
+**Group H's "if that number is low for photocytes too" is answered: it is low for everything.**
+The 40% in the first row is almost entirely the seed cell — every body has exactly one, it is in
+state 0 because SPEC section 7 puts it there, and the founder's own gene triggers on state 0. It
+is the one cell in the world that is connected by construction. **Take the seed cells out and a
+genome answers to 2% of its own body.**
+
+⚠️ **So it was never only a fact about muscle.** Development uses the same lookup, so a cell
+whose state no gene names is a cell development can do nothing further with — and that is why
+**mean cell count sits at 1.98 to 2.13 for the first 140,000 ticks of every run this project has
+ever measured**, and why the founder is two cells: its gene hands its daughter `child_state = 1`
+and nothing names state 1. Bodies have been small for the same arithmetic reason behaviour was
+absent. It has been shaping the project since Phase 3.
+
+#### The fix, and what it does not touch
+
+**A cell takes its behaviour from the gene that built it.** `Cell` and `BodyCell` gain
+`gene: Option<u8>`; `development.rs` writes it; `behaviour.rs` reads it in place of
+`first_match`, which is deleted along with its `STATES` table. The argument is in SPEC section 7
+and at length on `develop`.
+
+**The seed cell is given nothing**, rather than gene zero or a default rhythm, and nothing is
+lost by it: the only two ways a cell can become a myocyte or a sensocyte are a gene's
+`child_kind` and a gene's `new_kind`, and both stamp — so a cell with no gene is always a
+photocyte, which needs none. I3 is that as a property test.
+
+**Development is not changed.** See the open question below.
+
+#### ⭐⭐ I5 — do muscles fire? Yes. Are there myocytes? No.
+
+Same world, same seed, same 120,000-tick window, every spring with a myocyte on one end:
+
+| | Before | After |
+| --- | --- | --- |
+| A myocyte on a spring and **no gene speaks for it** | **70,352** | **0** |
+| A gene answers, but its `osc_freq` is still exactly nought | 874 | 68,571 |
+| **A muscle whose rest length is a moving function of time** | **0** | **9,901** |
+| Total myocyte spring-ticks | 71,226 | 78,472 |
+
+*(70,352 against Group H's 56,903 is the same count over a longer window — 120,000 ticks after
+the founding rather than 120,000 of the world's, which includes a 13,000-tick dawn. **The 874 is
+identical in both**, which is what says the two instruments agree.)*
+
+And the wiring itself, over the same 6.5 million cell-observations after the change: **100% of
+every grown cell, and 100% of every myocyte, devorocyte, sclerocyte, sensocyte and gonocyte in
+the world, is attached to a gene.** The only cells that are not are seed photocytes.
+
+⚠️ **The second row is what is left, and it is a different problem with the same shape.** A gene
+that has just become a myocyte-maker still carries the founder's `osc_freq` of nought, and
+`sin(0)` is nought. `mutation.rs` perturbs **one field of a hit gene**, so a moving muscle needs
+two mutations. What changed is that both now have to land on **one gene out of three or four**
+rather than one of them having to land on a state in a space of **sixty-four**.
+
+The run, against Group H's:
+
+| | **Group H** | **Group I** |
+| --- | --- | --- |
+| Alive | 812 | **797** |
+| Mean cells | 6.28 | **6.62** |
+| Mean genes | 5.46 | **6.17** |
+| Mean depth (of 1,152) | 534 | **488** |
+| Living cells | 5,096 | **5,277** |
+| Biomass | 32,548 | **33,468** |
+| **Myocytes** | **1** | **4** |
+| **Devorocytes** | **0** | **0** |
+| Mean displacement per lifetime | — | **2.028** units (1.938 before) |
+
+**The world survived and nothing degenerated**: no extinction, a peak of 2,131 against a
+`max_organisms` of 4,000, biomass inside 2% of every run since Phase 4, and a mean depth in the
+lower half of the water. **The first 38,000 ticks are bit-identical to the run before the
+change** and then they part, which is the change landing.
+
+⚠️⚠️ **And there is still no myocyte signal.** Four against one is a single reading of a single
+figure, and this run passed through checkpoints holding nought and one on its way there while
+the run it replaced passed through **ten**. The displacement figure moved by a twentieth of one
+cell's width across 263,000 lifetimes and is dominated by bodies with no muscle at all. **Nothing
+in this world swims.** What the change bought is that the question is now askable: before it, no
+experiment on the payoff could return anything, because the controller was never executed.
+
+#### ⚠️ Does development have the same bug? Yes — and it does not have the same fix
+
+**It is the same arithmetic and the same near-certain miss.** 2.2% is a fact about
+`trigger_state` matching, and development is the other thing that matches on it. Every run this
+project has measured has had bodies of exactly two cells for its first hundred thousand ticks,
+and this is why.
+
+**But it is not the same *kind* of mistake, which is why it was left alone here.** Behaviour had
+a genuine choice between two readings of one record and Phase 4 picked the one that fails; SPEC
+was silent and the silence has now been filled. Development has no second reading available:
+SPEC section 7's pseudo-code says in as many words *"find the FIRST gene where
+`gene.trigger_state == cell.state`"*, and section 7's own justification for the entire genome
+design rests on it — *"because conditions key on `state`, duplicating a gene and changing its
+`trigger_state` creates a new body part"*. Take the keying away and the operator the project is
+built on goes with it. **The fix for behaviour was to stop addressing; there is no equivalent
+for development, because a rule has to say which cells a gene acts on.**
+
+So the recommendation is Group H's *first* candidate rather than its third, and it is now much
+better motivated than it was:
+
+1. ⭐ **Bias where a `trigger_state` or `child_state` mutation lands.** `mutation.rs` re-draws a
+   discrete field uniformly over all 64 states; drawing instead from the states the parent's own
+   genome already mentions would make duplicate-and-diverge land on something. It changes **no
+   meaning at all** — SPEC says "re-draw uniformly" of a *field*, and which distribution a
+   discrete re-draw uses is exactly the kind of thing it leaves open. One operator, no golden
+   vector argument beyond the usual one.
+2. **A smaller state space.** 64 against three genes is what makes the miss near-certain. One
+   line, and it moves every genetic distance, every species boundary and every recorded figure
+   in the project.
+3. **Not first-match-wins**, and not `trigger_state` itself.
+
+**This is the owner's decision and it has not been made.** It is a bigger change than this group
+and it deserves to be chosen rather than arrived at.
+
+#### What Group I decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **A cell's behaviour comes from the gene that built it** | `development.rs`, `develop`; `behaviour.rs`, `contract` and `look` | The four behaviour fields sit in the same fixed record as `child_kind` and `new_kind`, so one record describes one thing. Phase 4's state lookup connected **2.2%** of grown cells. Now recorded in SPEC section 7. |
+| **`Differentiate` re-stamps and `Terminate` does not** | `development.rs`, `develop` | A cell takes its behaviour from what it was last *made into*. Stopping a cell says nothing about what it is, so a `Terminate` gene does not take a cell's behaviour over — asserted in I2. |
+| **The seed cell is given nothing at all** | `development.rs`, `develop` | Not gene zero, which is a perfectly ordinary answer and would be indistinguishable from one; not a default rhythm, which is a tune nobody selected. The same answer `organism.rs` gives a founder's missing parent, and I3 proves nothing is lost by it. |
+| **It is a position in the genome, not a copy of the gene** | `cell.rs`, `Cell::gene` | A byte, because `config.rs` caps `max_genes` at 128. A copy would be sixteen fields per cell and would have to be kept in step with a genome that never changes during a life anyway. |
+| **The determinism comparison reads it** | `world.rs`, `every_number_in` | A field on `Cell` that the comparison omits is a field two runs could disagree about silently. A cell with no gene is written as `u32::MAX`, because nought is gene zero. |
+| **The test `Scene` says which gene built a cell, and no longer says which state it is in** | `behaviour.rs`, `Scene::add` | After the change nothing in that module reads a `state`, so a scene that still set one would be stating something the code cannot act on. |
+| **`a_swimmer`'s rhythm moved onto the gene that buds the myocyte** | `world.rs` | It used to be a second, silent `Terminate` gene answering to the daughter's state. The silent gene is kept, unchanged, as a second claim: a gene naming a myocyte's state does **not** take that myocyte's behaviour over. |
+| **`the_state_table_covers_every_state_a_gene_can_name` is deleted** | `behaviour.rs` | It guarded the size of `first_match`'s table against `State::COUNT`. There is no table. |
+
+#### ⚠️ What moved, and what did not
+
+- **Nothing was re-recorded.** Every golden vector and every pinned figure in the suite is
+  unchanged to the last bit, including `a_run_produces_what_it_produced_before_group_a` — and
+  that is a *finding* rather than a relief, for a **different** reason than Group H's. Group H
+  did not move it because the code path was unreachable; Group I does not move it because a
+  myocyte needs a second mutation on the same gene and 4,000 ticks of a 583-organism world is
+  not long enough for one. `run.rs` records both readings side by side.
+- **`a_headless_run_reaches_a_living_equilibrium`** (D4, 30,000 ticks of the shipped world)
+  passes unchanged, which is the same fact at a longer range.
+- **Six behaviour tests went red and were made green by the change rather than by editing them**
+  — the four myocyte tests and the two sensocyte tests — because their scenes now say which gene
+  built each cell and the old code ignored it. That red is what the change was written against.
+- **Three tests added, one deleted: 260 → 262.**
+
 ### Group E — looking at one organism
 
 - [ ] **E1. `a_click_finds_the_organism_under_it`** — ⚠️ `camera.rs` maps world→screen only;
@@ -1083,6 +1270,15 @@ consecutive samples takes; `the_series_records_how_many_species_there_are` is ig
 debug suite for exactly that reason and run by the release pass.
 
 ## Open questions carried forward
+
+**Q31** (new, Group I) — ⭐⭐ **development stops at 97.8% of the cells it visits, and nothing has
+been decided about it.** `trigger_state` matching is the same near-certain miss behaviour was
+just taken off, and it is why every body in this world is two cells for the first hundred
+thousand ticks of a run. It does **not** have the same fix: SPEC section 7 states the rule in as
+many words and rests the whole duplicate-and-diverge argument on it, so there is no second
+reading to take. The recommendation is Group H's first candidate — **bias where a discrete
+re-draw of `trigger_state` or `child_state` lands, towards the states the parent's own genome
+already mentions** — which changes no meaning and is one operator. See Group I.
 
 **Q3**, **Q5**, **Q6**, **Q8**, **Q9**, **Q12**, **Q16** (`reseed_on_extinction` still does
 nothing), **Q18**, **Q19**, **Q21**, **Q23**, **Q25**, **Q28** (`egui-wgpu` still requires

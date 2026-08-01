@@ -221,6 +221,17 @@ pub struct Gene {
     pub new_state: State,
 
     // --- behaviour, for the kinds that have any (Phase 4) ---
+    //
+    // ⭐⭐ **Which cells these four speak for: the ones this gene built.** They sit in the same
+    // fixed record as `child_kind` and `new_kind`, and Phase 7 reads that as one record
+    // describing one thing - a gene that divides a parent into a myocyte says how that myocyte
+    // oscillates. `development.rs` stamps the gene's position onto every cell it makes or
+    // changes and `behaviour.rs` reads it back.
+    //
+    // Phase 4 read it the other way, keying behaviour on `trigger_state` the way development
+    // does, and it connected almost nothing: 0.05% of grown cells in the shipped world were in
+    // a state their own genome named. See `development.rs`'s `develop` for the argument and the
+    // measurement.
     /// How fast a myocyte works its springs, in cycles per second.
     pub osc_freq: f32,
 
@@ -231,7 +242,12 @@ pub struct Gene {
     /// together only make a body that pulses.
     pub osc_phase: f32,
 
-    /// How strongly a sensocyte responds to what it senses, **and in which direction**.
+    /// How strongly a cell responds to what its neighbours sense, **and in which direction**.
+    ///
+    /// ⚠️ It is applied to the **myocyte's** gene rather than the sensocyte's - SPEC section
+    /// 9's pseudo-code puts the whole controller under the myocyte, and it is the more
+    /// evolvable of the two readings: one sensor can excite one side of a body and inhibit the
+    /// other, which is a turn. See `behaviour.rs`'s `contraction`.
     ///
     /// The sign is the load-bearing part. A positive gain steers towards the thing and a
     /// negative one steers away, so attraction and avoidance are the same gene with one

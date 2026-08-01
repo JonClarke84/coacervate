@@ -526,6 +526,8 @@ struct Cell {
     radius: f32,        // derived from cell type
     kind: CellKind,
     state: u8,          // developmental identity, 0..=63
+    gene: Option<u8>,   // which gene of its genome made it what it is; nothing for the
+                        // seed cell. Added in Phase 7 — see section 7
     energy_flow: f32,   // last tick's net gain, for rendering brightness
 }
 ```
@@ -667,12 +669,61 @@ Why this shape: because conditions key on `state`, **duplicating a gene and chan
 is the mechanism behind essentially all real biological complexity, and it is the entire
 reason the genome is a variable-length rule list rather than a struct of parameters.
 
+### ⭐⭐ The last four fields belong to the cells the gene *built* — decided in Phase 7
+
+`osc_freq`, `osc_phase`, `sensor_gain` and `sensor_target` sit in the same fixed record as
+`child_kind` and `new_kind`, and one record describes one thing: **a gene that divides a
+parent into a myocyte says how that myocyte oscillates**, and a gene that differentiates a
+cell into a sensocyte says what that sensocyte is tuned to. Development stamps the position of
+the gene onto every cell it makes (`Divide`) or re-makes (`Differentiate`); section 9's
+controller reads that back. `Terminate` does not stamp, because stopping a cell says nothing
+about what it is.
+
+**Phase 4 read it the other way and the measurement is why it changed.** Behaviour was looked
+up by the first gene whose `trigger_state` matched the cell's `state` — development's own rule
+with the step window taken off — on the grounds that a state is what a genome uses to say what
+a cell *is*. Measured on the shipped world, seed 42, eight founders, over a 300,000-tick run
+sampled every 200 ticks — **6.46 million cell-observations**:
+
+| Cells in a state their own genome names | |
+| --- | --- |
+| Every living cell | **40.4%** |
+| **Every cell except the seed cell it grew from** | **2.2%** |
+| photocyte / devorocyte / myocyte / sclerocyte / sensocyte / gonocyte, grown | 2.5% / 0.9% / 2.1% / 3.4% / 2.7% / 2.0% |
+
+The 40% is almost entirely the seed cell, which is in state 0 because the development loop
+below puts it there and which the founder's own gene names. **Take the seed cells out and the genome answers 2% of
+its own body.** A state is one of 64, a genome of that age holds three to five genes,
+`trigger_state` is not where mutation spends its time, and `child_state` scatters daughters
+across the whole range — so a cell grown into a state nothing is listening to is the ordinary
+case rather than the exception.
+
+What is given up is that a duplicated gene can no longer take a *standing* cell's behaviour
+over by naming its state. What is kept is what duplication is actually for: duplicate a
+dividing gene, point the copy at another state, and the new body part it grows arrives **with
+its own rhythm**, because the rhythm travels with the gene rather than being looked up
+afterwards. Gene order still decides which gene builds a cell, so order still carries
+information.
+
+**The seed cell has no gene, and it is the one cell that needs none.** Nothing put it there
+but the model, so it is given *nothing* rather than gene zero or a default rhythm — the same
+answer a founder's missing parent gets. Nothing is lost by that, and it is provable rather
+than hoped for: the only two ways a cell can become a myocyte or a sensocyte are a gene's
+`child_kind` and a gene's `new_kind`, and both stamp the gene on, so **a cell with no gene is
+always a photocyte**. `development.rs`'s `a_cell_with_no_gene_is_the_seed_cell_and_needs_none`
+is that argument as a property test over arbitrary genomes.
+
+⚠️ **`trigger_state` still decides development, and the 2.2% above is a fact about development
+too.** Development also stops at a cell whose state no gene names — which is why bodies in this
+world sat at a mean of 2.0 cells for the first 140,000 ticks of every run ever measured. See
+section 9 and `docs/PHASE7.md`; it is a much larger change and it has not been made.
+
 ### Development
 
 Deterministic, bounded, and pure:
 
 ```
-cells = [ Cell { state: 0, kind: Photocyte, pos: origin } ]
+cells = [ Cell { state: 0, kind: Photocyte, pos: origin, gene: none } ]
 for step in 0..max_dev_steps:
     for each cell in cells (in stable index order):
         find the FIRST gene where
@@ -681,14 +732,25 @@ for step in 0..max_dev_steps:
         if none: continue
         apply the action:
             Divide      → append a daughter at `angle` from the parent's axis,
-                          with child_state / child_kind; if `adhere`, create a spring
-            Differentiate → change this cell's kind and state in place
-            Terminate   → mark this cell inert; it fires no further genes
+                          with child_state / child_kind; if `adhere`, create a spring.
+                          The daughter's `gene` is this gene
+            Differentiate → change this cell's kind and state in place, and its `gene`
+                          to this gene
+            Terminate   → mark this cell inert; it fires no further genes. Its `gene`
+                          is untouched — stopping a cell says nothing about what it is
         if there is no room for another cell: stop entirely
 ```
 
-Three things that pseudo-code leaves open, decided in `development.rs` and recorded here so
+Four things that pseudo-code leaves open, decided in `development.rs` and recorded here so
 they are not re-litigated:
+
+- **⚠️ A cell whose state no gene names is a cell development can do nothing further with**,
+  and that is the ordinary case rather than the exception: **2.2% of grown cells** in the
+  shipped world sit in a state their own genome names, by the measurement above. It is why the
+  founder is two cells — its one gene hands the daughter `child_state = 1` and nothing names 1
+  — and why mean body size in this world is 2.0 for the first 140,000 ticks of a run. It is
+  recorded here as a **known consequence that has not been decided about**; see
+  `docs/PHASE7.md`'s Q31.
 
 - **The cap is checked *before* a daughter is made, not after.** An earlier draft appended
   and then compared `cells.len() == max_cells_per_organism`, which is correct for every cap
@@ -955,6 +1017,12 @@ amplitude = clamp(resting_amplitude + sensor_gain × signal, 0.0, 1.0)
 rest_len  = base_rest × (1 + amplitude × stroke × sin(t × osc_freq + osc_phase))
 ```
 
+⭐⭐ **`osc_freq`, `osc_phase`, `sensor_gain` and `sensor_target` are read off the gene that
+*built* the cell** — the `Divide` whose `child_kind` made it, or the `Differentiate` whose
+`new_kind` last re-made it. Section 7 has the argument and the measurement that changed it; a
+cell no gene built has no behaviour at all, which is only ever the seed cell, which is only
+ever a photocyte.
+
 ⭐⭐ **The two coefficients were written here as `0.3` and `0.4` and are now section 3's
 `[behaviour]` table, shipping at 0.8 and 1.0.** The measurement that moved them, and the
 measurement that says it was not enough, are immediately below.
@@ -1055,6 +1123,44 @@ that moves a gene onto a state some cell actually occupies; a much smaller state
 against three genes is what makes the miss near-certain; or a rule that a myocyte with no gene
 answering it falls back to the gene that built it. The first is the smallest and the third
 changes what a state *means*, so it should be argued before it is written.
+
+### ⭐⭐ The wiring, taken: a cell's behaviour comes from the gene that built it
+
+*(The third candidate above, argued and then written. The argument is in section 7; this is what
+it did.)*
+
+Re-counted on the same world, the same seed and the same eight founders, over the same 120,000
+ticks — every spring with a myocyte on one end:
+
+| | Before | After |
+| --- | --- | --- |
+| A myocyte on a spring, and **no gene speaks for it** | **70,352** | **0** |
+| A gene answers, but its `osc_freq` is still exactly nought | 874 | 68,571 |
+| **A muscle whose spring's rest length is a moving function of time** | **0** | **9,901** |
+| Total myocyte spring-ticks | 71,226 | 78,472 |
+
+*(The 70,352 is the same count as the 56,903 above taken over a longer window: 120,000 ticks
+after the founding rather than 120,000 of the world's, which includes a 13,000-tick dawn. The
+874 is identical in both, which is what says the two instruments agree.)*
+
+**The first row is the whole change.** Every myocyte in the world is now attached to a gene,
+because a myocyte can only exist by a gene having asked for one. Nothing is looked up and
+nothing can miss.
+
+⚠️ **The second row is what is left, and it is a different problem with the same shape.** A gene
+that has just become a myocyte-maker still carries the founder's `osc_freq` of nought, and
+`sin(0)` is nought, so the muscle holds still. Section 7's point mutation perturbs **one field
+of a hit gene**, so a moving muscle needs *two* mutations. What the change did was put both of
+them on **one gene out of three or four** instead of requiring one of them to land on a state in
+a space of **sixty-four** — and 9,901 spring-ticks of genuine movement, against nought before,
+is that difference.
+
+⚠️ **And it is not yet a myocyte signal, which is the honest half of the result.** The
+313,000-tick run in section 15 ends with **four** myocytes in 5,277 living cells, against the
+previous run's one — and the same run passed through checkpoints holding nought, one and nought
+on the way there, while the run it replaced passed through ten. Both are single readings of
+single figures. Muscles fire; **what a lineage gets for owning one is a separate question**, and
+nothing in this change was an answer to it.
 
 ### ⭐ What a light sensor is normalised against — measured in Phase 7
 
@@ -1412,3 +1518,48 @@ time it dies. **The mechanism exists; the payoff does not yet.** That is a diffe
 the one before, where the payoff was exactly zero and provably so, and it says where to look next —
 at the speed, which means the beat, the swing, or section 8's buoyancy-by-`CellKind`, and not at the
 water.
+
+*(That paragraph was written before section 9's spring-tick count existed. What it says about the
+payoff may well be true and the measurement could not have shown it either way, because in the
+world it describes **no muscle was ever executed at all**.)*
+
+### ⭐⭐ Re-measured again, after a cell was connected to the gene that built it
+
+Section 7's change, on the same world, the same seed and the same eight founders. The run is
+313,000 of the world's ticks, of which the first 13,000 are the dawn.
+
+| Tick | Population | Mean cells | Mean genes | Field | Depth | Myocytes |
+| --- | --- | --- | --- | --- | --- | --- |
+| 38,000 | 1,578 | 1.98 | 1.59 | 73% | 295 | 0 |
+| 88,000 | 2,123 | 1.99 | 2.32 | 52% | 418 | 1 |
+| 138,000 | 2,083 | 2.13 | 2.91 | 49% | 445 | 1 |
+| 188,000 | 1,703 | 2.69 | 3.41 | 46% | 460 | 1 |
+| 238,000 | 1,164 | 4.23 | 4.77 | 42% | 508 | 1 |
+| **313,000** | **797** | **6.62** | **6.17** | **36%** | **488** | **4** |
+
+Against the same run measured on the program before the change: 846 alive, 6.26 cells, 5.54
+genes, 37.7% field, depth 553, **0** myocytes, 1 devorocyte. And against the figure this
+document already carried for a 310,000-tick run: 812, 6.28, 5.46, depth 534, **1** myocyte, 0
+devorocytes.
+
+**It is the same world.** Living biomass is 33,468 against 33,970 and 32,548 — inside 2% of
+every run since Phase 4, which is the carrying-capacity claim holding while everything else
+moves. No extinction, a peak population of 2,131 against a `max_organisms` of 4,000, and a mean
+depth of 488 in water 1,152 deep rather than a mat at the surface.
+
+⚠️ **The first 38,000 ticks are bit-identical to the run before the change and then they part.**
+That is the change landing: identical while no muscle in the world has yet drawn an `osc_freq`,
+different from the moment one does.
+
+⚠️ **There is still no myocyte signal and no devorocyte signal.** Four against nought and one
+are single readings of single figures in a population of five thousand cells, and the run
+passed through checkpoints holding nought and one on the way to them while the run it replaced
+passed through ten. **Mean displacement over a lifetime moved from 1.938 to 2.028 world units**
+— a twentieth of one cell's width, across 263,000 lifetimes, and dominated by bodies that have
+no muscle at all. Nothing here is a lineage that swims.
+
+What the change did do is make the question askable. Before it, no experiment on the payoff
+could have returned anything, because the controller was not executed. **The remaining reasons a
+myocyte is rare are now separable, and section 7 names the first of them**: a body is two cells
+for the first hundred thousand ticks of a run, and a two-celled body has one spring and nothing
+to undulate.

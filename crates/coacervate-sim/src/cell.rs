@@ -443,6 +443,21 @@ pub struct Cell {
     /// 3's genes, and the physics never looks at it at all.
     pub state: u8,
 
+    /// Which gene of its organism's genome made this cell what it is: that gene's position
+    /// in the genome, or nothing at all for a seed cell no gene has touched.
+    ///
+    /// ⭐⭐ **Phase 7, and it is what connects a cell to its own genome.** SPEC section 7 puts
+    /// `osc_freq`, `osc_phase`, `sensor_gain` and `sensor_target` in the same record as
+    /// `child_kind` and `new_kind`, so the gene that says what a cell is made of is the gene
+    /// that says how it behaves. `development.rs` writes it and `behaviour.rs` reads it; the
+    /// full argument, and the measurement that says the alternative connected almost nothing,
+    /// are in `development.rs`'s [`crate::development::develop`].
+    ///
+    /// A byte because `config.rs` caps `limits.max_genes` at 128. It is written as an absence
+    /// rather than as a number standing for one, exactly as `organism.rs` writes a founder's
+    /// missing parent: **a cell with no gene is always a photocyte**, which needs none.
+    pub gene: Option<u8>,
+
     /// What this cell gained or lost last tick, for the renderer to brighten it by.
     ///
     /// Phase 5 reads it and Phase 4 writes it. It is on the cell rather than kept
@@ -467,6 +482,9 @@ impl Cell {
             radius: kind.radius(),
             kind,
             state: 0,
+            // No gene has spoken for it. `development.rs` is the only thing that ever says
+            // one has, and this is the state a seed cell begins in.
+            gene: None,
             energy_flow: 0.0,
         }
     }
@@ -572,6 +590,11 @@ mod tests {
         );
         assert_eq!(cell.kind, CellKind::Sclerocyte);
         assert_eq!(cell.state, 0, "a new cell is at developmental state zero");
+        assert_eq!(
+            cell.gene, None,
+            "a cell nobody has said anything about answers to a gene, so a body laid out \
+             without development would take its behaviour from whichever gene that is"
+        );
         assert_eq!(cell.energy_flow, 0.0, "a new cell has gained nothing yet");
     }
 

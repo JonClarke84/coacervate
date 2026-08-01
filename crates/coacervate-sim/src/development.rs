@@ -20,6 +20,13 @@ pub struct BodyCell {
     /// offsets rather than world coordinates: putting a body somewhere in the world is a
     /// separate job, done elsewhere.
     pub offset: Vec2,
+
+    /// Which gene of the organism's genome made this cell what it is - that gene's position
+    /// in the genome, or nothing at all for a seed cell no gene has touched.
+    ///
+    /// ⭐⭐ **Phase 7, and it is the wire between a body and its own genome.** See [`develop`]
+    /// for the argument. `behaviour.rs` is what reads it.
+    pub gene: Option<u8>,
 }
 
 /// What a genome grows into: a shape, and the springs holding it together.
@@ -80,6 +87,9 @@ struct Growing {
     /// make where a daughter lands depend on how many siblings it happened to have.
     axis: Vec2,
 
+    /// Which gene last said what this cell *is*. See [`BodyCell::gene`], which it becomes.
+    gene: Option<u8>,
+
     /// Whether a `Terminate` has fired on this cell. An inert cell stays part of the body
     /// and fires no further genes.
     inert: bool,
@@ -107,18 +117,32 @@ fn rotated(axis: Vec2, angle: f32) -> Vec2 {
     )
 }
 
-/// The first gene in the genome that answers to this state on this step, if any.
+/// The first gene in the genome that answers to this state on this step, if any, and **where
+/// in the genome it sits**.
 ///
 /// A plain walk from the front. That is not a placeholder for something cleverer: the walk
 /// *is* the rule. SPEC section 7 says the first matching gene wins, so the search has to
 /// visit the genes in order, and an index that jumped straight to the genes for a state
 /// would have to keep them in the genome's order anyway. A genome holds at most 128 genes
 /// and this looks at each of them once per cell per step.
-fn firing_gene(genome: &Genome, state: State, step: u8) -> Option<&Gene> {
+///
+/// The position comes back beside the gene because a cell keeps it: see [`BodyCell::gene`].
+/// It is a byte because `config.rs` caps `limits.max_genes` at 128, which is where the
+/// conversion below gets its guarantee from rather than from hope.
+fn firing_gene(genome: &Genome, state: State, step: u8) -> Option<(u8, &Gene)> {
     genome
         .genes()
         .iter()
-        .find(|gene| gene.trigger_state == state && gene.min_step <= step && step <= gene.max_step)
+        .enumerate()
+        .find(|(_, gene)| {
+            gene.trigger_state == state && gene.min_step <= step && step <= gene.max_step
+        })
+        .map(|(index, gene)| {
+            (
+                u8::try_from(index).expect("config.rs caps a genome at 128 genes, which is a byte"),
+                gene,
+            )
+        })
 }
 
 /// Grow a body from a genome.
@@ -156,6 +180,54 @@ fn firing_gene(genome: &Genome, state: State, step: u8) -> Option<&Gene> {
 /// and the first division takes it to two. CLAUDE.md asks these defences to hold "even if
 /// the simulation code is wrong", and a cap that can be stepped over does not.
 ///
+/// # ⭐⭐ A cell remembers the gene that built it, and that is where its behaviour comes from
+///
+/// **Phase 7. It is the wire between a body and its own genome, and until it existed there was
+/// none.**
+///
+/// SPEC section 7's `Gene` puts `osc_freq`, `osc_phase`, `sensor_gain` and `sensor_target` in
+/// the same fixed record as `child_kind` and `new_kind`. The natural reading of one record is
+/// that it describes one thing: **a gene that divides a parent into a myocyte says how that
+/// myocyte oscillates**, and a gene that differentiates a cell into a sensocyte says what that
+/// sensocyte is tuned to. So every cell this function makes or changes is stamped with the
+/// position of the gene that did it, and `behaviour.rs` reads that stamp.
+///
+/// Phase 4 read it the other way - a cell's behaviour came from the first gene whose
+/// `trigger_state` matched the cell's `state`, which is this function's own rule with the step
+/// window taken off - because SPEC does not say. **The evidence is that the state lookup
+/// connects almost nothing.** Measured over 120,000 ticks of the shipped world: **0.05% of
+/// grown cells** - every cell of every body except the seed cell it started as - sat in a state
+/// their own genome named. Not one myocyte, devorocyte or sclerocyte in the whole population
+/// was in a state anything answered to. A state is one of 64, a genome of that age holds about
+/// three genes, and `trigger_state` is not where mutation spends its time, so a daughter handed
+/// a `child_state` by one gene is overwhelmingly likely to land somewhere no gene is listening.
+///
+/// The two readings are not the same rule seen twice. Under the state lookup a cell's behaviour
+/// is a **search that usually fails**; under this one it is a **fact recorded when the cell was
+/// made**, and it cannot fail. What is given up is that a duplicated gene can no longer take
+/// over an existing cell's behaviour by naming its state - it has to build the cell to speak
+/// for it. What is kept is the thing duplication is actually for: duplicate a dividing gene,
+/// point the copy at another state, and the new body part it grows comes with **its own
+/// rhythm**, because the rhythm travels with the gene rather than being looked up afterwards.
+///
+/// ⚠️ **`trigger_state` still decides development, and it is the same near-miss.** See
+/// `docs/PHASE7.md`; that is a larger change and it is not this one.
+///
+/// # The seed cell has no gene, and it is the one cell that needs none
+///
+/// SPEC section 7 starts every body as one photocyte in state 0, put there by the model rather
+/// than by any rule, so there is no gene to name. It is given **nothing at all** rather than
+/// gene zero or a default rhythm - the same answer `organism.rs` gives a founder that has no
+/// parent, and for the same reason: an absence written as a number is an absence that reads as
+/// a fact.
+///
+/// Nothing is lost by it, and that is provable rather than hoped for. A cell can only become a
+/// myocyte or a sensocyte - the two kinds that have any behaviour at all - through a gene's
+/// `child_kind` or `new_kind`, and both of those stamp the gene on. **So a cell with no gene is
+/// always a photocyte**, which harvests whatever is above it and asks its genome nothing.
+/// `a_cell_with_no_gene_is_the_seed_cell_and_needs_none` is that argument as a property test
+/// over arbitrary genomes.
+///
 /// # It always terminates, and the reason is structural
 ///
 /// There is no condition anywhere in this function - no "until nothing changes", no retry.
@@ -176,6 +248,9 @@ pub fn develop(genome: &Genome, limits: &LimitsConfig) -> Body {
         state: State::ZERO,
         offset: Vec2::ZERO,
         axis: SEED_AXIS,
+        // The seed cell is the one cell in the world no gene made. See the section on it in
+        // this function's documentation.
+        gene: None,
         inert: false,
     }];
     let mut springs = Vec::new();
@@ -195,7 +270,7 @@ pub fn develop(genome: &Genome, limits: &LimitsConfig) -> Body {
                 continue;
             }
 
-            let Some(gene) = firing_gene(genome, cells[index].state, step) else {
+            let Some((which, gene)) = firing_gene(genome, cells[index].state, step) else {
                 continue;
             };
 
@@ -229,12 +304,18 @@ pub fn develop(genome: &Genome, limits: &LimitsConfig) -> Body {
                         state: gene.child_state,
                         offset: cells[index].offset + axis.scaled(reach),
                         axis,
+                        // The gene that said what this daughter is made of is the gene that
+                        // says how it behaves.
+                        gene: Some(which),
                         inert: false,
                     });
                 }
                 Action::Differentiate => {
                     cells[index].kind = gene.new_kind;
                     cells[index].state = gene.new_state;
+                    // A cell that has been made into something else takes its behaviour from
+                    // the gene that made it into that, not from whatever made it before.
+                    cells[index].gene = Some(which);
                 }
                 Action::Terminate => cells[index].inert = true,
             }
@@ -248,6 +329,7 @@ pub fn develop(genome: &Genome, limits: &LimitsConfig) -> Body {
                 kind: cell.kind,
                 state: cell.state,
                 offset: cell.offset,
+                gene: cell.gene,
             })
             .collect(),
         springs,
@@ -506,6 +588,122 @@ mod tests {
             "the cell that differentiated moved"
         );
         assert!(body.springs.is_empty());
+    }
+
+    /// ⭐⭐ **A cell keeps the gene that built it**, which is where `behaviour.rs` gets a
+    /// myocyte's rhythm and a sensocyte's target from.
+    ///
+    /// See [`develop`] for the argument and for the measurement that says the alternative -
+    /// looking a cell's behaviour up by its `state` - connected almost nothing. Three claims,
+    /// and the third is the one that makes the rule a *rule* rather than a convenience.
+    ///
+    /// **A daughter carries the gene that divided it**, because that gene's `child_kind` said
+    /// what she is made of and the same record says how she behaves.
+    ///
+    /// **A cell that differentiates carries the gene that changed it**, and carries it
+    /// *afterwards* - a cell built by one gene and then made into something else by a second
+    /// answers to the second, because the second is the one that decided what it now is.
+    ///
+    /// **And the gene is a position in the genome rather than a copy of the gene**, so the two
+    /// genes below are told apart by *where* they sit and not by what is in them. The genome
+    /// here has a silent gene at the front for exactly that reason: an implementation that
+    /// recorded the first matching gene, or nought, or the step number, would agree with a
+    /// test whose answers were all zero.
+    #[test]
+    fn a_cell_remembers_which_gene_built_it() {
+        let limits = spec_limits();
+
+        // Gene 0 is never reached - nothing is ever in state 33. Gene 1 divides the seed into
+        // a myocyte in state 5, and gene 2 turns that myocyte into a sensocyte on the step
+        // after. So the daughter is built by gene 1 and re-made by gene 2.
+        let genome = Genome::new(
+            vec![
+                Gene {
+                    trigger_state: State::new(33),
+                    ..quiet_gene()
+                },
+                Gene {
+                    trigger_state: State::ZERO,
+                    min_step: 0,
+                    max_step: 0,
+                    action: Action::Divide,
+                    adhere: true,
+                    child_state: State::new(5),
+                    child_kind: CellKind::Myocyte,
+                    rest_length: 8.0,
+                    stiffness: 10.0,
+                    ..quiet_gene()
+                },
+                Gene {
+                    trigger_state: State::new(5),
+                    min_step: 1,
+                    max_step: 1,
+                    action: Action::Differentiate,
+                    new_kind: CellKind::Sensocyte,
+                    new_state: State::new(9),
+                    ..quiet_gene()
+                },
+            ],
+            &limits,
+        );
+
+        let body = develop(&genome, &limits);
+
+        assert_eq!(body.cells.len(), 2);
+        assert_eq!(
+            body.cells[0].gene, None,
+            "the seed cell was built by a gene, and no gene put it there - SPEC section 7's \
+             development starts with it"
+        );
+        assert_eq!(
+            body.cells[1].kind,
+            CellKind::Sensocyte,
+            "the daughter was not differentiated on the second step, so this test is not \
+             asking the question it was written for"
+        );
+        assert_eq!(
+            body.cells[1].gene,
+            Some(2),
+            "the daughter answers to gene {:?} and it was gene 2 that made it a sensocyte - a \
+             cell takes its behaviour from what it was last made into, not from what it was \
+             made as",
+            body.cells[1].gene
+        );
+
+        // The same body without the differentiating gene: the daughter keeps the gene that
+        // divided her, which is gene 1 and not gene 0.
+        let undifferentiated =
+            develop(&Genome::new(genome.genes()[..2].to_vec(), &limits), &limits);
+        assert_eq!(undifferentiated.cells[1].kind, CellKind::Myocyte);
+        assert_eq!(
+            undifferentiated.cells[1].gene,
+            Some(1),
+            "a daughter answers to gene {:?} rather than to the gene that divided her",
+            undifferentiated.cells[1].gene
+        );
+
+        // And a `Terminate` says nothing about what a cell *is*, so it does not speak for it.
+        let stopped = develop(
+            &Genome::new(
+                vec![
+                    genome.genes()[1],
+                    Gene {
+                        trigger_state: State::new(5),
+                        min_step: 1,
+                        max_step: 1,
+                        ..quiet_gene()
+                    },
+                ],
+                &limits,
+            ),
+            &limits,
+        );
+        assert_eq!(
+            stopped.cells[1].gene,
+            Some(0),
+            "a gene that only stops a cell has taken over that cell's behaviour, and stopping \
+             a cell says nothing about what it is"
+        );
     }
 
     /// A terminated cell is done for good, not merely done for now.
@@ -1001,6 +1199,68 @@ mod tests {
                     "the genome that grows without stopping did not reach the cap, so this \
                      test is not exercising the case it was written for",
                 );
+            }
+        }
+
+        /// ⭐⭐ **The seed cell is the only cell a genome does not speak for, and it is always
+        /// a photocyte.**
+        ///
+        /// This is the whole justification for [`develop`]'s decision that a seed cell is
+        /// given **no gene at all** rather than gene zero or some default rhythm. The worry
+        /// the decision has to answer is obvious: if a cell can end up with no gene, and a
+        /// cell with no gene has no behaviour, then a lineage could grow a muscle that is
+        /// deaf. It cannot, and the reason is structural rather than lucky - the only two
+        /// ways a cell can *become* a myocyte or a sensocyte are a gene's `child_kind` and a
+        /// gene's `new_kind`, and both of those stamp the gene that did it onto the cell.
+        ///
+        /// So over arbitrary genomes, including the four adversaries: **a cell with no gene is
+        /// cell zero, is a photocyte, and is in state zero.** A cell with no behaviour is
+        /// therefore always a cell that has none to have.
+        ///
+        /// The second half is the bookkeeping one and would catch the likelier mistake: every
+        /// gene a cell names has to be a gene that exists in the genome that grew it, because
+        /// `behaviour.rs` indexes straight into the gene list with it and would panic a whole
+        /// run rather than fail here.
+        #[test]
+        fn a_cell_with_no_gene_is_the_seed_cell_and_needs_none(
+            drawn in prop::collection::vec(a_drawn_gene(), 0..12),
+            adversary in 0usize..adversaries().len(),
+        ) {
+            let limits = spec_limits();
+            let genome = Genome::new(with_adversary(drawn, adversary), &limits);
+            let body = develop(&genome, &limits);
+
+            for (index, cell) in body.cells.iter().enumerate() {
+                match cell.gene {
+                    None => {
+                        prop_assert_eq!(
+                            index,
+                            0,
+                            "cell {} of this body was made by no gene, and only the seed cell \
+                             can be - every other cell is a daughter, and a daughter has a \
+                             gene that asked for it",
+                            index,
+                        );
+                        prop_assert_eq!(
+                            cell.kind,
+                            CellKind::Photocyte,
+                            "a cell with no gene to take its behaviour from is a {:?}, and the \
+                             argument for giving the seed cell no gene is that a cell in that \
+                             position is always a photocyte, which needs none",
+                            cell.kind,
+                        );
+                        prop_assert_eq!(cell.state, State::ZERO);
+                    }
+                    Some(gene) => {
+                        prop_assert!(
+                            usize::from(gene) < genome.genes().len(),
+                            "a cell names gene {} of a genome holding {}, and behaviour.rs \
+                             indexes straight into that list",
+                            gene,
+                            genome.genes().len(),
+                        );
+                    }
+                }
             }
         }
     }
