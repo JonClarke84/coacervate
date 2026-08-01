@@ -41,6 +41,7 @@ use args::{Arguments, Settings};
 // into the binary that draws it; the alternative was to compute them twice, which is the one
 // thing `census.rs`'s own opening paragraph argues against. Nothing about the numbers changed.
 use coacervate_render::census::{Census, millions_of_years};
+use coacervate_sim::chronicle::Chronicle;
 use coacervate_sim::config::RunConfig;
 use coacervate_sim::species::Taxonomy;
 use coacervate_sim::world::World;
@@ -274,7 +275,8 @@ fn main() -> ExitCode {
     }
     report(run.world());
     println!("\n{}", lineages(run.taxonomy()));
-    println!("{}", ending(why));
+    println!("\n{}", chronicle(run.chronicle()));
+    println!("\n{}", ending(why));
 
     let Some(path) = &arguments.dump_frame else {
         return ExitCode::SUCCESS;
@@ -294,7 +296,7 @@ fn main() -> ExitCode {
     // rather than a picture of what was hoped for, and empty water is a perfectly good answer
     // to what a world looks like when nothing is in it.
     let mut dump = filming.expect("a headless run that is drawing a frame opened a device first");
-    match dump.write(run.world(), run.series(), path) {
+    match dump.write(run.world(), run.series(), run.chronicle(), path) {
         Ok(()) => {
             println!(
                 "Drew {} at {} by {}.",
@@ -359,6 +361,12 @@ impl coacervate_render::window::Watched for Run {
     /// ⭐ **Phase 6, `C1`.** The run's own record of itself, which the charts draw.
     fn series(&self) -> &coacervate_render::series::Series {
         Self::series(self)
+    }
+
+    /// ⭐ **Phase 7, Group C.** What has happened in this world, which the panel's last block
+    /// shows and the chronicle will be written from.
+    fn chronicle(&self) -> &coacervate_sim::chronicle::Chronicle {
+        Self::chronicle(self)
     }
 
     fn ask_to_stop(&self) {
@@ -492,6 +500,47 @@ fn lineages(taxonomy: &Taxonomy) -> String {
         if let Some(name) = cluster.name() {
             said.push_str(&format!("\n  {name} — {} alive", cluster.members()));
         }
+    }
+
+    said
+}
+
+/// ⭐⭐ **Phase 7, Group C.** The event log itself, as the closing part of the report.
+///
+/// This is what the whole group is for. `docs/PHASE7.md`: a run grew serially repeated bodies at
+/// tick 2.8 million and it was found *by eye, in a screenshot, hours later, with no way to know
+/// when it started or which lineage it happened in*. These lines are the world saying so at the
+/// time.
+///
+/// # ⚠️ Printed at the end rather than as it happens, and only in a headless run
+///
+/// A headless run's output is a table - twelve aligned columns, one line every thousand ticks -
+/// and a sentence appearing in the middle of it would break the alignment of everything after it.
+/// A window has the panel, which shows the last few events live; a headless run gets them
+/// together at the end, which is also the shape a chronicle has.
+///
+/// ⚠️ **A run long enough to fill the log says so.** `chronicle.rs`'s ring holds the most recent
+/// thousand events and drops the oldest, so on a very long run the beginning of the history is no
+/// longer in memory - and a report that quietly printed the last thousand as though they were all
+/// of them would read as a complete record when it is not. SPEC section 13 asks for exactly this
+/// about snapshots: *"Log what was dropped."*
+fn chronicle(log: &Chronicle) -> String {
+    if log.events().len() == 0 {
+        return "Nothing happened in this world that the event log is watching for.".to_owned();
+    }
+
+    let mut said = match log.dropped() {
+        0 => format!("The event log, all {} of it:", log.events().len()),
+        dropped => format!(
+            "The event log. The most recent {} events; {dropped} older ones have been dropped \
+             off the front of it to keep the memory bounded:",
+            log.events().len()
+        ),
+    };
+
+    for event in log.events() {
+        said.push_str("\n  ");
+        said.push_str(&event.line());
     }
 
     said

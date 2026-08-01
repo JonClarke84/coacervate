@@ -46,6 +46,11 @@
 //!   which of the living population are near enough to one another to be one group, and which
 //!   of those groups has been there long enough to be worth a name. It reads a world and
 //!   changes nothing in it.
+//! - [`chronicle`] — what happened, and when: an append-only log of the moments a run turned
+//!   out to have, written in a naturalist's register so that a person coming back in the morning
+//!   reads sentences rather than a table. It listens to the world and changes nothing in it, and
+//!   every word it can generate is held to CLAUDE.md's rule that generated copy must never imply
+//!   a direction.
 //! - [`world`] — all of the above owned in one place, and the tick that moves it: the light
 //!   falling, the energy spreading, the tiles shedding what they cannot hold, the bodies
 //!   being fed and pushed about, the dead being taken away and the living having offspring —
@@ -55,6 +60,7 @@
 
 pub mod behaviour;
 pub mod cell;
+pub mod chronicle;
 pub mod config;
 pub mod development;
 pub mod genome;

@@ -444,6 +444,7 @@ fn narrowed(value: f64) -> f32 {
 pub(crate) mod testing {
     use super::Series;
     use coacervate_sim::cell::{CellKind, Vec2};
+    use coacervate_sim::chronicle::Chronicle;
     use coacervate_sim::config::spec_defaults;
     use coacervate_sim::genome::{Action, Gene, Genome, SensorTarget, State};
     use coacervate_sim::species::Taxonomy;
@@ -497,23 +498,25 @@ pub(crate) mod testing {
         world
     }
 
-    /// The same, ticked on, with the series recorded as it ran.
+    /// The same, ticked on, with the series and the event log recorded as it ran.
     ///
-    /// The taxonomy is observed beside the series exactly as `run.rs` does it, so what these
-    /// tests are handed is what a real run produces rather than a series recorded without the
-    /// other observer that fills part of it.
-    pub(crate) fn living(ticks: u64) -> (World, Series) {
+    /// All three observers are driven exactly as `run.rs` drives them and in the same order, so
+    /// what these tests are handed is what a real run produces rather than one record taken
+    /// without the others that fill part of it.
+    pub(crate) fn living(ticks: u64) -> (World, Series, Chronicle) {
         let mut world = seeded();
         let mut series = Series::new();
         let mut taxonomy = Taxonomy::new(world.config());
+        let mut log = Chronicle::new(world.config());
 
         for _ in 0..ticks {
             world.tick();
             taxonomy.observe(&world);
             series.observe(&world, &taxonomy);
+            log.observe(&world, &taxonomy);
         }
 
-        (world, series)
+        (world, series, log)
     }
 
     /// One photocyte with one gonocyte sprung to it, which is `founding.rs`'s founder.

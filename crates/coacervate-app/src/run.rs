@@ -72,6 +72,7 @@
 //! there is nothing on disk yet. The moment Phase 8's replay log exists that stops being true.
 
 use coacervate_render::series::Series;
+use coacervate_sim::chronicle::Chronicle;
 use coacervate_sim::config::{Config, RunConfig};
 use coacervate_sim::species::Taxonomy;
 use coacervate_sim::world::World;
@@ -186,6 +187,22 @@ pub struct Run {
     /// `a_run_produces_what_it_produced_before_group_a` below, which is what actually holds it to
     /// that.
     taxonomy: Taxonomy,
+
+    /// ⭐ **Phase 7, Group C.** What has happened in this world, in sentences.
+    ///
+    /// The third periodic observer of a run, and it is here for the reason the other two are: an
+    /// event happens *at a tick*, and [`Run::step`] is the one place in this program a tick
+    /// happens. A log driven from a window would notice a different set of moments in the
+    /// windowed build from the headless one - a window draws about every eleventh tick - so the
+    /// two builds would end up disagreeing about what happened in the world rather than only
+    /// about what was drawn.
+    ///
+    /// It is also where the *user's* half of the log has to be, because [`Run::retune`] is where
+    /// a slider arrives. See there.
+    ///
+    /// ⚠️ **It reads the world and changes nothing in it.** See `coacervate_sim::chronicle`, and
+    /// `the_chronicle_does_not_change_what_the_world_does` below, which is what holds it to that.
+    chronicle: Chronicle,
 }
 
 impl Run {
@@ -197,6 +214,7 @@ impl Run {
     pub fn new(world: World, bounds: &RunConfig, interrupt: &Interrupt) -> Self {
         let now = Instant::now();
         let taxonomy = Taxonomy::new(world.config());
+        let chronicle = Chronicle::new(world.config());
 
         Self {
             world,
@@ -212,6 +230,7 @@ impl Run {
             stopped: None,
             series: Series::new(),
             taxonomy,
+            chronicle,
         }
     }
 
@@ -254,16 +273,22 @@ impl Run {
         self.wait();
         self.world.tick();
 
-        // ⭐ **Phase 6's `C1` and Phase 7's `A3`.** The two lines that record the run, on the one
-        // path a tick is taken by. Most calls do nothing at all: each observer reads the world
-        // only when its own tick count lands on its grid - a hundred ticks for the chart, five
-        // hundred for the clustering.
+        // ⭐ **Phase 6's `C1` and Phase 7's `A3` and Group C.** The three lines that record the
+        // run, on the one path a tick is taken by. Most of what they do is nothing at all: each
+        // observer reads the world only when its own grid says to - a hundred ticks for the
+        // chart, five hundred for the clustering, and for the log a walk of the population whose
+        // every expensive part switches itself off once there is nothing new left to find.
         //
         // ⚠️ **The clustering goes first**, so a record taken at a tick that is on both grids
         // carries the count of species as of that tick rather than as of five hundred ticks ago.
         // Every five-hundredth tick is on both.
+        //
+        // ⚠️ **And the log goes last**, for the same reason turned round: a lineage promoted to a
+        // species at this tick has to have been named by the time the log is asked whether
+        // anything new is in the water, or the line announcing it would be a tick late for ever.
         self.taxonomy.observe(&self.world);
         self.series.observe(&self.world, &self.taxonomy);
+        self.chronicle.observe(&self.world, &self.taxonomy);
 
         None
     }
@@ -388,6 +413,12 @@ impl Run {
         &self.taxonomy
     }
 
+    /// ⭐ **Phase 7, Group C.** What has happened in this world, to read.
+    #[must_use]
+    pub const fn chronicle(&self) -> &Chronicle {
+        &self.chronicle
+    }
+
     /// ⭐ **Phase 6, `B1` and `B4`.** Go on under these conditions from here.
     ///
     /// SPEC section 3 divides its table into what locks at run start and what does not, and *"the
@@ -412,6 +443,14 @@ impl Run {
     /// the moment the run began - hours ago, so the first thing a newly-capped run would do is
     /// burst. See [`Run::wait`], which refuses to make time back for the same reason.
     pub fn retune(&mut self, config: &Config) {
+        // ⭐ **Phase 7, `C8`.** SPEC section 3 calls a live setting change *"how environmental
+        // events work"* and SPEC section 11 lists them among the things the log records, so this
+        // is where the two sentences meet. Taken before the world is retuned, because afterwards
+        // there is nothing left to compare against - `World::retune` replaces the configuration
+        // the world was built with.
+        let before = self.world.config().clone();
+        self.chronicle.retuned(self.world.ticks(), &before, config);
+
         self.world.retune(config);
         self.interval = config
             .run
@@ -469,7 +508,22 @@ mod tests {
     /// shipped light that takes ten thousand ticks a world; eight of those, twice over in the
     /// two build profiles, is most of a minute of check suite spent watching water.
     fn a_small_living_world(change: impl FnOnce(&mut RawConfig)) -> World {
-        let mut world = World::new(&config(|raw| {
+        let mut world = World::new(&a_small_config(change));
+
+        genesis(&mut world, 8);
+
+        world
+    }
+
+    /// The configuration [`a_small_living_world`] builds one from.
+    ///
+    /// Its own function since Phase 7, because `Run::retune` refuses a configuration whose
+    /// `[world]` or `[limits]` differ from the ones the world was built with - so a test that
+    /// changes a live setting on a small world has to be able to say *the same small world, with
+    /// this one thing different*, and writing the six overrides out a second time is how the two
+    /// come to disagree.
+    fn a_small_config(change: impl FnOnce(&mut RawConfig)) -> Config {
+        config(|raw| {
             raw.world.width = 512.0;
             raw.world.height = 288.0;
             raw.world.grid_cols = 64;
@@ -477,11 +531,7 @@ mod tests {
             raw.limits.max_organisms = 250;
             raw.light.influx = 0.012;
             change(raw);
-        }));
-
-        genesis(&mut world, 8);
-
-        world
+        })
     }
 
     /// The bounds SPEC section 3 ships, with whatever this test is about changed.
@@ -980,6 +1030,86 @@ mod tests {
              between took {ticking:?}, so watching the run is costing more than the run",
             census.population,
             species::EVERY
+        );
+    }
+
+    /// ⭐ **Phase 7, Group C.** A real run writes its own history, on the one path a tick is
+    /// taken by.
+    ///
+    /// Everything about *what* the log notices is `chronicle.rs`'s and is tested there. What can
+    /// only be tested here is that the observer is actually in the loop and is handed the world
+    /// after the tick and after the clustering - which is the mistake this is for. A `Chronicle`
+    /// built, held and never shown a world would report an empty log for the length of an
+    /// overnight run, and nothing anywhere would say so.
+    #[test]
+    fn a_run_writes_its_own_history() {
+        let world = a_small_living_world(|_| {});
+        let founded = world.ticks();
+        let mut run = Run::new(
+            world,
+            &bounds(|run| run.max_ticks = Some(founded + 1_000)),
+            &Interrupt::new(),
+        );
+
+        assert_eq!(run.go(|_| {}), Stop::TicksDone);
+
+        let log = run.chronicle();
+        let said = log
+            .events()
+            .map(coacervate_sim::chronicle::Event::line)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            log.events().len() >= 2,
+            "a thousand ticks of a living world produced {} events:\n{said}",
+            log.events().len()
+        );
+
+        // ⭐ Every founder is two cells sprung together, so the origin of multicellularity in
+        // this run is its first tick - and the log has to say so with a tick on it.
+        let adhesion = log
+            .events()
+            .find(|event| event.kind == coacervate_sim::chronicle::Kind::Adhesion)
+            .unwrap_or_else(|| {
+                panic!(
+                    "the founders are two-celled bodies and nothing recorded an adhesion:\n{said}"
+                )
+            });
+        assert!(
+            adhesion.tick > founded && adhesion.tick <= founded + 1_000,
+            "the adhesion was recorded at tick {}, and the run covered {founded} to {}",
+            adhesion.tick,
+            founded + 1_000
+        );
+
+        // ⭐ **C8.** And a slider a person moved is an event at the tick they moved it.
+        let at = run.world().ticks();
+        let before = log.events().len();
+        run.retune(&a_small_config(|raw| raw.metabolism.upkeep_scale = 2.5));
+
+        let conditions: Vec<_> = run
+            .chronicle()
+            .events()
+            .skip(before)
+            .filter(|event| event.kind == coacervate_sim::chronicle::Kind::Conditions)
+            .collect();
+        assert_eq!(
+            conditions.len(),
+            1,
+            "one setting was changed by hand and the log recorded {} environmental events",
+            conditions.len()
+        );
+        assert_eq!(
+            conditions[0].tick, at,
+            "the change was recorded at a different tick from the one it was made on"
+        );
+        assert!(
+            conditions[0]
+                .said
+                .contains("costs a cell simply to be alive"),
+            "the log does not say which condition was changed: {}",
+            conditions[0].said
         );
     }
 

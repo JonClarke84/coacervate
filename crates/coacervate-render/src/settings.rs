@@ -503,7 +503,47 @@ fn whole(value: f64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{DIALS, Dials, locked};
+    use coacervate_sim::chronicle;
     use coacervate_sim::config::{DIFFUSION_STABILITY_LIMIT, spec_defaults};
+
+    /// ⭐ **Phase 7, `C8`.** Every slider a person can turn is a condition the event log reports
+    /// a change to, and every condition it reports is a slider.
+    ///
+    /// SPEC section 3: *"the rest can be changed live, **which is how environmental events
+    /// work**"*, and SPEC section 11 lists *"environmental changes made by the user"* among the
+    /// things the log records. Those two sentences are only one feature if the two lists are the
+    /// same list.
+    ///
+    /// ⚠️ **They cannot be one list, and this is what stands in for that.** The sliders live here
+    /// because they are made of bounds, formatting and a `RawConfig` - the *unchecked* document a
+    /// panel edits; the log's live in `coacervate-sim`, because a `Config` and the sentence
+    /// describing it are the simulation's. So the failure to guard against is somebody adding a
+    /// twenty-first slider: without this, that setting would be changeable by hand and the change
+    /// would never appear in the log, which is an environmental event that happened and was not
+    /// written down.
+    ///
+    /// `run.max_ticks_per_second` is the one exception, and it is on the *dial* side only,
+    /// because it is not a fact about the world at all - it is how fast a person is watching one,
+    /// and slowing a run down is not weather.
+    #[test]
+    fn every_dial_is_a_condition_the_chronicle_reports() {
+        let mut dials: Vec<String> = DIALS
+            .iter()
+            .map(super::Dial::field)
+            .filter(|field| field != "run.max_ticks_per_second")
+            .collect();
+        let mut conditions: Vec<String> = chronicle::conditions().collect();
+
+        dials.sort();
+        conditions.sort();
+
+        assert_eq!(
+            dials, conditions,
+            "the settings a person can change and the settings the event log describes are not \
+             the same settings, so there is a slider whose change is an environmental event \
+             nothing records - or a line the log can print about something no panel offers"
+        );
+    }
 
     /// The dials of a shipped run.
     fn shipped() -> Dials {

@@ -330,6 +330,16 @@ pub struct Taxonomy {
     /// even after the lineage that carried it is extinct.
     names: Nomenclature,
 
+    /// How many samples have been taken, ever.
+    ///
+    /// ⭐ **Phase 7, `C5`.** `chronicle.rs` reads it and nothing else does. The event log has to do
+    /// its own work over the population **once per clustering sample** — a species that arrived and
+    /// one that went are differences between two samples, not facts about a tick — and this is the
+    /// only thing that says a fresh one has happened. The alternative, testing the tick against
+    /// [`EVERY`]'s grid, is the same answer in the ordinary case and a wrong one wherever the
+    /// clustering did not actually run.
+    taken: u64,
+
     /// The tick the last sample was taken at, or nothing at all if none has been.
     ///
     /// ⚠️ **This is what stops a tick being counted twice**, and here that matters more than it
@@ -352,6 +362,7 @@ impl Taxonomy {
             of_slot: vec![None; slots],
             next_id: 0,
             names: Nomenclature::new(config.world.seed),
+            taken: 0,
             at: None,
         }
     }
@@ -437,7 +448,18 @@ impl Taxonomy {
     /// to tick a world that far to find out whether a cluster is promoted would be a test nobody
     /// runs. Everything about identity and persistence is decided here, from a population that
     /// can be written down.
-    fn sample<'a>(&mut self, population: impl Iterator<Item = (usize, u64, &'a Genome)>) {
+    ///
+    /// ⚠️ **Visible to the rest of the crate since Phase 7 Group C, and only for that reason.**
+    /// `chronicle.rs`'s tests have exactly the problem this split was made for: speciation and
+    /// extinction *by name* need a promoted species, a promoted species needs twenty samples, and
+    /// twenty samples is ten thousand ticks of a real world. Nothing outside a test calls it —
+    /// [`Taxonomy::observe`] is still the only thing a run drives.
+    pub(crate) fn sample<'a>(
+        &mut self,
+        population: impl Iterator<Item = (usize, u64, &'a Genome)>,
+    ) {
+        self.taken += 1;
+
         for cluster in &mut self.clusters {
             cluster.members = 0;
             cluster.nearest = None;
@@ -650,6 +672,14 @@ impl Taxonomy {
     #[must_use]
     pub const fn sampled_at(&self) -> Option<u64> {
         self.at
+    }
+
+    /// ⭐ **Phase 7, `C5`.** How many samples this observer has taken, ever.
+    ///
+    /// The event log's cadence. See [`Taxonomy::taken`].
+    #[must_use]
+    pub const fn samples(&self) -> u64 {
+        self.taken
     }
 }
 

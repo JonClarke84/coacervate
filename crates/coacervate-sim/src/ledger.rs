@@ -122,6 +122,25 @@ pub struct Ledger {
     detritus: f64,
     dissipated: f64,
     influx_total: f64,
+
+    /// ⭐ **Phase 7, `C4`.** Everything a devorocyte has ever taken out of another organism.
+    ///
+    /// **Not an account, and not on either side of the invariant.** [`Ledger::predate`] is
+    /// `biomass → biomass`, so no total in the world changes across it and no balance can ever
+    /// notice one happening. It sits here for the same reason `influx_total` does — *"it is not a
+    /// place energy is, it is a count of how much has come in through the one door the world
+    /// has"* — and predation is the other such door: the one movement in this file with living
+    /// tissue at both ends of it.
+    ///
+    /// ⚠️ **It exists because nothing else in the world can say that predation has happened.**
+    /// SPEC section 11 asks the event log to record *"first predation event"*, and an observer
+    /// reading the world from outside would have to redo `behaviour.rs`'s neighbour search over
+    /// every devorocyte in the world on every tick to find out — a second implementation of the
+    /// one rule CLAUDE.md's decision log is most insistent is not to be scripted. One addition
+    /// inside a loop that has already done the arithmetic answers it exactly.
+    ///
+    /// Nothing in a tick reads it. See `chronicle.rs`.
+    predated: f64,
     /// What the world held when the books were opened, which never changes afterwards.
     ///
     /// Without it there is nothing to measure against. The invariant is not "the total is
@@ -145,6 +164,7 @@ impl Ledger {
             detritus: 0.0,
             dissipated: 0.0,
             influx_total: 0.0,
+            predated: 0.0,
             initial_total: initial_field,
         }
     }
@@ -180,6 +200,16 @@ impl Ledger {
         self.initial_total
     }
 
+    /// ⭐ **Phase 7, `C4`.** Everything devorocytes have taken out of other organisms since the
+    /// run began. Nought until the first mouthful of living tissue in the world.
+    ///
+    /// See [`Ledger::predated`]'s own note for why a counter that no total in the world reflects
+    /// lives in the ledger at all.
+    #[must_use]
+    pub fn predation_total(&self) -> f64 {
+        self.predated
+    }
+
     /// A photocyte has drawn `amount` out of the tile it is sitting on.
     ///
     /// The amount is what the grid actually gave up, which the caller is holding because
@@ -201,6 +231,10 @@ impl Ledger {
     /// the same arithmetic with nothing watching it.
     pub fn predate(&mut self, amount: f64) {
         self.transfer(Account::Biomass, Account::Biomass, amount);
+
+        // ⭐ **Phase 7, `C4`.** And the one thing the transfer above cannot leave behind: a mark
+        // saying it happened. See [`Ledger::predated`].
+        self.predated += amount;
     }
 
     /// A parent has handed `amount` to the child it has just had.
@@ -387,6 +421,12 @@ impl Ledger {
             dissipated,
             influx_total,
             initial_total,
+            // ⭐ **Phase 7, `C4`.** Deliberately not on either side of the invariant.
+            // [`Ledger::predate`] moves energy from one living organism to another, so a
+            // running total of it is a count of something that has happened rather than a
+            // place any energy is. Adding it to `held` would make the books stop balancing
+            // the first time anything ate anything.
+            predated: _,
         } = *self;
 
         let held = field + biomass + detritus + dissipated;
@@ -548,6 +588,15 @@ mod tests {
             everything(field, &ledger),
             opening,
             "predation changed the total"
+        );
+        // ⭐ **Phase 7, `C4`.** And it is the one movement here that leaves a mark nothing else
+        // would: the totals are identical on both sides of it, so a counter is the only way
+        // anything outside the tick can ever know that a mouthful of living tissue was taken.
+        assert_eq!(
+            ledger.predation_total(),
+            1.25,
+            "the books balance across predation, which is right, and nothing anywhere records \
+             that it happened - so SPEC section 11's \"first predation event\" is unobservable"
         );
         ledger.check(field);
 

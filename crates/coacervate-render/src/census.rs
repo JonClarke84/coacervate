@@ -106,14 +106,15 @@ impl Census {
 ///
 /// It is presentation and it never enters the physics: `world.rs` keeps the tick count and
 /// `config.world.years_per_tick` is a number nothing in a tick reads.
+///
+/// ⭐ **Phase 7 Group C moved the multiplication itself into `coacervate_sim::chronicle`**, and
+/// this became the reading of it that takes a whole world. An *event* is recorded at a tick and
+/// read long afterwards, so the log has a number and a configuration rather than a world to ask -
+/// and a fourth copy of this arithmetic is how the panel, the title bar, the progress line and the
+/// chronicle come to disagree about what year it is. There is still exactly one.
 #[must_use]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "a tick count is turned into a span of geological time for a person to read; the \
-              digits lost are far below the resolution of a figure printed to one decimal place"
-)]
 pub fn millions_of_years(world: &World) -> f64 {
-    world.ticks() as f64 * f64::from(world.config().world.years_per_tick) / 1e6
+    coacervate_sim::chronicle::millions_of_years(world.ticks(), world.config().world.years_per_tick)
 }
 
 /// A running mean and standard deviation over a set of counts.

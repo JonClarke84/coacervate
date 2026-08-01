@@ -82,6 +82,7 @@ use crate::controls::Ask;
 use crate::gpu::Gpu;
 use crate::series::{Sample, Series};
 use crate::settings::{DIALS, Dial, Dials};
+use coacervate_sim::chronicle::Chronicle;
 use coacervate_sim::world::World;
 use std::collections::BTreeMap;
 use wgpu::util::DeviceExt as _;
@@ -199,6 +200,28 @@ const CHART_NAME: u8 = 7;
 /// Three traces, the two gaps between them, [`surround`]'s eight points of padding above and below
 /// and its one-point border on each edge.
 const CHARTS: f32 = 3.0 * TRACE + 2.0 * SPACING + 18.0;
+
+/// ⭐ **Phase 7, Group C.** How tall the log panel is, in points - contents, margins and border
+/// together.
+///
+/// ⚠️ **A reserved height and not a measured one**, for [`CHARTS`]'s reason: the controls above it
+/// are bounded by what is left of [`CEILING`]'s column once everything below has had its share, so
+/// a height that could only be known after the layout would mean the scroll area being sized by
+/// last frame's log. And an event is a *sentence*, so unlike a chart there is no arithmetic that
+/// could predict how tall it wants to be - which is why what goes in here is a box with a fixed
+/// height that the newest line is kept at the bottom of, rather than a column of labels.
+///
+/// Six rows of [`GLYPH`] with a little leading, plus [`surround`]'s eight points of padding above
+/// and below and its one-point border on each edge. At [`ENTRIES`] events of one wrapped sentence
+/// each, the newest is always whole and the ones above it are as much as fits.
+const NOTES: f32 = 6.0 * (GLYPH + 2.0) + 18.0;
+
+/// ⭐ **Phase 7, Group C.** How many events the panel is handed.
+///
+/// More than fit in [`NOTES`], deliberately: the box is scrolled to its bottom, so what is handed
+/// over is *at least* enough to fill it however short the sentences happen to be. Four is what a
+/// person glancing at a second screen can take in, and the rest of the log is the chronicle's.
+const ENTRIES: usize = 4;
 
 /// The vertical gap between two rows of the chrome, in points.
 ///
@@ -582,6 +605,30 @@ pub fn charts(history: &Series) -> Vec<Chart> {
     ]
 }
 
+/// ⭐ **Phase 7, Group C.** What the log says, as the lines the panel shows it in.
+///
+/// A free function over a [`Chronicle`], for the reason [`readings`] and [`charts`] are free
+/// functions over a world and a series: *what the panel says* is then checkable with no graphics
+/// card and no tessellator anywhere near it, and everything after this is layout.
+///
+/// # ⚠️ The newest last, and the first sentence only
+///
+/// Newest last because that is the direction a log is read in and the direction the box scrolls -
+/// a person watching sees a line appear at the bottom, which is the calmest possible way for
+/// something to arrive on a screen that CLAUDE.md asks never to shout.
+///
+/// The first sentence only, because the column is [`WIDTH`] points across and that is about
+/// twenty-eight monospace characters: a two-sentence event is nine lines of chrome, and three of
+/// them would be a panel taller than the readings, the controls and the charts together. The
+/// first sentence of every event this project writes is the one that says what happened. The rest
+/// is the detail, and the detail is what the chronicle is for.
+#[must_use]
+pub fn notes(log: &Chronicle) -> Vec<String> {
+    log.latest(ENTRIES)
+        .map(|event| format!("{:.1} Ma  {}", event.ma, event.headline()))
+        .collect()
+}
+
 /// One chart on the panel: what it is, and the bands stacked up its height.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chart {
@@ -892,7 +939,14 @@ impl Chrome {
     /// # Panics
     ///
     /// If the frame has no width or no height.
-    pub fn compose(&mut self, world: &World, history: &Series, frame: (u32, u32), display: f32) {
+    pub fn compose(
+        &mut self,
+        world: &World,
+        history: &Series,
+        log: &Chronicle,
+        frame: (u32, u32),
+        display: f32,
+    ) {
         // ⭐ **A3, and it is this line.** Everything below builds widgets; nothing below is
         // reached. A panel added in Group B is hidden by this without anybody remembering to
         // hide it, which is the whole of what Q24 asked for.
@@ -928,6 +982,9 @@ impl Chrome {
         // composition asked for again is the same picture, and re-scaling four thousand readings
         // per pass would be the one expensive thing on this panel.
         let traces = charts(history);
+
+        // ⭐ **Phase 7, Group C.** And the same for the log, for the same reason.
+        let lines = notes(log);
 
         // ⚠️⚠️ **egui's very first pass over a fresh `Context` draws nothing at all**, and this
         // loop is the whole of the answer to it. Measured rather than guessed - see
@@ -970,7 +1027,14 @@ impl Chrome {
         let mut jobs = Vec::new();
 
         for _ in 0..SETTLES {
-            let (output, at) = self.pass(&rows, &traces, frame, scale, std::mem::take(&mut felt));
+            let (output, at) = self.pass(
+                &rows,
+                &traces,
+                &lines,
+                frame,
+                scale,
+                std::mem::take(&mut felt),
+            );
 
             self.deltas.append(output.textures_delta);
             let drawn = self
@@ -999,6 +1063,7 @@ impl Chrome {
         &mut self,
         rows: &[Reading],
         traces: &[Chart],
+        lines: &[String],
         frame: (u32, u32),
         scale: f32,
         felt: Vec<egui::Event>,
@@ -1076,10 +1141,11 @@ impl Chrome {
                         // no indication that they were there.
                         egui::ScrollArea::vertical()
                             .max_height(
-                                // ⭐ **Group C.** What is left of the column once the readings
-                                // above and the charts below have had their share. See [`CEILING`]
-                                // and [`CHARTS`].
-                                (column - readings.height() - GAP - CHARTS - GAP).max(GLYPH * 4.0),
+                                // ⭐ **Group C, and Phase 7's log under it.** What is left of the
+                                // column once the readings above and the charts and the log below
+                                // have had their share. See [`CEILING`], [`CHARTS`] and [`NOTES`].
+                                (column - readings.height() - GAP - CHARTS - GAP - NOTES - GAP)
+                                    .max(GLYPH * 4.0),
                             )
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
@@ -1107,7 +1173,27 @@ impl Chrome {
                 .response
                 .rect;
 
-            placed = Some(readings.union(controls).union(charts));
+            // ⭐⭐ **Phase 7, Group C. The event log, where a person watching can see it.**
+            //
+            // `docs/PHASE7.md`: a run grew serially repeated bodies at tick 2.8 million and it
+            // was found by eye, in a screenshot, hours later. This is the panel that would have
+            // said so at the time. Under the charts, the same width again, `interactable` false
+            // like the readings and the charts - it is looked at, and the world is the subject.
+            let notes = egui::Area::new(egui::Id::new("coacervate log"))
+                .fixed_pos(egui::pos2(INSET, charts.max.y + GAP))
+                .movable(false)
+                .interactable(false)
+                .fade_in(false)
+                .show(&context, |ui| {
+                    surround().show(ui, |ui| {
+                        ui.set_width(WIDTH);
+                        lay_out_notes(ui, lines);
+                    });
+                })
+                .response
+                .rect;
+
+            placed = Some(readings.union(controls).union(charts).union(notes));
         });
 
         (output, placed)
@@ -1197,6 +1283,63 @@ fn lay_out_charts(ui: &mut egui::Ui, charts: &[Chart]) {
             draw_chart(ui.painter(), rect, chart);
         });
     }
+}
+
+/// ⭐ **Phase 7, Group C.** The last few things that happened, newest at the bottom.
+///
+/// # ⚠️ A box of a fixed height, filled from the bottom with whole events
+///
+/// An event is a *sentence*, and a sentence in a column twenty-eight characters wide is two to
+/// five lines depending on what happened. So unlike the readings and the charts there is no
+/// arithmetic that says in advance how tall this wants to be - and a block that took whatever
+/// height its contents asked for would be a panel that changed size every time something occurred.
+/// On a screen CLAUDE.md asks to be *"visually calm"*, with *"nothing that pulls the eye"*, that is
+/// the worst possible behaviour: the whole chrome would jump at the moment there was news.
+///
+/// So the box is [`NOTES`] tall whatever is in it, the newest event sits on its floor, and older
+/// ones stack up above it **for as long as one fits whole**. Nothing moves except the text.
+///
+/// ⚠️ **Whole, and a dumped frame is what asked for that.** The first version was a scroll area
+/// held at its end, which is the obvious answer and which slices the line at the top of the box
+/// through the middle of its letters. A half-line of text reads as a rendering fault rather than
+/// as *there is more above*; measuring each event and dropping the one that will not fit costs
+/// eight lines and leaves a block with nothing broken in it. What is above is the chronicle's, and
+/// the log has to be readable at a glance rather than complete.
+fn lay_out_notes(ui: &mut egui::Ui, lines: &[String]) {
+    let font = egui::FontId::monospace(GLYPH);
+    let wrap = ui.available_width();
+    let (row, gap) = (
+        ui.fonts_mut(|fonts| fonts.row_height(&font)),
+        ui.spacing().item_spacing.y,
+    );
+
+    // A whole number of rows, so that an empty box and a full one are the same height and the
+    // block does not shrink by a fraction of a line when a run has said nothing for an hour.
+    let box_height = (((NOTES - 18.0) / row).floor() * row).max(row);
+    let mut left = box_height;
+
+    // ⚠️ `allocate_ui_with_layout` and not `with_layout`, which was the first version: a bottom-up
+    // layout inside an `Area` takes the height that is *available*, which is the rest of the
+    // frame - so the panel came out four hundred pixels tall with the events sitting at the
+    // bottom of an empty box. This asks for exactly the box.
+    ui.allocate_ui_with_layout(
+        egui::vec2(wrap, box_height),
+        egui::Layout::bottom_up(egui::Align::LEFT),
+        |ui| {
+            for line in lines.iter().rev() {
+                let laid =
+                    ui.fonts_mut(|fonts| fonts.layout(line.clone(), font.clone(), VALUE, wrap));
+
+                let wants = laid.size().y + gap;
+                if wants > left {
+                    break;
+                }
+
+                left -= wants;
+                ui.label(laid);
+            }
+        },
+    );
 }
 
 /// Paint one chart's bands into its box.
@@ -2067,7 +2210,7 @@ impl Painter {
 
 #[cfg(test)]
 mod tests {
-    use super::{Chrome, charts, readings, recessive};
+    use super::{Chrome, Chronicle, charts, notes, readings, recessive};
     use crate::census::{Census, millions_of_years};
     use crate::controls::Ask;
     use crate::frame::Renderer;
@@ -2096,7 +2239,11 @@ mod tests {
     /// against nought and the `alive` chart would have been a flat line at the bottom of its box.
     /// `series::testing` is where the seeding lives, because `coacervate-app`'s `founding.rs`
     /// cannot be reached from this crate.
-    fn ticked(ticks: u64) -> (World, Series) {
+    ///
+    /// ⭐ **Since Phase 7 it hands over the event log as well**, taken over the same ticks by the
+    /// same three observers `run.rs` drives, so the panel's fourth block is composed over a log a
+    /// run actually produced rather than one written here.
+    fn ticked(ticks: u64) -> (World, Series, Chronicle) {
         crate::series::testing::living(ticks)
     }
 
@@ -2153,7 +2300,7 @@ mod tests {
     /// than being copied.
     #[test]
     fn the_panel_reports_what_the_world_is_doing() {
-        let (world, _) = ticked(400);
+        let (world, _, _) = ticked(400);
         let census = Census::of(&world);
         let ledger = world.ledger();
         let panel = said(&world);
@@ -2234,6 +2381,106 @@ mod tests {
         }
     }
 
+    /// ⭐⭐ **Phase 7, Group C.** The panel shows the most recent events, and screensaver mode
+    /// hides them with the rest.
+    ///
+    /// Three claims, and the third is the one `docs/PHASE7.md` actually asked for.
+    ///
+    /// **What the lines say** is checkable with no graphics card: [`notes`] is a free function
+    /// over a [`Chronicle`], so the newest-last order, the deep-time prefix and the one-sentence
+    /// trim are all claims about a function rather than about a picture.
+    ///
+    /// **That the frame changes** is what stops the first half being a picture of a panel: the
+    /// same world is composed twice, once with the run's log behind it and once with an empty
+    /// one, and the two frames have to differ.
+    ///
+    /// **And that the switch still hides everything.** `panel.rs`'s screensaver check is one line
+    /// at the top of [`Chrome::compose`] and Group A's whole argument for putting it there was
+    /// that a panel written by a later phase would be hidden by it *without anybody remembering
+    /// to hide it*. This is the phase that tests the claim rather than making it.
+    #[test]
+    fn the_panel_shows_the_most_recent_events() {
+        let (world, series, log) = ticked(400);
+
+        assert!(
+            log.events().len() >= 2,
+            "the run behind this panel produced {} events, which is not a log",
+            log.events().len()
+        );
+
+        let lines = notes(&log);
+        assert!(
+            lines.len() <= super::ENTRIES,
+            "the panel was handed {} events and it has room for {}",
+            lines.len(),
+            super::ENTRIES
+        );
+
+        // Newest last, which is the direction a log is read in and the direction the box scrolls.
+        let newest = log
+            .events()
+            .last()
+            .expect("the log has something in it")
+            .clone();
+        assert!(
+            lines
+                .last()
+                .expect("there is a line")
+                .contains(newest.headline()),
+            "the last line of the panel is not the most recent event:\n{lines:#?}"
+        );
+
+        // CLAUDE.md's deep time on every line, and never a raw tick count.
+        for line in &lines {
+            assert!(
+                line.contains(" Ma  "),
+                "a line of the log does not say when it happened: {line}"
+            );
+        }
+
+        // ⚠️ One sentence per event. The column is 208 points across, which is about
+        // twenty-eight monospace characters, so a two-sentence event is nine lines of chrome.
+        for (line, event) in lines.iter().zip(log.latest(super::ENTRIES)) {
+            assert!(
+                line.len() <= event.said.len() + 16,
+                "a line of the log is the whole event rather than its first sentence: {line}"
+            );
+        }
+
+        let Some(gpu) = shared() else {
+            return;
+        };
+
+        let scene = lit();
+        let mut renderer = Renderer::new(gpu, FRAME.0, FRAME.1);
+        let mut chrome = Chrome::new(gpu, shipped());
+        let empty = Chronicle::new(world.config());
+
+        chrome.compose(&world, &series, &empty, FRAME, 1.0);
+        renderer.forget();
+        let silent = renderer.render_through_under(gpu, &scene, &showing_all(), &mut chrome);
+
+        chrome.compose(&world, &series, &log, FRAME, 1.0);
+        renderer.forget();
+        let told = renderer.render_through_under(gpu, &scene, &showing_all(), &mut chrome);
+
+        assert_ne!(
+            told.pixels(),
+            silent.pixels(),
+            "a panel with a run's own event log behind it draws exactly what a panel with an \
+             empty one draws, so the log is not on the frame at all"
+        );
+
+        // ⭐ And the one line at the top of `compose` still hides it, with no `if` of its own.
+        chrome.toggle();
+        chrome.compose(&world, &series, &log, FRAME, 1.0);
+        assert_eq!(
+            chrome.occupies(),
+            None,
+            "screensaver mode left the event log on the frame"
+        );
+    }
+
     /// ⭐ **A3, at the near end.** Screensaver mode composes nothing at all - not a smaller
     /// panel, not a transparent one.
     ///
@@ -2248,10 +2495,10 @@ mod tests {
             return;
         };
 
-        let (world, series) = ticked(400);
+        let (world, series, log) = ticked(400);
         let mut chrome = Chrome::new(gpu, shipped());
 
-        chrome.compose(&world, &series, (1280, 720), 1.0);
+        chrome.compose(&world, &series, &log, (1280, 720), 1.0);
         let panel = chrome
             .occupies()
             .expect("the chrome is not hidden, so there is a panel somewhere");
@@ -2262,7 +2509,7 @@ mod tests {
 
         chrome.toggle();
         assert!(chrome.hidden(), "the switch did not go on");
-        chrome.compose(&world, &series, (1280, 720), 1.0);
+        chrome.compose(&world, &series, &log, (1280, 720), 1.0);
         assert_eq!(
             chrome.occupies(),
             None,
@@ -2272,7 +2519,7 @@ mod tests {
         // And back again, because a mode that could only be entered would be a mode nobody
         // would ever use.
         chrome.toggle();
-        chrome.compose(&world, &series, (1280, 720), 1.0);
+        chrome.compose(&world, &series, &log, (1280, 720), 1.0);
         assert!(
             chrome.occupies().is_some(),
             "the chrome did not come back when the switch went off"
@@ -2295,7 +2542,7 @@ mod tests {
     /// half and fail this.
     #[test]
     fn the_charts_show_population_biomass_and_the_ledger_over_time() {
-        let (world, series) = ticked(400);
+        let (world, series, log) = ticked(400);
         let drawn = charts(&series);
 
         assert_eq!(
@@ -2373,11 +2620,11 @@ mod tests {
         let mut renderer = Renderer::new(gpu, FRAME.0, FRAME.1);
         let mut chrome = Chrome::new(gpu, shipped());
 
-        chrome.compose(&world, &Series::new(), FRAME, 1.0);
+        chrome.compose(&world, &Series::new(), &log, FRAME, 1.0);
         renderer.forget();
         let empty = renderer.render_through_under(gpu, &scene, &showing_all(), &mut chrome);
 
-        chrome.compose(&world, &series, FRAME, 1.0);
+        chrome.compose(&world, &series, &log, FRAME, 1.0);
         renderer.forget();
         let charted = renderer.render_through_under(gpu, &scene, &showing_all(), &mut chrome);
 
@@ -2415,7 +2662,7 @@ mod tests {
             return;
         };
 
-        let (world, series) = ticked(400);
+        let (world, series, log) = ticked(400);
         let mut chrome = Chrome::new(gpu, shipped());
 
         for (frame, display) in [
@@ -2428,7 +2675,7 @@ mod tests {
             // Somebody who dragged it larger, on either.
             ((2560, 1440), 1.5),
         ] {
-            chrome.compose(&world, &series, frame, display);
+            chrome.compose(&world, &series, &log, frame, display);
             let panel = chrome
                 .occupies()
                 .expect("the chrome is not hidden, so there is a panel somewhere");
@@ -2494,9 +2741,9 @@ mod tests {
             return;
         };
 
-        let (world, series) = ticked(400);
+        let (world, series, log) = ticked(400);
         let mut chrome = Chrome::new(gpu, shipped());
-        chrome.compose(&world, &series, FRAME, 1.0);
+        chrome.compose(&world, &series, &log, FRAME, 1.0);
 
         let first = chrome
             .occupies()
@@ -2524,7 +2771,7 @@ mod tests {
         // And it does not move afterwards. A panel that settled into a different shape on its
         // second frame would be a thing changing size on the screen for no reason in the world.
         for again in 1..4 {
-            chrome.compose(&world, &series, FRAME, 1.0);
+            chrome.compose(&world, &series, &log, FRAME, 1.0);
             assert_eq!(
                 chrome.occupies(),
                 Some(first),
@@ -2552,7 +2799,7 @@ mod tests {
             return;
         };
 
-        let (world, series) = ticked(400);
+        let (world, series, log) = ticked(400);
         let scene = lit();
         let mut renderer = Renderer::new(gpu, FRAME.0, FRAME.1);
         let mut chrome = Chrome::new(gpu, shipped());
@@ -2563,7 +2810,7 @@ mod tests {
         renderer.forget();
         let bare = renderer.render_through(gpu, &scene, &showing_all());
 
-        chrome.compose(&world, &series, FRAME, 1.0);
+        chrome.compose(&world, &series, &log, FRAME, 1.0);
         let panel = chrome
             .occupies()
             .expect("the chrome is not hidden, so there is a panel somewhere");
@@ -2626,7 +2873,7 @@ mod tests {
             return;
         };
 
-        let (world, series) = ticked(400);
+        let (world, series, log) = ticked(400);
         let scene = lit();
         let mut renderer = Renderer::new(gpu, FRAME.0, FRAME.1);
         let mut chrome = Chrome::new(gpu, shipped());
@@ -2634,7 +2881,7 @@ mod tests {
         renderer.forget();
         let no_chrome_at_all = renderer.render_through(gpu, &scene, &showing_all());
 
-        chrome.compose(&world, &series, FRAME, 1.0);
+        chrome.compose(&world, &series, &log, FRAME, 1.0);
         renderer.forget();
         let shown = renderer.render_through_under(gpu, &scene, &showing_all(), &mut chrome);
         assert_ne!(
@@ -2645,7 +2892,7 @@ mod tests {
 
         // The key. Everything after this is what a person watching would see.
         chrome.toggle();
-        chrome.compose(&world, &series, FRAME, 1.0);
+        chrome.compose(&world, &series, &log, FRAME, 1.0);
         renderer.forget();
         let screensaver = renderer.render_through_under(gpu, &scene, &showing_all(), &mut chrome);
 
@@ -2689,7 +2936,7 @@ mod tests {
             return;
         };
 
-        let (world, series) = ticked(400);
+        let (world, series, log) = ticked(400);
         let mut chrome = Chrome::new(gpu, shipped());
 
         // `[light]` is the fold that opens by itself, so `influx` is on the panel from the first
@@ -2702,8 +2949,8 @@ mod tests {
         // Two compositions with no input at all, to settle the fonts and to give the widgets
         // somewhere to be. A slider cannot be found before it has been laid out once, which is
         // as true of a hand on a mouse as it is of this.
-        chrome.compose(&world, &series, (1280, 720), 1.0);
-        chrome.compose(&world, &series, (1280, 720), 1.0);
+        chrome.compose(&world, &series, &log, (1280, 720), 1.0);
+        chrome.compose(&world, &series, &log, (1280, 720), 1.0);
 
         let before = chrome.dials().value(dial);
         let accepted = chrome.dials().accepted();
@@ -2733,7 +2980,7 @@ mod tests {
                 pressed: true,
                 modifiers: egui::Modifiers::NONE,
             });
-            chrome.compose(&world, &series, (1280, 720), 1.0);
+            chrome.compose(&world, &series, &log, (1280, 720), 1.0);
 
             chrome.feels(egui::Event::PointerButton {
                 pos: at,
@@ -2741,7 +2988,7 @@ mod tests {
                 pressed: false,
                 modifiers: egui::Modifiers::NONE,
             });
-            chrome.compose(&world, &series, (1280, 720), 1.0);
+            chrome.compose(&world, &series, &log, (1280, 720), 1.0);
 
             if chrome.dials().accepted() > accepted {
                 moved = Some(at);
@@ -2804,10 +3051,10 @@ mod tests {
             return;
         };
 
-        let (world, series) = ticked(400);
+        let (world, series, log) = ticked(400);
         let mut chrome = Chrome::new(gpu, shipped());
 
-        chrome.compose(&world, &series, (1280, 720), 1.0);
+        chrome.compose(&world, &series, &log, (1280, 720), 1.0);
         assert!(
             chrome.asked().is_empty(),
             "a panel nobody has touched asked for something"
@@ -2832,7 +3079,7 @@ mod tests {
                 pressed: true,
                 modifiers: egui::Modifiers::NONE,
             });
-            chrome.compose(&world, &series, (1280, 720), 1.0);
+            chrome.compose(&world, &series, &log, (1280, 720), 1.0);
             pressed.extend(chrome.asked());
 
             chrome.feels(egui::Event::PointerButton {
@@ -2841,7 +3088,7 @@ mod tests {
                 pressed: false,
                 modifiers: egui::Modifiers::NONE,
             });
-            chrome.compose(&world, &series, (1280, 720), 1.0);
+            chrome.compose(&world, &series, &log, (1280, 720), 1.0);
             pressed.extend(chrome.asked());
 
             if pressed.contains(&Ask::Pause) {

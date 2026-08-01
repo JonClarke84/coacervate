@@ -51,6 +51,7 @@ use crate::panel::Chrome;
 use crate::scene::Scene;
 use crate::series::Series;
 use crate::settings::Dials;
+use coacervate_sim::chronicle::Chronicle;
 use coacervate_sim::config::Config;
 use coacervate_sim::world::World;
 use std::path::{Path, PathBuf};
@@ -125,6 +126,14 @@ pub trait Watched {
     /// a frame on - different every run, different between a watched run and a headless one, and
     /// not the grid SPEC section 13 describes.
     fn series(&self) -> &Series;
+
+    /// ⭐ **Phase 7, Group C.** What has happened in this world, in sentences.
+    ///
+    /// On the trait for [`Watched::series`]'s reason: the log is written *at a tick* and the only
+    /// thing that knows when a tick happened is the thing that took it. A window notices whatever
+    /// moments the compositor happened to ask for a frame on, which is not the same set of
+    /// moments twice and is not the set a headless run would notice at all.
+    fn chronicle(&self) -> &Chronicle;
 
     /// Ask the run to stop at the end of the tick it is in.
     fn ask_to_stop(&self);
@@ -463,6 +472,7 @@ impl<W: Watched> Watcher<'_, W> {
         open.chrome.compose(
             self.watched.world(),
             self.watched.series(),
+            self.watched.chronicle(),
             size,
             scale_of(&open.window),
         );
@@ -563,6 +573,7 @@ impl<W: Watched> Watcher<'_, W> {
         open.chrome.compose(
             self.watched.world(),
             self.watched.series(),
+            self.watched.chronicle(),
             (open.configuration.width, open.configuration.height),
             scale_of(&open.window),
         );
@@ -741,7 +752,7 @@ fn scale_of(window: &Window) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{BUDGET, Series, Watched, advance};
+    use super::{BUDGET, Chronicle, Series, Watched, advance};
     use crate::controls::Pace;
     use coacervate_sim::config::spec_defaults;
     use coacervate_sim::world::World;
@@ -802,6 +813,8 @@ mod tests {
         retuned: Cell<u32>,
         /// Empty, because nothing here ticks a world for a reading to be taken of.
         series: Series,
+        /// Empty, for the same reason: nothing here happens for a log to say anything about.
+        chronicle: Chronicle,
     }
 
     impl Counted {
@@ -811,6 +824,7 @@ mod tests {
                 .expect("SPEC section 3's defaults are a world");
 
             Self {
+                chronicle: Chronicle::new(&config),
                 world: World::new(&config),
                 ticks: Cell::new(0),
                 left: Cell::new(left),
@@ -852,6 +866,10 @@ mod tests {
 
         fn series(&self) -> &Series {
             &self.series
+        }
+
+        fn chronicle(&self) -> &Chronicle {
+            &self.chronicle
         }
 
         fn ask_to_stop(&self) {

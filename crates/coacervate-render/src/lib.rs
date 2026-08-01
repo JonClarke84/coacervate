@@ -75,6 +75,7 @@ pub mod series;
 pub mod settings;
 pub mod window;
 
+use coacervate_sim::chronicle::Chronicle;
 use coacervate_sim::world::World;
 use std::path::Path;
 
@@ -234,6 +235,7 @@ impl Dump {
         &mut self,
         world: &World,
         history: &series::Series,
+        log: &Chronicle,
         path: &Path,
     ) -> Result<(), DumpError> {
         let size = self.size();
@@ -246,7 +248,7 @@ impl Dump {
                 // A dumped frame is drawn at whatever the display says a point is worth, which
                 // for a machine with no window on it is one. `Chrome::compose` decides what a
                 // point is actually worth on a frame this size - see `Q29`.
-                chrome.compose(world, history, size, 1.0);
+                chrome.compose(world, history, log, size, 1.0);
                 self.renderer
                     .render_through_under(&self.gpu, &scene, &camera, chrome)
             }
@@ -273,7 +275,12 @@ impl Dump {
 ///
 /// If there is no graphics adapter, or the file cannot be written. See [`DumpError`].
 pub fn dump_frame(world: &World, path: &Path) -> Result<(), DumpError> {
-    // No chrome on this path, so nothing reads the series; an empty one is what a caller with no
-    // run behind it has got.
-    Dump::open()?.write(world, &series::Series::new(), path)
+    // No chrome on this path, so nothing reads the series or the log; empty ones are what a
+    // caller with no run behind it has got.
+    Dump::open()?.write(
+        world,
+        &series::Series::new(),
+        &Chronicle::new(world.config()),
+        path,
+    )
 }

@@ -12,8 +12,8 @@
 | | |
 | --- | --- |
 | **Phase 7** | in progress |
-| **Current group** | C — the event log (A and B are done) |
-| **Suite** | green — **227 tests, 120s** |
+| **Current group** | D — Darwin in the margin (A, B and C are done) |
+| **Suite** | green — **247 tests, 108s** |
 
 ---
 
@@ -334,28 +334,149 @@ when the cluster is a species — and `Name` displays as *Coacervus primus*. C5 
 two lists that come apart, and the register of the log and the register of the names are one
 register.
 
-- [ ] **C1. `an_event_is_recorded_with_its_tick_and_its_deep_time`** — *"Tick 41,208 — 41.2
-  Ma."*
-- [ ] **C2. `first_adhesion_is_noticed`** — the origin of multicellularity in this run.
-- [ ] **C3. `the_first_appearance_of_each_cell_kind_is_noticed`**
-- [ ] **C4. `the_first_predation_is_noticed`**
-- [ ] **C5. `speciation_and_extinction_are_recorded_by_name`**
-- [ ] **C6. `new_records_are_noticed`** — body size, cell count, genome length, population.
-- [ ] **C7. `a_mass_extinction_is_noticed`** — population falling by >50% within 5,000 ticks.
-  ⚠️ `Series` has population history but thins to a 25,600-tick stride late in a run, so this
-  needs its own short high-resolution window.
-- [ ] **C8. `a_change_the_user_made_is_recorded`** — Phase 6's sliders are environmental
-  events and the log should say so.
-- [ ] **C9. `no_event_text_uses_the_banned_vocabulary`** ⭐ — the register test described
-  above, run over every string the phase can generate.
-- [ ] **C10. `serial_repetition_is_noticed`** — **candidate, decide deliberately.** Not in
-  SPEC's list. In its favour: it is what Jonathan actually spotted, it is the visible
-  signature of the operator the whole project rests on, and it is cheap — a body whose
-  structure repeats is knowable at development time. Against: SPEC's list is deliberate and
-  this is scope creep. **If it goes in, it must be phrased as what changed** — *"a structure
-  is being built more than once in one body"* — never as an achievement.
+**Done.** `chronicle.rs`, in `coacervate-sim`, plus a fourth block on the panel.
+
+- [x] **C1. `an_event_is_recorded_with_its_tick_and_its_deep_time`** — *"Tick 41,208 — 41.2
+  Ma."* An `Event` carries the tick, the deep time, a stable tag and the sentence, and nothing
+  else — which is a line of Phase 8's `events.jsonl` in memory. ⭐ `millions_of_years` moved
+  into `chronicle.rs` and `census.rs` now calls it, so the arithmetic is in one place rather
+  than three.
+- [x] **C2. `first_adhesion_is_noticed`** — the origin of multicellularity in this run.
+  ⚠️ **With the shipped founder it fires on the run's first tick**, because `founding.rs` seeds
+  a photocyte with a gonocyte sprung to it. That is the honest answer: this world *begins*
+  multicellular, and the log says so at tick 10,001 rather than pretending otherwise.
+- [x] **C3. `the_first_appearance_of_each_cell_kind_is_noticed`** — with a one-clause gloss of
+  what the kind does, from SPEC section 6.
+- [x] **C4. `the_first_predation_is_noticed`** — ⭐ **`Ledger` gained a `predated` counter**,
+  and it had to. `Ledger::predate` is `biomass → biomass`, so no total in the world moves and
+  no balance can ever notice one happening; an observer outside the tick would have to redo
+  `behaviour.rs`'s neighbour search over every devorocyte on every tick to find out, which is a
+  second implementation of the one rule CLAUDE.md's decision log is most insistent must not be
+  scripted. One addition inside a loop that has already done the arithmetic answers it exactly.
+  It is on neither side of the invariant and `Ledger::check` destructures it as `predated: _`.
+  ⚠️ **The line does not say whose devorocyte it was**, for the same reason.
+- [x] **C5. `speciation_and_extinction_are_recorded_by_name`** — on the clustering's own grid.
+  `Taxonomy` gained `samples()`, a count of samples taken, which is what tells the log a fresh
+  one has happened; testing the tick against `species::EVERY` would be the same answer in the
+  ordinary case and a wrong one wherever the clustering did not actually run.
+- [x] **C6. `new_records_are_noticed`** — body size, cell count, genome length, population.
+  See the table below for the two that needed a ladder rather than a step, and why.
+- [x] **C7. `a_mass_extinction_is_noticed`** — its own window: fifty-one readings a hundred
+  ticks apart, four hundred bytes, never thinned. Firing clears it, so one collapse is one
+  line rather than fifty.
+- [x] **C8. `a_change_the_user_made_is_recorded`** — twenty conditions, named **in words**.
+  `settings.rs`'s `every_dial_is_a_condition_the_chronicle_reports` puts the list beside the
+  twenty sliders and insists they are the same settings.
+- [x] **C9. `no_event_text_uses_the_banned_vocabulary`** ⭐ — over every sentence the phase can
+  generate, not the ones a run happens to produce: all six cell kinds, all twenty conditions,
+  all four records, and both the named and unnamed forms of everything that has one. It calls
+  `naming::is_permissible`, and `naming.rs` gained
+  `the_banned_vocabulary_is_claude_mds_whole_list`. Below, because the list was missing two of
+  CLAUDE.md's ten and the register test caught three sentences.
+- [x] **C10. `serial_repetition_is_noticed`** — ⭐ **built.** The reasoning is in `repeated`'s
+  own doc comment and in the table below.
+- [x] **⭐ The loss detector**, which SPEC does not ask for and CLAUDE.md requires:
+  `a_lineage_that_stops_building_a_cell_kind_is_noticed`.
+- [x] **The panel shows the last events**, hidden by `Chrome::compose`'s one screensaver line
+  with no new `if`. `the_panel_shows_the_most_recent_events` is what proves the second half.
+- [x] **A headless run prints the log**, which is the whole point of the group.
+
+#### ⭐⭐ The bound, and what a viewer loses
+
+SPEC section 13 says of `events.jsonl` *"append-only, human-readable, **keep everything**"*.
+That is right for a **file** and wrong for memory, and they are not the same decision. A
+settled run carries about sixty clusters; each clustering sample can mint one and lose another,
+so a twelve-hour run of 32 million ticks can produce of the order of a hundred thousand
+speciation and extinction lines — **16 MB of prose**, unbounded, and worse on a run that churns
+faster.
+
+So the log is a **ring of 1,024 events, allocated once, oldest dropped** — about 160 KB, or
+0.008% of CLAUDE.md's two-gigabyte target and a little over half what `series.rs`'s chart
+costs. The count of what was dropped is kept, and the headless report prints it: SPEC section
+13 says the same thing about snapshots — *"Log what was dropped; silent truncation reads as
+complete history when it isn't."*
+
+⚠️ **What a viewer loses is the beginning of a long run** — first adhesion, the first appearance
+of each cell kind, the first predation — which are among the most interesting lines the log ever
+writes. A ring is still right for a *log*, which is read from its end, and thinning (which is
+what `series.rs` does) cannot be done here at all: half a chart still describes the shape, while
+half a log is a sentence about a lineage whose arrival is no longer in the record.
+
+⚠️ **Phase 8 must write each event as it is appended and must not read this ring at shutdown.**
+`events.jsonl` is *keep everything* and this is the last thousand; writing from here is how a
+twelve-hour run produces a file that begins in the middle. `Event` is already shaped as a line
+of that file — `{tick, ma, kind, said}` — so Phase 8 writes it unchanged, and `Kind::tag` is a
+**format**: rename one and every archived recording says something different.
+
+#### ⭐ What Group C decided that SPEC does not say
+
+| Decision | Where | Short version |
+| --- | --- | --- |
+| **⭐ The log lives in `coacervate-sim`, unlike `Series`** | `chronicle.rs` | `series.rs` is in `coacervate-render` because a sample is *made of* a `Census` and the panel that draws it is there. An event is made of a body's cells, a cluster's `Name` and `naming::is_permissible`, all three of which are this crate's — and a binomial generated from Latin-ish syllables is already presentation living in the simulation crate, for exactly the same reason. Nothing in it knows that rendering exists. |
+| **⭐⭐ `repeated` is C10, and the argument is the shape of SPEC's list rather than an exception to it** | `chronicle.rs` | SPEC's list already contains a landmark of this class: *first adhesion* is not an event in the ledger — nothing is gained or lost, no lineage arrives or goes — and CLAUDE.md calls it *"the origin of multicellularity in this run"*. It is on the list because a change in how bodies are **organised** is worth writing down. Serial repetition is the same thing: the origin of **segmentation**, and the visible signature of duplicate-and-diverge, which CLAUDE.md's decision log calls *"the single most important decision in the project"*. A log that records the first two cells stuck together and says nothing when a lineage starts building the same organ three times over is recording the less interesting of the two. |
+| **What counts as a repeated structure** | `chronicle.rs` | A **unit** is an adhered pair whose two ends differ in kind or in developmental state; a body repeats one when the same pair hangs off **three different parent cells**. ⚠️ **A pair whose two ends are the same is excluded and that exclusion is what makes it mean anything**: a gene that divides a cell into another cell of its own kind makes a chain, and a chain of eight identical photocytes repeats nothing a chain of two does not. What is looked for is *a spine with something on it* — which is what was found by eye at tick 2.8 million. Read off the finished body, so it is a description of the thing standing in the water. |
+| **⚠️ The wording, and it is `docs/PHASE7.md`'s own** | `chronicle.rs` | *"A structure is being built more than once in one body. **Coacervus primus** is growing 8 copies of one unit along a single body: a photocyte with a myocyte attached to it."* What changed, and then what it is. Nothing about it being a step. |
+| **⭐⭐ The loss detector fires on a lineage that stops building a cell kind** | `chronicle.rs` | CLAUDE.md is why it exists rather than SPEC: *"Loss of structure is a legitimate and common outcome… If the event log can only celebrate gains, it is teaching something false."* It is the mirror of C3 — the first appearance of a kind in the world, and the moment a lineage's bodies stopped containing one — and it is the trigger SPEC section 11's Darwin table already names for *rudimentary and atrophied organs*, so Group D has it waiting. Chosen over *bodies get smaller* because that one is a number going down, which is much harder to write about without implying a direction; *has stopped building sclerocytes* states a fact and stops. |
+| **⚠️⚠️ It says so once per lineage per kind, and a real run is what settled that** | `chronicle.rs` | 200,000 ticks of the shipped configuration, seed 42, first version: **267 events, 130 of them a lineage letting go of a cell kind, and one species said the same sentence twenty-four times.** A lineage of several hundred bodies takes a cell kind up again and lets it go again, so a detector reporting every crossing reports churn. Two changes: the hysteresis went from four samples to **eight** on both sides, and each `(species, kind)` pair is announced **once** — a landmark, not a status. The same run then produced **149 events: 77 speciations, 30 records, 22 extinctions, 11 losses, 8 firsts**. |
+| **⭐ Records: two of the four needed a ladder rather than a step** | `chronicle.rs` | Cell count and genome length are small integers that climb rarely, so every new maximum is a line and there are at most 192 of them in a run. **Population is not**: a run goes from 8 founders to about 2,200 and every one of the 2,192 populations in between is a new record, which would be two thousand lines in the first twenty thousand ticks and would push everything else out of the ring before the first species was named. At a **doubling** the same stretch is eight lines, each saying something. **Body span needed one too, for a different reason**: a span is a measurement of where the physics has put a body's cells, and a large body spends its first ticks relaxing outwards along its springs — at a fixed step of two world units one body produced **nine lines in twelve ticks**. At half as much again it is five lines end to end. |
+| **The first reading primes the records rather than announcing them** | `chronicle.rs` | A record is news that something changed, and the first population a world ever has has not changed from anything. Without it every run opens with four lines announcing that its founders were the largest bodies, the longest genomes and the greatest population there had ever been — all true, and not news. |
+| **⭐ `observe` is idempotent and has no guard against a repeated tick** | `chronicle.rs` | `series.rs` and `species.rs` both refuse a tick they have seen, because a second reading is a second chart point and a second sample towards a promotion. Nothing here has that shape: a *first* fires once by construction, a record is a maximum, the collapse window is keyed on the tick and the lineages are done once per clustering sample. So there is no guard, and `nothing_is_noticed_twice` says the absence is safe rather than an oversight. |
+| **⚠️ SPEC's own example sentence could not be used** | `chronicle.rs` | *"A cell has **failed** to separate from its daughter"* contains *fail*, which the shared ban list refuses because of *failure* — and extinction framed as failure is exactly what CLAUDE.md bans. The log says *"has not separated from its daughter"*, which means the same thing. The list is shared with the names on purpose and is not being narrowed for one word. |
+| **⚠️ A setting is named in words rather than by its key** | `chronicle.rs` | Same collision: `light.gradient` contains *grad*, refused for *gradus* — a step, a rank. It is also better copy. *"How much of the light falls near the surface has been changed"* is a sentence about the world; `light.gradient = 0.40` is a line of a settings file. |
+| **⚠️ The ban list was missing two of CLAUDE.md's ten, and nothing had noticed** | `naming.rs` | *succeeded* does not contain *success* — the letters differ from the fifth onwards — and there is no `y` in the syllable tables, so *trying* was never reachable by a name and was never noticed to be absent. Group B's list was written against what a *name* could accidentally say; a log is written in English, where both are one slip away. Seven were added and one widened (`worst` → `wors`); **not one of them is spellable by the syllable tables**, so no name any earlier version of this project generated is changed. |
+| **The register test then caught three sentences** | `chronicle.rs` | *"how often two **neighbouring** genes swap places"* — `neighbouring` contains *urin*. *"it holds energy **towards** a child"* — `toward` was one of the seven just added, and it is the right ban: a gonocyte holds energy *for* a child, where *towards* is a direction. And *"it reads the **gradient** it sits in"*, which is the `grad` collision again. Three in about forty sentences, written by somebody who had the rule open in front of him. That is the argument for the test in one line. |
+| **⚠️ `Taxonomy::sample` is `pub(crate)` for the tests** | `species.rs` | Speciation and extinction *by name* need a promoted species, a promoted species needs twenty samples, and twenty samples is ten thousand ticks of a real world. `species.rs` split `sample` out of `observe` for exactly this and wrote down why; Group C is the second caller. Nothing outside a test calls it. |
+| **The panel shows the first sentence of each event and not the whole one** | `panel.rs` | The column is 208 points across, which is about twenty-eight monospace characters — a two-sentence event is nine lines of chrome and three of them would be taller than the readings, the controls and the charts together. The first sentence of every event this project writes is the one that says what happened; the rest is the detail, and the detail is what the chronicle is for. |
+| **⚠️ A fixed-height box filled from the bottom with *whole* events** | `panel.rs` | Unlike the readings and the charts there is no arithmetic that says in advance how tall a sentence wants to be, and a block that took whatever height its contents asked for would change size every time something happened — on a screen CLAUDE.md asks to be *visually calm*, that is the worst possible behaviour. The first version was a scroll area held at its end, which slices the top line through the middle of its letters; a dumped frame is what caught it. Measuring each event and dropping the one that will not fit costs eight lines and leaves a block with nothing broken in it. |
+
+#### ⭐ What it costs, measured
+
+Two hundred thousand ticks of the shipped `config/default.toml`, seed 42, headless, on the same
+machine, with the same live simulation running alongside — which is how Group A's figures were
+taken, so the numbers are directly comparable:
+
+| | Ticks per second | 200,000 ticks in |
+| --- | --- | --- |
+| Group A: clustering in the loop | 742.3 | 269.4 s |
+| **Group C: clustering and the event log in the loop** | **740.5** | **270.1 s** |
+
+**About a quarter of one per cent**, which is inside the noise of two runs on a machine doing
+other things. The reason it is that cheap is the shape of the survey rather than care: the
+population has to be counted, so the arena is walked whatever else is true, and **everything
+beyond that switches itself off once there is nothing new left to find**. A *first* stops
+looking the moment it has fired; the body-size record does one pass per body and only looks at
+its pairs when that pass says it might beat the record; the lineages are done once per
+clustering sample rather than once per tick. A settled run of 2,200 three-celled bodies costs
+2,200 slot reads, 4,400 comparisons and 6,600 squared distances a tick.
+
+⚠️ **The chrome grew from 4.9% of a dumped frame to 6.9%**, and to 8.3% of the 1280 by 720
+window this program opens, against the 10% bound
+`the_chrome_is_a_small_part_of_whatever_it_is_drawn_into` holds. That is a fifth more panel for
+a fourth block, and it is the closest the chrome has come to its own bound. **A fifth block
+would not fit**, which is worth knowing before Group D's marginalia is drawn anywhere near this
+column.
+
+#### ⚠️ Three things Group C did **not** do
+
+**No `events.jsonl`.** That is Phase 8's, and the note above says what it has to do differently.
+
+**No `Ledger` figure for anything but predation.** The counter is there because C4 is otherwise
+unanswerable from outside a tick; nothing else in the log needed one, and a ledger that grew a
+counter per detector would be a summary of the world kept inside the world, which is what
+`census.rs` exists to argue against.
+
+**No naming of the first predator.** See C4.
 
 ### Group D — Darwin in the margin
+
+⚠️ **What Group C leaves on the doorstep.** `Chronicle::events` and `Chronicle::latest` are the
+stream of things that happened, each with a `Kind` — and SPEC section 11's trigger table is
+written in exactly those terms: *first predation event*, *speciation*, *mass extinction*, *a
+lineage loses a cell kind*, *deep-time milestone*. Five of the eight triggers are `Kind`s that
+already exist, and *a lineage loses a cell kind* is `Kind::LettingGo`, which was built for
+CLAUDE.md's reason and turns out to be Darwin's *rudimentary and atrophied organs* trigger as
+well. ⚠️ **And the chrome is at 6.9% of a dumped frame against a 10% bound**, so the marginalia
+wants somewhere other than the left-hand column — see Group C's cost note.
 
 - [ ] **D1. `a_quote_fires_only_when_its_trigger_happens`** — ⚠️ SPEC section 11 is emphatic:
   *"quotes are captions on events, not decoration."* A rotating quote box would be a fortune
