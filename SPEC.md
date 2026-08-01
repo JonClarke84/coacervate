@@ -673,7 +673,7 @@ it is the one that does the work the paragraph claims.
 - mass extinction (population falls by >50% within 5,000 ticks)
 - environmental changes made by the user
 
-> *Tick 41,208 — 41.2 Ma.* A cell has failed to separate from its daughter. **Coacervus
+> *Tick 41,208 — 41.2 Ma.* A cell has not separated from its daughter. **Coacervus
 > primus** is the first lineage to persist as more than one body.
 >
 > *Tick 96,540 — 96.5 Ma.* **Coacervus vorax** has begun consuming its neighbours.
@@ -704,6 +704,22 @@ disconnected, and tiresome within an hour.
 | Deep-time milestone | The immensity of geological time; the imperfection of the record |
 | World seeded | His 1871 letter to Hooker speculating that life began in a "warm little pond" |
 | Chronicle header | The closing line of *On the Origin of Species* |
+
+⚠️ **The example above was written as "a cell has *failed* to separate", and that does not
+pass this section's own rule.** Failing is not something a cell can do — it implies the cell
+was trying to separate, which is intent, which is the teleology this section spends four
+paragraphs banning. It was caught by the banned-vocabulary test rather than by anybody
+reading carefully, which is the argument for having the test. Two further sentences were
+caught the same way while being written with the rule open in front of the author.
+
+⚠️ **And "the first lineage to persist as more than one body" cannot happen in this world.**
+Section 6 requires a gonocyte for reproduction and section 10 requires a body to feed itself,
+so the smallest lineage that can both eat and breed is already two adhered cells — every
+viable founder is multicellular from tick one, and the log honestly says so on its first
+tick rather than pretending otherwise. Multicellularity here is a *precondition*, not an
+outcome. Making it an outcome would mean a founder that cannot reproduce until a mutation
+adheres its daughter, which is a different and interesting world; it is not this one, and
+the difference should be a decision rather than a surprise.
 
 **Anachronism discipline.** Only quote him where he genuinely spoke. Darwin knew nothing of
 genes, mutation or molecular heredity, and he deliberately avoided the origin of life in

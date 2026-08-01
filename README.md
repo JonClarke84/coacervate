@@ -26,7 +26,7 @@ predation are not implemented. They are things that either happen or don't.
 Leave it running overnight and it writes a **chronicle** — a generated natural history of
 the run, with named lineages and the moments that mattered:
 
-> *Tick 41,208 — 41.2 Ma.* A cell has failed to separate from its daughter. **Coacervus
+> *Tick 41,208 — 41.2 Ma.* A cell has not separated from its daughter. **Coacervus
 > primus** is the first lineage to persist as more than one body.
 >
 > *Tick 96,540 — 96.5 Ma.* **Coacervus vorax** has begun consuming its neighbours.
