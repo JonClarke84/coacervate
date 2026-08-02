@@ -42,9 +42,9 @@
 //! quoted as an excess over its own same-seed control rather than as a bare log-ratio.
 
 use crate::founding::{FOUNDER_ENERGY, dawn, founder_genome, place};
-use coacervate_sim::cell::CellKind;
+use coacervate_sim::cell::{CellKind, Vec2};
 use coacervate_sim::config::{Config, LimitsConfig, RawConfig, spec_defaults};
-use coacervate_sim::genome::{Action, Gene, Genome, State};
+use coacervate_sim::genome::{Action, Gene, Genome, SensorTarget, State};
 use coacervate_sim::world::World;
 use std::collections::HashMap;
 
@@ -170,6 +170,43 @@ fn assay(config: &Config, arms: [&Genome; ARMS], ticks: u64) -> Outcome {
         "the two arms of an assay must be one mutation apart, or the coefficient that comes \
          back belongs to a pair of changes and nothing in the reading says which"
     );
+
+    package_assay(config, arms, ticks)
+}
+
+/// The same instrument with the one-mutation guard **taken off**, for arms that are a whole
+/// body plan apart rather than one step apart.
+///
+/// ⚠️ **This is a weaker measurement and every reading taken through it has to say so.** What
+/// [`assay`] returns is the price of *one step of the mutation operator*, which is the quantity
+/// selection actually sees offered to it. What this returns is the price of a **package** — a
+/// genome several mutations from the founder, priced against the founder as a whole — so a
+/// coefficient from here cannot be attributed to any one of the changes in it.
+///
+/// It exists because the question *does a body that genuinely swims beat one that does not* is
+/// not a one-mutation question and cannot be made into one. SPEC section 8: a reciprocal stroke
+/// produces exactly nought net displacement, so locomotion needs **two muscles at different
+/// phases on a bent body** before it produces anything at all, and that is at minimum three
+/// appended genes. Every muscle assay this project has taken before now seeded one myocyte,
+/// which is the configuration the scallop theorem forbids from moving — so all of them measured
+/// the cost of machinery whose payoff was structurally unreachable.
+fn package_assay(config: &Config, arms: [&Genome; ARMS], ticks: u64) -> Outcome {
+    placed_assay(config, arms, ticks, |_, _, at| at)
+}
+
+/// The same instrument again, with one arm allowed to be **put somewhere else**.
+///
+/// ⭐⭐ **This is what prices the ceiling on locomotion, and it needs no muscle at all.** The two
+/// arms hold the *same* genome and differ only in where their founders were set down, so what
+/// comes back is the entire value of **being in better water** over twenty-four generations. No
+/// body that swims can be worth more than that: swimming is a way of arriving somewhere, and
+/// this is what arriving is worth when it is free, instantaneous and perfectly aimed.
+fn placed_assay(
+    config: &Config,
+    arms: [&Genome; ARMS],
+    ticks: u64,
+    put: impl Fn(usize, &World, Vec2) -> Vec2,
+) -> Outcome {
     assert!(
         ticks.is_multiple_of(POLL_EVERY),
         "an assay must end on a poll, or its last {POLL_EVERY} ticks of births go uncounted"
@@ -196,6 +233,7 @@ fn assay(config: &Config, arms: [&Genome; ARMS], ticks: u64) -> Outcome {
     for founder in 0..FOUNDERS {
         let side = u8::try_from(founder % 2).expect("an arm number is nought or one");
         let at = place(founder, FOUNDERS, width, height);
+        let at = put(usize::from(side), &world, at);
 
         match world.seed(arms[usize::from(side)].clone(), at, FOUNDER_ENERGY) {
             Ok(slot) => {
@@ -353,6 +391,147 @@ fn founder_with_a_third_cell(limits: &LimitsConfig, kind: CellKind) -> Genome {
     Genome::new(genes, limits)
 }
 
+/// How far apart the cells of a hand-built swimmer sit, and how sharply its chain kinks.
+///
+/// ⭐ These two numbers are `physics.rs`'s own `body(count, apart = 8, sag = 3)` written as a
+/// **genome** rather than as an array of cells: a zig-zag whose stride is 8 units and whose
+/// cells sit 3 either side of the line, so a segment is `sqrt(8² + 6²) = 10` units long and the
+/// turn from one segment to the next is `2 × atan(6/8) = 1.287` radians. That shape is one of
+/// the nine `swims_and_works` means its readings over, and it is the shape SPEC section 8's
+/// table records as covering **41 world units in a 2,000-tick lifetime** at the shipped stroke.
+///
+/// ⚠️ **The kink is the whole of it.** SPEC section 8: a body whose cells lie in a straight line
+/// cannot swim at any stroke, because all of its motion is along its own axis and the sideways
+/// drag never engages. `development.rs` measures a division's angle from the direction its
+/// parent was budded in, so alternating the sign of this angle down a chain of genes is exactly
+/// a zig-zag; the same angle repeated would be an arc.
+const SEGMENT: f32 = 10.0;
+const KINK: f32 = 1.287;
+
+/// The rhythm a hand-built swimmer's muscles beat at, in radians a second.
+///
+/// SPEC section 9 measures `osc_freq` as peaking between two and three and a half radians a
+/// second and falling away either side, so this is the middle of the useful band rather than the
+/// top of the genome's range.
+const BEAT: f32 = 3.0;
+
+/// A genome that develops into a bent chain, muscled at a travelling phase gradient.
+///
+/// `plan` is the body **after the seed cell**, in the order the chain grows: one gene per cell,
+/// gene `k` triggering on state `k` at step `k` only, so exactly one cell divides per step and
+/// the body is a chain rather than a cluster. Each myocyte gets its own `osc_phase`, a quarter
+/// turn further round than the muscle before it — which is `swims_and_works`'s travelling wave,
+/// arrived at from the other end: a spring with a muscle on each end takes the mean of the two,
+/// so cell phases a quarter turn apart put the *springs* a quarter turn apart too.
+///
+/// ⚠️ **Every one of these cells is paid for.** A myocyte is 0.005/tick against a photocyte's
+/// 0.004, the reproduction bar is `reproduction_threshold × Σ construction` and construction is
+/// a thousand ticks of upkeep, and SPEC section 10's lifespan allowance is
+/// `LIFETIME_UPKEEP × cells ÷ cost`. So a swimmer is not free to be as long as one likes: past
+/// about six cells with one photocyte in it, a body cannot reach its own reproduction bar inside
+/// its own lifetime, and an arm that cannot breed measures nothing at all.
+fn swimmer(limits: &LimitsConfig, plan: &[CellKind], beat: f32, gain: f32) -> Genome {
+    let mut genes = Vec::new();
+    let mut muscles = 0u8;
+
+    for (index, kind) in plan.iter().enumerate() {
+        let step = u8::try_from(index).expect("a hand-built body is a few cells long");
+        let muscle = *kind == CellKind::Myocyte;
+        let phase = f32::from(muscles) * std::f32::consts::FRAC_PI_2;
+        if muscle {
+            muscles += 1;
+        }
+
+        genes.push(Gene {
+            trigger_state: State::new(step),
+            min_step: step,
+            max_step: step,
+            action: Action::Divide,
+            // Alternating, which is what makes the chain a zig-zag rather than an arc.
+            angle: if index % 2 == 0 { KINK } else { -KINK },
+            adhere: true,
+            child_state: State::new(step + 1),
+            child_kind: *kind,
+            rest_length: SEGMENT,
+            stiffness: 10.0,
+            new_kind: CellKind::Photocyte,
+            new_state: State::ZERO,
+            osc_freq: if muscle { beat } else { 0.0 },
+            osc_phase: if muscle { phase } else { 0.0 },
+            sensor_gain: if muscle { gain } else { 0.0 },
+            sensor_target: SensorTarget::Light,
+        });
+    }
+
+    Genome::new(genes, limits)
+}
+
+/// The same genome with every muscle held still: the control for a swimming measurement.
+///
+/// ⭐ **It is the only honest control there is.** A body in this world drifts under SPEC section
+/// 6's buoyancy whether it swims or not, and it is pushed about by its own springs settling; a
+/// displacement quoted against nothing at all would be all three added together. This twin has
+/// the same cells, the same kinds, the same buoyancy, the same springs, the same upkeep and the
+/// same shape, and differs **only** in that `sin(0 × t + phase)` is a constant. The difference
+/// between the two is locomotion and nothing else.
+fn held_still(swimmer: &Genome, limits: &LimitsConfig) -> Genome {
+    let genes = swimmer
+        .genes()
+        .iter()
+        .map(|gene| Gene {
+            osc_freq: 0.0,
+            ..*gene
+        })
+        .collect();
+
+    Genome::new(genes, limits)
+}
+
+/// How far one body of this genome travels, and how long it lives, alone in a lit world.
+///
+/// ⭐ **The instrument is Group J's**: the displacement of the body's **seed cell** between the
+/// tick it was put in the water and the tick it died or the measurement ended. A mean over the
+/// cells would move whenever the body merely changed shape, which is the thing a muscle does
+/// even when it goes nowhere.
+///
+/// `limits.max_organisms` is set to one, so the body cannot reproduce and there is nobody else
+/// in the water: what comes back is one body's own travel rather than a population statistic.
+fn travels(
+    seed: u64,
+    change: impl FnOnce(&mut RawConfig),
+    genome: impl FnOnce(&LimitsConfig) -> Genome,
+    ticks: u64,
+) -> (f32, u64) {
+    let alone = seeded_world(seed, |raw| {
+        change(raw);
+        raw.limits.max_organisms = 1;
+    });
+    let genome = genome(&alone.limits);
+
+    let mut world = World::new(&alone);
+    dawn(&mut world);
+
+    let at = Vec2::new(alone.world.width * 0.5, alone.world.height * 0.5);
+    let slot = world
+        .seed(genome, at, FOUNDER_ENERGY)
+        .expect("a lit world has room and water for one body in the middle of it");
+
+    let began = world.cells_of(slot)[0].pos;
+    let (mut moved, mut lived) = (0.0, 0);
+
+    for tick in 1..=ticks {
+        world.tick();
+
+        if world.organisms()[slot].is_none() {
+            break;
+        }
+        moved = (world.cells_of(slot)[0].pos - began).length();
+        lived = tick;
+    }
+
+    (moved, lived)
+}
+
 /// SPEC's shipped world, at the seed this run of the assay is being taken on.
 fn seeded_world(seed: u64, change: impl FnOnce(&mut RawConfig)) -> Config {
     let mut raw = spec_defaults();
@@ -366,14 +545,24 @@ fn seeded_world(seed: u64, change: impl FnOnce(&mut RawConfig)) -> Config {
 #[cfg(test)]
 mod tests {
     use super::{
-        ARMS, FOUNDERS, Outcome, assay, founder_genome, founder_with_a_third_cell,
-        one_mutation_apart, seeded_world,
+        ARMS, BEAT, FOUNDERS, Outcome, assay, dawn, founder_genome, founder_with_a_third_cell,
+        held_still, one_mutation_apart, package_assay, placed_assay, seeded_world, swimmer,
+        travels,
     };
-    use coacervate_sim::cell::CellKind;
-    use coacervate_sim::config::RawConfig;
+    use coacervate_sim::cell::{CellKind, Vec2};
+    use coacervate_sim::config::{Config, RawConfig};
+    use coacervate_sim::world::World;
 
     /// How many ticks a full assay runs for: 42,000, which is 23.9 generations.
     const WINDOW: u64 = 42_000;
+
+    /// How many ticks a body lives, which is what a displacement is measured over.
+    ///
+    /// SPEC section 10's allowance is `LIFETIME_UPKEEP × cells ÷ cost`, so no one number is
+    /// every body's lifetime. Two thousand is the figure every swimming measurement in this
+    /// project is quoted per — `physics.rs`'s `swims_and_works`, SPEC section 9's lever table
+    /// and `docs/PHASE7.md`'s Group H — so a reading here can be laid straight against them.
+    const LIFETIME: u64 = 2_000;
 
     /// A world small enough that the ordinary suite can afford one, with the shipped world's
     /// organisms per tile so that the arena binds no sooner here than it does there.
@@ -601,6 +790,443 @@ mod tests {
             photocyte.ratio(),
             myocyte.ratio()
         );
+    }
+
+    // ---------------------------------------------------------------------------------
+    // ⭐⭐⭐ Does a body that genuinely swims beat one that does not?
+    //
+    // Every muscle assay before this one seeded **one** myocyte. SPEC section 8 is explicit
+    // that a single oscillating spring is a reciprocal stroke and produces exactly nought net
+    // displacement - the scallop theorem, measured in this project rather than assumed - so
+    // all of them priced machinery whose payoff was structurally unreachable. What follows
+    // seeds the configuration that does move: **two or more muscles at different phases on a
+    // bent body**, built by hand, checked to travel and checked to breed before a single
+    // coefficient is quoted.
+    // ---------------------------------------------------------------------------------
+
+    /// ⭐ **Arm B: the plainest body that genuinely swims *and* breeds.**
+    ///
+    /// Photocyte (the seed) — myocyte — myocyte — photocyte — gonocyte, in a zig-zag, with the
+    /// two muscles a quarter turn apart in phase. It is **chosen by measurement**: six plans
+    /// were built and measured, and this is the one that both travels and reaches its own
+    /// reproduction bar inside its own lifetime.
+    ///
+    /// | plan | cells | upkeep | travels | held still | children of 16 founders in one generation |
+    /// | --- | --- | --- | --- | --- | --- |
+    /// | the founder | 2 | 0.0090 | — | — | **191** |
+    /// | 2 muscles | 4 | 0.0190 | 9.97 | 1.64 | 13 |
+    /// | **2 muscles + a second photocyte** | **5** | **0.0230** | **16.60** | **1.66** | **95** |
+    /// | 3 muscles | 6 | 0.0280 | 17.51 | 1.73 | 44 |
+    /// | 4 muscles | 7 | 0.0330 | 11.92 | 1.68 | 26 |
+    /// | 6 muscles | 8 | 0.0390 | 12.39 | 1.67 | 0 |
+    /// | 2 muscles + a sensocyte between them | 6 | 0.0290 | **28.28** | 1.18 | 25 |
+    ///
+    /// ⚠️ **The last column is not optional.** A body of six or more cells with one photocyte in
+    /// it cannot reach `reproduction_threshold × Σ construction` inside
+    /// `LIFETIME_UPKEEP × cells ÷ cost`, so it stands in the water and dies childless — and an
+    /// arm that cannot breed measures the fact that it cannot breed and nothing else. The
+    /// four-cell plan is the shape of that failure: 13 children against the founder's 191.
+    ///
+    /// ⚠️ **And the second column is the whole of what is being bought.** 0.0230 a tick against
+    /// the founder's 0.0090, in a world this module's own calibration prices at about
+    /// **−0.5 %/generation for every 0.001/tick of upkeep, whatever the cell does**.
+    fn arm_b() -> Vec<CellKind> {
+        vec![
+            CellKind::Myocyte,
+            CellKind::Myocyte,
+            CellKind::Photocyte,
+            CellKind::Gonocyte,
+        ]
+    }
+
+    /// What a body of these cells costs to run, per tick, at `upkeep_scale = 1`.
+    fn upkeep_of(plan: &[CellKind]) -> f64 {
+        let mut cost = f64::from(CellKind::Photocyte.upkeep());
+        for kind in plan {
+            cost += f64::from(kind.upkeep());
+        }
+        cost
+    }
+
+    /// ⭐⭐⭐ **Does a body that genuinely swims beat one that does not?** No, and this is the
+    /// measurement that says so.
+    ///
+    /// Every muscle assay this project has taken before now seeded **one** myocyte. SPEC section
+    /// 8 is explicit that a single oscillating spring is a reciprocal stroke and produces exactly
+    /// nought net displacement, so all of them priced machinery whose payoff was structurally
+    /// unreachable. This seeds the configuration that does move — [`arm_b`], two muscles a
+    /// quarter turn apart on a zig-zag — and checks in order that it **develops**, that it
+    /// **travels**, that it **breeds**, and only then what it is worth.
+    ///
+    /// # ⭐⭐ The three readings, at seed 42; the sweep behind them is in `docs/PHASE7.md`
+    ///
+    /// | | reading |
+    /// | --- | --- |
+    /// | arm B travels, per 2,000-tick lifetime | **16.6 units**, against **1.66** with the same muscles held still and the founder's 2.55 |
+    /// | arm B against the founder | **−10.3 %/generation** (three seeds: −10.03, −9.85, −11.01, spread 0.62) |
+    /// | **arm B against its own held-still twin** — the stroke alone, its bill on neither side | **+1.0 ± 1.7 %/generation**, which is nothing |
+    /// | **arriving in the best water a lifetime's swim away, free and perfectly aimed** | **−0.01 ± 0.13 %/generation**, which is nothing |
+    /// | what a lifetime's swim is worth in light: best direction | **×1.05** |
+    /// | ... and in a direction nothing chose, which is the only kind available | **×1.00** |
+    ///
+    /// # ⭐⭐⭐ And the arithmetic underneath all four, which no configuration can move
+    ///
+    /// A blotch of light is `NOISE_LATTICE_SPACING` **× a tile** = 16 × 8 = **128 world units**,
+    /// and `NOISE_LATTICE_SPACING` is a constant of `grid.rs` rather than a setting. A body that
+    /// genuinely swims covers **16.6 units in its whole life** — **2.1 tiles, an eighth of one
+    /// blotch** — and SPEC section 9's best hand-built undulator, driven flat out and meaned over
+    /// nine shapes, covers 41, which is 5 tiles and a third of a blotch. **Nothing that lives
+    /// here can cross the thing it would be crossing to reach.**
+    ///
+    /// Nor can it aim: section 9's `sensor_gain` scales a muscle's *amplitude*, so a sensed body
+    /// swims harder in a steep gradient and not towards anything. Undirected travel over a field
+    /// whose gradient it cannot read is worth ×1.00.
+    ///
+    /// # ⭐⭐⭐ The sweep that closed it: fourteen worlds, and not one of them pays
+    ///
+    /// The obvious rejoinder to the reading above is that the *world* is the wrong shape rather
+    /// than the body — a blotch 128 units across is simply too coarse for anything alive to
+    /// cross. So every configuration key that touches the scale, the contrast, the speed and the
+    /// season of the light was walked to its gate, three seeds each, arm B against the plain
+    /// founder, every coefficient an excess over its **own same-seed control** and every
+    /// condition reporting arm B's measured displacement beside it, against this module's
+    /// **±0.16 %/generation** noise floor — ±0.13 on the placed arms.
+    ///
+    /// A blotch is `NOISE_LATTICE_SPACING` **tiles** and a tile is `width / grid_cols`, so the
+    /// only handle a configuration has on the scale of the light is the size of a tile. Shrinking
+    /// the world with the grid held fixed leaves influx per tile, `cap`, the standing energy of a
+    /// tile, a photocyte's income, the 8,000-tick refill and the dawn all bit-for-bit the shipped
+    /// world's, and moves nothing but how many world units a blotch is.
+    ///
+    /// | Condition | blotch | travels/lifetime | **coefficient, three seeds** |
+    /// | --- | --- | --- | --- |
+    /// | **as shipped** | 128 | 16.6 (0.13 blotch) | **−10.30** (−10.03, −9.85, −11.01) |
+    /// | `patch_drift` 0.003 | 128 | 16.6 | **−10.04** (−10.17, −9.76, −10.21) |
+    /// | `patch_drift` 0.005 — **the gate** | 128 | 16.6 | **−11.94** (−13.75, −9.28, −12.80) |
+    /// | `season_amplitude` 0.25 — `config/seasonal.toml` | 128 | 16.6 | **−10.63** (−11.81, −11.29, −8.78) |
+    /// | `season_amplitude` 0.5 — **the gate** | 128 | 16.6 | **−12.51** (−14.12, −11.64, −11.77) |
+    /// | `patchiness` 1.0 — **the gate** | 128 | 16.4 | **−17.4, −16.0, extinct** |
+    /// | half the world | 64 | 16.6 (0.26 blotch) | **−15.63** (−9.05, −26.11, −11.74) |
+    /// | a quarter of the world | 32 | 16.6 (0.52 blotch) | **−21.8, extinct, −1.1** |
+    /// | ... at the shipped **density** (`influx` ÷ 16) | 32 | 14.1 | **extinct ×3** |
+    /// | ... with the longest `rest_length` the genome allows | 32 | **21.8** (0.68 blotch) | **extinct ×3** |
+    /// | ... + `patchiness` 1.0 + drift 0.005 + season 0.5 | 32 | 16.5 | **extinct ×3** |
+    /// | an eighth of the world | 16 | 16.6 (**1.04 blotch**) | **extinct ×3** |
+    /// | ... at `influx` ÷ 8 | 16 | 16.6 | **extinct ×3** |
+    /// | ... + every other gate, longest segment | 16 | **22.4** | **extinct ×3** |
+    ///
+    /// **Not one condition is positive, and finer light is uniformly *worse*.** "Extinct" is
+    /// nought living descendants of sixteen founders at 42,000 ticks while both control arms
+    /// survive — which is well outside any noise floor, and is the reason those rows have no
+    /// number.
+    ///
+    /// ⚠️ **The fine-grained worlds also stop being measurable, and that is a finding in
+    /// itself.** The same-seed control — the identical genome in both arms — comes back at
+    /// ±0.16 %/generation at the shipped scale, at ±6 at a blotch of 32 (+3.04, −8.85, −0.69)
+    /// and at **+23.1, +13.4 and one arm extinct** at a blotch of 16. Shrinking the world
+    /// eightfold at the shipped light puts 2,200 bodies into a 256 × 144 arena, which is space
+    /// and not energy binding: drift is then the only force acting and the instrument has no
+    /// resolution left. The two ways out both fail. Cutting `influx` by 64 to hold the density
+    /// leaves tiles too poor to seed a founder out of — **eight of thirty-two refused, and the
+    /// world dead by tick 4,000**. Cutting it by 8 leaves a world that lives, and arm B is
+    /// extinct in all three seeds of it.
+    ///
+    /// ⚠️ That trade is structural rather than a bad choice of key: density goes as
+    /// `influx / tile²` and refill time as `cap / influx`, so **nothing can shrink a blotch at
+    /// constant density *and* constant refill time.**
+    ///
+    /// # ⭐⭐ The patches are not smoothed away at any scale, and cannot be
+    ///
+    /// The obvious worry about `light.diffusion` at 0.04 against an 8,000-tick refill, answered
+    /// by measurement. The row-wise coefficient of variation of the standing field on the dawned
+    /// world is **0.1522 at a blotch of 128, of 64 and of 32 alike**, against **0.0000** for the
+    /// same world with `patchiness` at nought. Identical at every scale, because the lattice is
+    /// sixteen **tiles** and the diffusion stencil is **per tile**: shrinking a tile shrinks both
+    /// together, so there are sixteen diffusion steps across one blotch whatever a blotch is
+    /// worth in world units. What a finer field does change is how much of the contrast a fixed
+    /// 16.6-unit step samples — the best-direction income multiplier rises ×1.053 → ×1.099 →
+    /// ×1.185 → ×1.335 as the blotch goes 128 → 64 → 32 → 16 — and a direction nothing chose
+    /// stays at ×1.00 to ×1.04 throughout.
+    ///
+    /// # ⭐⭐⭐ The ceiling, which is what makes the negative final
+    ///
+    /// [`placed_assay`] again, with **no muscle in it at all**: both arms hold the plain founder
+    /// and arm B's are simply *put* in the best water within reach. Nobody who has to swim there
+    /// can collect more than this.
+    ///
+    /// | Arriving free, instantaneously and perfectly aimed | **%/generation** |
+    /// | --- | --- |
+    /// | a lifetime's swim (16.6) away, shipped world | **−0.01 ± 0.13** |
+    /// | SPEC section 9's best undulator's **41** units away, shipped world | **−0.15** (−0.00, −0.36, −0.08) |
+    /// | **512 units** away — a quarter of the world, for nothing | **−1.49** (−0.83, −1.47, −2.18) |
+    /// | 16.6 away, blotch 32 | +1.21, against that world's own ±6 control |
+    /// | 16.6 away, blotch 16 at `influx` ÷ 8 | +8.18, against that world's own ±10 control |
+    ///
+    /// **Teleporting a body a quarter of the world into the best water there is comes back
+    /// negative.** Where arriving finally looks worth something the world's own noise floor is
+    /// larger than the reading, and arm B is extinct in it anyway.
+    ///
+    /// # ⭐⭐⭐ The arithmetic, in one line
+    ///
+    /// > **A body in this world travels about two thirds of its own length in a whole lifetime.**
+    ///
+    /// Measured three ways: arm B spans **25.6 × 19.2** units and covers **16.6** (×0.65); the
+    /// same body at `MAX_REST_LENGTH` spans 34.8 × 26.1 and covers **21.7** (×0.62); SPEC section
+    /// 9's nine hand-built undulators average 61 units of span and cover **41** (×0.67) — and
+    /// those nine are 6-, 8- and 12-celled bodies that cannot reach their own reproduction bar
+    /// inside their own lifetime, so the fastest thing that can actually *breed* here is arm B.
+    ///
+    /// For a patch to be worth crossing a body must cover about half of one, so
+    /// `blotch ≤ 2 × travel ≈ 1.3 × its own length`. For a patch to have any contrast *across* a
+    /// body it must be larger than the body, so `blotch ≥ its own length`. **The window is
+    /// `1.0 × length ≤ blotch ≤ 1.3 × length`, and a body filling its own patch reads no gradient
+    /// at all.** It does not open at any `width`, `grid_cols`, `patchiness`, `patch_drift`,
+    /// `season_amplitude` or `rest_length`, because both bounds scale with the body.
+    #[test]
+    #[ignore = "three 42,000-tick runs and four lifetimes; check.ps1 runs it in release"]
+    fn a_body_that_genuinely_swims_is_still_priced_below_one_that_does_not() {
+        use coacervate_sim::development::develop;
+
+        let config = seeded_world(42, |_| {});
+        let plain = founder_genome(&config.limits);
+        let plan = arm_b();
+        let genome = swimmer(&config.limits, &plan, BEAT, 0.0);
+        let still = held_still(&genome, &config.limits);
+
+        // ⭐ **What it develops into**, which everything after this rests on. A genome that grew
+        // a straight body, or lost its gonocyte, or put both muscles on the same phase would be
+        // a body SPEC section 8 forbids from moving, and the assay would come back negative for
+        // a reason that had nothing to do with the question.
+        let body = develop(&genome, &config.limits);
+        let muscles: Vec<usize> = (0..body.cells.len())
+            .filter(|cell| body.cells[*cell].kind == CellKind::Myocyte)
+            .collect();
+        let phases: Vec<f32> = muscles
+            .iter()
+            .filter_map(|cell| body.cells[*cell].gene)
+            .map(|gene| genome.genes()[usize::from(gene)].osc_phase)
+            .collect();
+        let across = |pick: fn(f32, f32) -> f32, start| {
+            body.cells
+                .iter()
+                .map(|cell| cell.offset.y)
+                .fold(start, pick)
+        };
+
+        assert_eq!(
+            body.cells.len(),
+            plan.len() + 1,
+            "arm B grew {} cells rather than {}, so development is not doing what this genome \
+             was written to make it do",
+            body.cells.len(),
+            plan.len() + 1
+        );
+        assert!(
+            muscles.len() >= 2,
+            "arm B grew {} myocytes. SPEC section 8: one oscillating spring is a reciprocal \
+             stroke and goes nowhere, so an arm with fewer than two cannot answer this question",
+            muscles.len()
+        );
+        assert!(
+            phases
+                .windows(2)
+                .all(|pair| pair[0].to_bits() != pair[1].to_bits()),
+            "arm B's muscles all beat at the same phase, which is a reciprocal stroke however \
+             many of them there are: {phases:?}"
+        );
+        assert!(
+            body.cells
+                .iter()
+                .any(|cell| cell.kind == CellKind::Gonocyte),
+            "arm B has no gonocyte, and SPEC section 6 will not let a body without one reproduce"
+        );
+        assert!(
+            across(f32::max, f32::MIN) - across(f32::min, f32::MAX) > 1.0,
+            "arm B grew a straight body, and SPEC section 8 is explicit that nothing \
+             one-dimensional swims in any fluid at any stroke"
+        );
+
+        // ⭐⭐ **That it travels**, against the only control there is: itself, not moving.
+        let (swum, lived) = travels(42, |_| {}, |_| genome.clone(), LIFETIME);
+        let (drifted, _) = travels(42, |_| {}, |_| still.clone(), LIFETIME);
+        let (founder_drift, _) = travels(42, |_| {}, founder_genome, LIFETIME);
+        println!(
+            "arm B: {} cells, {} muscles, {:.4}/tick against the founder's {:.4}; travels \
+             {swum:.2} units in {lived} ticks against {drifted:.2} held still and the founder's \
+             {founder_drift:.2}",
+            body.cells.len(),
+            muscles.len(),
+            upkeep_of(&plan),
+            upkeep_of(&[CellKind::Gonocyte])
+        );
+        assert!(
+            swum > 5.0 * drifted,
+            "arm B travelled {swum:.2} units against {drifted:.2} for the identical body with \
+             its muscles held still. The measured figures are 16.60 and 1.66; a ratio near one \
+             means this arm is not swimming and the experiment is void"
+        );
+
+        // ⭐⭐ **That it breeds**, which a previous attempt at this experiment did not check. A
+        // four-cell version of this body reaches its reproduction bar so slowly that 14 of 16
+        // founders were alive and childless at tick 2,000; every coefficient taken on it was a
+        // measurement of that.
+        let bred = package_assay(&config, [&plain, &genome], 2_000);
+        println!(
+            "arm B in one generation: {} organisms against the founder's {}",
+            bred.born[1], bred.born[0]
+        );
+        assert!(
+            bred.born[1] > 3 * u64::from(FOUNDERS / 2),
+            "arm B produced {} organisms out of {} founders in one generation, against the \
+             founder's {}. An arm that cannot breed measures the fact that it cannot breed",
+            bred.born[1],
+            FOUNDERS / 2,
+            bred.born[0]
+        );
+
+        // ⭐⭐⭐ **And only now, what it is worth.** Three 42,000-tick runs: the same-seed
+        // control, the swimmer against the founder, and the ceiling on locomotion measured with
+        // no muscle in it at all.
+        let control = package_assay(&config, [&plain, &plain], WINDOW);
+        let tested = package_assay(&config, [&plain, &genome], WINDOW);
+        let arrived = placed_assay(&config, [&plain, &plain], WINDOW, |side, world, at| {
+            if side == 0 {
+                at
+            } else {
+                best_water_near(world, at, SWIMMING_REACH)
+            }
+        });
+
+        report("the noise floor at seed 42", &control);
+        report("arm B, a body that swims", &tested);
+        report("arriving in better water for nothing", &arrived);
+
+        let cost = (tested.per_generation() - control.per_generation()) * 100.0;
+        let ceiling = (arrived.per_generation() - control.per_generation()) * 100.0;
+        println!(
+            "arm B is worth {cost:+.3} %/gen; the whole value of arriving where it was going, \
+             free and perfectly aimed, is {ceiling:+.3} %/gen"
+        );
+
+        assert!(
+            cost < -5.0,
+            "a body that swims came back at {cost:+.3} %/generation against the founder, and \
+             the measured reading is −10.3. A swimmer that had stopped being priced far below \
+             break-even would reopen every payoff question Phase 7 closed"
+        );
+        assert!(
+            ceiling.abs() < 1.0,
+            "arriving in the best water a lifetime's swim away is worth {ceiling:+.3} \
+             %/generation, and the measured reading is −0.01 against a noise floor of ±0.13. If \
+             this is no longer nothing, then locomotion has somewhere to go and the whole \
+             finding above is reopened"
+        );
+
+        // ⭐ What the water is actually like at the scale a body can cross, which is the reason
+        // the line above reads as it does.
+        survey("the shipped world, full", &config);
+    }
+
+    /// What a lifetime of arm B's swimming covers, in world units. Measured, not assumed.
+    const SWIMMING_REACH: f32 = 16.6;
+
+    /// What a lifetime's swim is worth in light: the best direction, and a direction nothing
+    /// chose.
+    ///
+    /// Two hundred and fifty-six starting points on an even lattice over the world, each
+    /// compared with the sixteen places [`SWIMMING_REACH`] units away. A photocyte's income is
+    /// `HARVEST_RATE × the tile's energy × shade`, so these ratios are directly the income
+    /// multiplier a swimmer could collect.
+    ///
+    /// ⚠️ **The second number is the one that matters**, because SPEC section 9's controller
+    /// provides no way to choose a direction: `sensor_gain` scales a muscle's *amplitude*, so a
+    /// sensed body swims harder in a steep gradient and not towards anything.
+    ///
+    /// Measured at seed 42, on the **full** field the dawn leaves behind — which is the kindest
+    /// reading there is, since a population eats the contrast down — and on the same field after
+    /// 42,000 ticks of the assay's own population living in it:
+    ///
+    /// | tile the lattice is | best, full | blind, full | best, lived in | blind, lived in |
+    /// | --- | --- | --- | --- | --- |
+    /// | 8 units — **as shipped**, a blotch 128 units across | ×1.053 | ×1.000 | ×1.064 | ×1.001 |
+    /// | 4 units, a blotch of 64 | ×1.099 | ×0.999 | ×1.077 | ×1.002 |
+    /// | 2 units, a blotch of 32 | ×1.185 | ×1.009 | ×1.129 | ×0.993 |
+    /// | 1 unit, a blotch of 16 | ×1.335 | ×1.042 | ×1.264 | ×0.997 |
+    ///
+    /// ⭐ **The patches are not smoothed away at any of those scales, and cannot be**, which is
+    /// the answer to the obvious worry about `light.diffusion`: the lattice is sixteen *tiles*
+    /// and the diffusion stencil is *per tile*, so shrinking a tile shrinks both together and
+    /// the contrast per lattice cell is unchanged. What shrinks is only how many world units a
+    /// blotch is — and with it, how much of one a body can cross.
+    fn survey(name: &str, config: &Config) {
+        let mut world = World::new(config);
+        dawn(&mut world);
+
+        let grid = world.grid();
+        let (width, height) = (config.world.width, config.world.height);
+        let tiles = grid.tiles();
+        let (mut best_gain, mut blind_gain, mut samples) = (0.0f64, 0.0f64, 0.0f64);
+
+        for down in 0..16u8 {
+            for across in 0..16u8 {
+                let at = Vec2::new(
+                    width * (f32::from(across) + 0.5) / 16.0,
+                    height * (f32::from(down) + 0.5) / 16.0,
+                );
+                let here = f64::from(tiles[grid.tile_at(at)]).max(1e-9);
+
+                let reached: Vec<f64> = (0..16u8)
+                    .map(|step| {
+                        let angle = f32::from(step) * std::f32::consts::TAU / 16.0;
+                        let (sin, cos) = angle.sin_cos();
+                        let there = Vec2::new(
+                            (at.x + cos * SWIMMING_REACH).rem_euclid(width),
+                            (at.y + sin * SWIMMING_REACH).clamp(0.0, height),
+                        );
+                        f64::from(tiles[grid.tile_at(there)])
+                    })
+                    .collect();
+
+                best_gain += reached.iter().fold(0.0f64, |most, one| most.max(*one)) / here;
+                blind_gain += reached.iter().sum::<f64>() / 16.0 / here;
+                samples += 1.0;
+            }
+        }
+
+        println!(
+            "FIELD {name}: over {SWIMMING_REACH} units of travel the best direction is x{:.3} \
+             and a direction nothing chose is x{:.3}",
+            best_gain / samples,
+            blind_gain / samples
+        );
+    }
+
+    /// The richest tile within `reach` of here, searched on a ring of directions.
+    ///
+    /// A search rather than a scan of the grid, because what is wanted is *where a body could
+    /// have swum to*, which is a disc around where it started and not the best tile in the
+    /// world.
+    fn best_water_near(world: &World, at: Vec2, reach: f32) -> Vec2 {
+        let grid = world.grid();
+        let (width, height) = (world.config().world.width, world.config().world.height);
+        let mut best = (f64::from(grid.tiles()[grid.tile_at(at)]), at);
+
+        for step in 1..=16u8 {
+            let angle = f32::from(step) * std::f32::consts::TAU / 16.0;
+            for away in [reach * 0.5, reach] {
+                let (sin, cos) = angle.sin_cos();
+                let here = Vec2::new(
+                    (at.x + cos * away).rem_euclid(width),
+                    (at.y + sin * away).clamp(0.0, height),
+                );
+                let held = f64::from(grid.tiles()[grid.tile_at(here)]);
+                if held > best.0 {
+                    best = (held, here);
+                }
+            }
+        }
+
+        best.1
     }
 
     /// Print one outcome, so a run of these tests is a measurement and not only a pass.

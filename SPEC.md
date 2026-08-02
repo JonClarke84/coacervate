@@ -1625,6 +1625,47 @@ is measured in, and moving it would silently redraw them all. The two are now se
 constants — one is a sensor's range, the other is a unit of measurement, and only the first is
 free to move as the model is tuned.
 
+### ⭐⭐ Locomotion is not reachable in this model, and here is the arithmetic
+
+Measured with the competition assay over fourteen world configurations and three seeds each.
+A hand-built five-cell zig-zag with two phased muscles — verified to travel ten times as far
+as its own held-still twin, and verified to breed — comes back at **−10.3 % per generation**
+in the shipped world, and is **extinct in three seeds of three** in every world made fine
+enough for patch-following to matter. Finer light makes it monotonically *worse*, which is
+the opposite of the hypothesis.
+
+**The first wall. A body travels about two thirds of its own length in a whole lifetime.**
+Measured three ways and invariant: the assay swimmer spans 25.6 units and covers 16.6
+(×0.65); the same body at `MAX_REST_LENGTH` spans 34.8 and covers 21.7 (×0.62); section 9's
+nine hand-built undulators average 61 units of span and cover 41 (×0.67).
+
+For a patch to be worth crossing, a body must cover about half of one:
+`blotch ≤ 2 × travel ≈ 1.3 × body length`. For a patch to have any contrast *across* a body,
+`blotch ≥ body length`. So the window is `1.0 × length ≤ blotch ≤ 1.3 × length` — and a body
+filling its own patch reads no gradient at all. **Both bounds scale with the body**, so the
+window does not open at any value of `width`, `grid_cols`, `patchiness`, `patch_drift`,
+`season_amplitude` or `rest_length`. As shipped, a blotch is five body-lengths and a body
+covers 0.13 of one.
+
+Nor is diffusion the bound, which was the obvious suspect. The lattice is 16 *tiles* and the
+stencil is per *tile*, so there are 16 diffusion steps across a blotch whatever it is worth in
+world units: the standing field's row-wise variation is 0.1522 at blotch 128, 64, 32 and 16
+alike. The body is the bound.
+
+**The second wall is independent and permanent. There is no directional information anywhere
+in the controller.** `light_gradient` returns `.length()` — a magnitude, with the direction
+discarded — and `sensor_gain` scales a myocyte's *amplitude*. Measured: the income available
+by moving 16.6 units in the *best* direction rises ×1.05 → ×1.10 → ×1.19 → ×1.34 as the
+blotch falls 128 → 64 → 32 → 16, while a direction nothing chose stays at ×1.00 to ×1.04
+throughout. Nothing in the model can move a body from the second column to the first.
+
+**What this means.** Swimming is physically possible here (section 8) and it is affordable
+(section 3). It is not *reachable*, because the distance a body can cover in a lifetime is a
+fixed small fraction of its own size, and the resource has no structure at that scale that a
+body could detect the direction of. Closing it needs a change to the physics or to the
+controller, not to the economy or the environment — and that is a decision, not a tuning
+exercise. Recorded here so nobody spends another week on the reward side.
+
 **Phase 2 — evolved neural networks**, whose inputs and outputs wire to whatever sensory
 and contractile cells the body actually grew, so anatomy and behaviour co-evolve. Far more
 interesting, far more expensive per tick. The architecture leaves room; do not build it in
