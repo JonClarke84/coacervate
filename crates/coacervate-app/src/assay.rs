@@ -545,13 +545,14 @@ fn seeded_world(seed: u64, change: impl FnOnce(&mut RawConfig)) -> Config {
 #[cfg(test)]
 mod tests {
     use super::{
-        ARMS, BEAT, FOUNDERS, Outcome, assay, dawn, founder_genome, founder_with_a_third_cell,
-        held_still, one_mutation_apart, package_assay, placed_assay, seeded_world, swimmer,
-        travels,
+        ARMS, BEAT, FOUNDER_ENERGY, FOUNDERS, Outcome, assay, dawn, founder_genome,
+        founder_with_a_third_cell, held_still, one_mutation_apart, package_assay, place,
+        placed_assay, seeded_world, swimmer, travels,
     };
     use coacervate_sim::cell::{CellKind, Vec2};
     use coacervate_sim::config::{Config, RawConfig};
     use coacervate_sim::world::World;
+    use std::collections::HashMap;
 
     /// How many ticks a full assay runs for: 42,000, which is 23.9 generations.
     const WINDOW: u64 = 42_000;
@@ -1278,5 +1279,402 @@ mod tests {
         );
 
         assert_eq!(ARMS, 2, "an assay compares one change against its absence");
+    }
+
+    // ---------------------------------------------------------------------------------
+    // ⭐⭐⭐ Does a mouth ever meet anybody it is not related to?
+    //
+    // The measurement `physics.current` exists for. A devorocyte's income is a bite, a bite
+    // moves energy `Biomass → Biomass`, and an assay's statistic is one arm's descendants
+    // against the other's - so a bite taken out of a relative is a transfer inside one arm
+    // and cannot move the reading at all. Measured in the shipped world: **99.9% of what a
+    // mouth touches is its own family**, because the only thing that ever puts two cells in
+    // contact here is birth.
+    // ---------------------------------------------------------------------------------
+
+    /// What a mouth touched over a run, and how much of it was family.
+    ///
+    /// A record of what was counted rather than of what it means, for the reason [`Outcome`]
+    /// is: the two fractions are worked out at the point of reading so that the counts behind
+    /// them can be quoted as well.
+    #[derive(Debug)]
+    struct Contacts {
+        /// How many times a living devorocyte was looked at.
+        mouths: u64,
+
+        /// How many of those times it was touching a cell belonging to another organism.
+        touching: u64,
+
+        /// How many such touches there were in total - a mouth pressed against three cells at
+        /// once counts three.
+        met: u64,
+
+        /// How many of those touches were with an organism descended from a **different**
+        /// founder.
+        strangers: u64,
+
+        /// How many organisms were alive when the run ended, and what the living held between
+        /// them.
+        ///
+        /// ⚠️ Not decoration. The contact fraction can fall for two quite different reasons -
+        /// the shear pulling families apart, which is the mechanism working, or the world
+        /// simply holding fewer bodies, which is the mechanism costing something - and the two
+        /// are indistinguishable without this.
+        alive: usize,
+        biomass: f64,
+    }
+
+    impl Contacts {
+        /// The share of the times a mouth was looked at and found to be touching somebody.
+        ///
+        /// ⚠️ **Half of the reading, and the half that a change can buy the other half with.**
+        /// Throwing newborns further apart raises the stranger share and destroys this, which
+        /// is measured and is why that idea was abandoned. Shipped world: **0.4723**.
+        fn contact_fraction(&self) -> f64 {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "counts of contacts over a sixty-thousand-tick run, turned into a \
+                          fraction for a person to read"
+            )]
+            let (touching, mouths) = (self.touching as f64, self.mouths as f64);
+
+            touching / mouths.max(1.0)
+        }
+
+        /// The share of what a mouth touches that belongs to a foreign lineage. Shipped world:
+        /// **0.0010**.
+        fn stranger_share(&self) -> f64 {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "counts of contacts over a sixty-thousand-tick run, turned into a \
+                          fraction for a person to read"
+            )]
+            let (strangers, met) = (self.strangers as f64, self.met as f64);
+
+            strangers / met.max(1.0)
+        }
+    }
+
+    /// How often a mouth is looked at, in ticks.
+    ///
+    /// Twenty, against a mean lifetime of about 1,737, so a body is sampled about ninety times
+    /// over its life. What is wanted is a fraction rather than a count, and a fraction converges
+    /// long before every tick has been walked - which matters, because walking every tick would
+    /// put a whole-population contact search inside a sixty-thousand-tick run.
+    const LOOK_EVERY: u64 = 20;
+
+    /// Which square of the contact grid a point falls in.
+    ///
+    /// The squares are `2 × LARGEST_RADIUS` across, which is the furthest apart two cells can
+    /// be and still be touching, so a cell's contacts are all in its own square or in one of
+    /// the eight around it. Exactly the bargain `physics.rs`'s spatial hash makes, written out
+    /// again here rather than borrowed, because a probe that called the code it is measuring
+    /// would agree with whatever that code happened to do.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a position inside a world at most a few thousand units across, divided by a \
+                  square a few units wide, so the quotient is a small whole number that is \
+                  then clamped into the grid"
+    )]
+    fn square_of(at: Vec2, reach: f32, cols: usize, rows: usize) -> usize {
+        let col = ((at.x / reach) as usize).min(cols - 1);
+        let row = ((at.y / reach) as usize).min(rows - 1);
+
+        row * cols + col
+    }
+
+    /// ⭐⭐ Seed 32 devorocyte-carrying founders into this world and watch what their mouths
+    /// touch.
+    ///
+    /// Every founder is its own lineage and every descendant inherits its founder's number, so
+    /// "a stranger" here means *descended from a different one of the thirty-two*. That is the
+    /// same partition [`placed_assay`] gives its arms - `founder % 2` - only finer, which is
+    /// what makes this reading directly about the assay: two organisms of different founders
+    /// are in different arms half the time, and two of the same founder are in the same arm
+    /// always.
+    ///
+    /// A cell of the mouth's own body is never a contact. Every body's cells are touching each
+    /// other by construction, and `behaviour.rs` will not let a devorocyte bite its own
+    /// organism, so counting them would put a constant in both columns and flatten the thing
+    /// being measured.
+    fn what_a_mouth_meets(seed: u64, current: f64, ticks: u64) -> Contacts {
+        let config = seeded_world(seed, |raw| raw.physics.current = current);
+        let (width, height) = (config.world.width, config.world.height);
+        let mouthed = founder_with_a_third_cell(&config.limits, CellKind::Devorocyte);
+
+        let mut world = World::new(&config);
+        dawn(&mut world);
+
+        let mut lineage: HashMap<u64, u64> = HashMap::new();
+        let mut known: HashMap<u64, Option<u64>> = HashMap::new();
+
+        for founder in 0..FOUNDERS {
+            let at = place(founder, FOUNDERS, width, height);
+            if let Ok(slot) = world.seed(mouthed.clone(), at, FOUNDER_ENERGY) {
+                let serial = world.organisms()[slot]
+                    .as_ref()
+                    .expect("a seeding that was accepted put an organism in that slot")
+                    .serial();
+                lineage.insert(serial, u64::from(founder));
+                known.insert(serial, None);
+            }
+        }
+
+        let reach = 2.0 * CellKind::LARGEST_RADIUS;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a count of squares across a world a few thousand units wide, which is a \
+                      few hundred"
+        )]
+        let (cols, rows) = (
+            (width / reach).ceil() as usize,
+            (height / reach).ceil() as usize + 1,
+        );
+        let mut squares: Vec<Vec<usize>> = vec![Vec::new(); cols * rows];
+
+        let mut seen = Contacts {
+            mouths: 0,
+            touching: 0,
+            met: 0,
+            strangers: 0,
+            alive: 0,
+            biomass: 0.0,
+        };
+
+        let started = world.ticks();
+        while world.ticks() < started + ticks {
+            world.tick();
+
+            if !(world.ticks() - started).is_multiple_of(LOOK_EVERY) {
+                continue;
+            }
+
+            // Every organism born since the last look takes its parent's founder. In serial
+            // order, for the reason [`attribute`] gives: a serial is minted in birth order, so
+            // a whole chain of descent resolves inside one window.
+            let mut fresh: Vec<(u64, Option<u64>)> = world
+                .organisms()
+                .iter()
+                .flatten()
+                .filter(|body| !known.contains_key(&body.serial()))
+                .map(|body| (body.serial(), body.parent()))
+                .collect();
+            fresh.sort_unstable();
+            for (serial, parent) in fresh {
+                known.insert(serial, parent);
+                if let Some(root) = parent.and_then(|of| lineage.get(&of).copied()) {
+                    lineage.insert(serial, root);
+                }
+            }
+
+            let cells = world.living_cells();
+            let owners = world.living_cell_owners();
+            let organisms = world.organisms();
+
+            for square in &mut squares {
+                square.clear();
+            }
+            for (index, cell) in cells.iter().enumerate() {
+                squares[square_of(cell.pos, reach, cols, rows)].push(index);
+            }
+
+            for (mouth, cell) in cells.iter().enumerate() {
+                if cell.kind != CellKind::Devorocyte {
+                    continue;
+                }
+                seen.mouths += 1;
+
+                let here = square_of(cell.pos, reach, cols, rows);
+                let (col, row) = (here % cols, here / cols);
+                let mut met_here = 0u64;
+
+                for down in row.saturating_sub(1)..=(row + 1).min(rows - 1) {
+                    for across in [(col + cols - 1) % cols, col, (col + 1) % cols] {
+                        for &other in &squares[down * cols + across] {
+                            if owners[other] == owners[mouth] {
+                                continue;
+                            }
+
+                            let meal = cells[other];
+                            let apart = wrapped(meal.pos - cell.pos, width);
+                            if apart >= cell.radius + meal.radius {
+                                continue;
+                            }
+
+                            met_here += 1;
+                            seen.met += 1;
+
+                            let (Some(mine), Some(theirs)) = (
+                                organisms[owners[mouth]].as_ref(),
+                                organisms[owners[other]].as_ref(),
+                            ) else {
+                                continue;
+                            };
+                            let (mine, theirs) =
+                                (lineage.get(&mine.serial()), lineage.get(&theirs.serial()));
+                            if mine.is_some() && mine != theirs {
+                                seen.strangers += 1;
+                            }
+                        }
+                    }
+                }
+
+                if met_here > 0 {
+                    seen.touching += 1;
+                }
+            }
+        }
+
+        seen.alive = world.organisms().iter().flatten().count();
+        seen.biomass = world.ledger().biomass();
+
+        seen
+    }
+
+    /// How far apart two points are in a world that joins up sideways.
+    ///
+    /// Written out here rather than taken from `physics.rs`, which does not expose it, and for
+    /// the reason that module's own tests give for writing it twice: a probe that measures with
+    /// the code it is checking agrees with whatever that code does.
+    fn wrapped(offset: Vec2, width: f32) -> f32 {
+        Vec2::new(offset.x - width * (offset.x / width).round(), offset.y).length()
+    }
+
+    /// Print what one probe came back with, so a run of these is a measurement and not a pass.
+    fn report_contacts(current: f64, seen: &Contacts) {
+        println!(
+            "CONTACT current {current}: contact fraction {:.4} ({} of {} mouth-samples), \
+             stranger share {:.4} ({} of {} contacts), alive {} holding {:.0}",
+            seen.contact_fraction(),
+            seen.touching,
+            seen.mouths,
+            seen.stranger_share(),
+            seen.strangers,
+            seen.met,
+            seen.alive,
+            seen.biomass
+        );
+    }
+
+    /// The smallest current measured to mix lineages at all, and the one the table below is
+    /// read at.
+    ///
+    /// At the shipped drag a cell settles at `current / 313` world units a tick, so this is
+    /// **1.9 units a tick** at the surface — about nine times the speed a grain of detritus
+    /// sinks at, and the same again the other way at the floor. That it takes water running
+    /// this hard to move the stranger share off a thousandth is itself half of the finding.
+    const MIXING_CURRENT: f64 = 600.0;
+
+    /// ⭐⭐⭐ **A current buys strangers by spending contact**, and no setting gives both. This
+    /// is the measurement the whole of `physics.current` was built to take, and it came back
+    /// **negative**.
+    ///
+    /// # What was being asked
+    ///
+    /// A devorocyte's entire income is a bite, and `ledger.rs`'s `predate` moves energy
+    /// `Biomass → Biomass` — so a bite taken out of a relative is a transfer *inside* one arm
+    /// of an assay and cannot move its reading by any amount. Measured in the shipped world,
+    /// **99.96% of what a mouth touches is its own family**, because the only thing that ever
+    /// puts two cells in contact here is birth: about 23 world units between neighbouring cells
+    /// at equilibrium, two cells touching at 6.0, a newborn set down 6.2 from its parent, and a
+    /// body covering about 8 units in a whole lifetime.
+    ///
+    /// So the question was whether shearing the water could make bodies pass one another
+    /// **without thinning the world out** — which is what throwing newborns further apart does,
+    /// and which had already been measured and had already failed. The bar, set before anything
+    /// was run: **a stranger share above 0.30 while the contact fraction stays above 0.35**.
+    ///
+    /// # ⭐⭐ The sweep. Seed 42, 60,000 ticks, 32 devorocyte-carrying founders
+    ///
+    /// | `current` | contact fraction | stranger share | alive | biomass |
+    /// | --- | --- | --- | --- | --- |
+    /// | **0.0 — as shipped** | **0.4723** | **0.0004** | 1,753 | 25,123 |
+    /// | 0.06 | 0.4697 | 0.0005 | 1,778 | 24,759 |
+    /// | 0.3 | 0.4436 | 0.0013 | 1,693 | 24,459 |
+    /// | 0.6 | 0.4640 | 0.0007 | 1,731 | 24,189 |
+    /// | 6 | 0.4574 | 0.0006 | 1,766 | 24,423 |
+    /// | 36 | 0.4350 | 0.0005 | 1,509 | 24,561 |
+    /// | 100 | 0.3994 | 0.0209 | 1,867 | 26,886 |
+    /// | 180 | 0.3762 | 0.0468 | 1,336 | 29,307 |
+    /// | 300 | 0.3215 | 0.1855 | 1,615 | 29,553 |
+    /// | 600 | 0.3105 | **0.4250** | 1,009 | 34,406 |
+    /// | 1,000 | 0.3226 | **0.6554** | **650** | 35,067 |
+    ///
+    /// **Not one row clears both halves of the bar.** The last setting at which contact is
+    /// still above 0.35 is 180, and its stranger share is 0.0468 — a sixth of what was asked
+    /// for. The first setting whose stranger share clears 0.30 is 600, and contact has fallen
+    /// to 0.3105 by the time it arrives.
+    ///
+    /// ⭐ **The last two columns say what is actually happening.** Biomass rises 40% while the
+    /// population falls 63%: the same energy in fewer and larger bodies, which is a world with
+    /// more space between its occupants. The shear does not carry bodies past each other so
+    /// much as it **thins them out** — which is exactly the mechanism that disqualified wider
+    /// dispersal, measured there at a contact fraction of 0.3568 for a stranger share of
+    /// 0.7617, a *better* trade than anything on this curve.
+    ///
+    /// # What it leaves standing
+    ///
+    /// Predation here is a transfer inside one family, and no change to what a bite is *worth*
+    /// can alter that, because the binding constraint is not the price of a bite but who is
+    /// standing next to whom. `physics.current` therefore ships at nought and the world it
+    /// describes is untouched — see `run.rs`'s
+    /// `a_world_with_no_current_is_the_world_that_was_there_before`.
+    ///
+    /// ⚠️ **The second half asserts a failure, deliberately.** A reading this expensive should
+    /// not have to be taken again to find out which way it went, and a future change that made
+    /// the trade-off go away would show up here as a claim that has stopped being true.
+    #[test]
+    #[ignore = "two 60,000-tick runs of the shipped world; check.ps1 runs it in release"]
+    fn a_current_buys_strangers_by_spending_contact() {
+        let still = what_a_mouth_meets(42, 0.0, 60_000);
+        report_contacts(0.0, &still);
+        let running = what_a_mouth_meets(42, MIXING_CURRENT, 60_000);
+        report_contacts(MIXING_CURRENT, &running);
+
+        // The calibration: the shipped world, and the fact the round existed to change.
+        assert!(
+            still.contact_fraction() > 0.45,
+            "a mouth in the shipped world was touching somebody at {:.4} of the moments it was \
+             looked at, and the measured figure is 0.4723",
+            still.contact_fraction()
+        );
+        assert!(
+            still.stranger_share() < 0.01,
+            "a mouth in the shipped world touched a foreign lineage at {:.4} of its contacts, \
+             and the measured figure is 0.0004. If this has risen then contact is no longer \
+             inherited, and predation is no longer a transfer within one family",
+            still.stranger_share()
+        );
+
+        // ⭐ The current does mix, which is what makes the half below a finding rather than a
+        // mechanism that failed to land.
+        assert!(
+            running.stranger_share() > 0.30,
+            "at a current of {MIXING_CURRENT} a mouth touched a foreign lineage at {:.4} of its \
+             contacts, and the measured figure is 0.4250",
+            running.stranger_share()
+        );
+
+        // ⭐⭐ And it is paid for out of contact and out of the population, which is why this
+        // went no further.
+        assert!(
+            running.contact_fraction() < 0.35,
+            "at a current of {MIXING_CURRENT} a mouth was touching somebody at {:.4} of the \
+             moments it was looked at, and the measured figure is 0.3105. **If this is now \
+             above 0.35 the round is reopened**: a current that mixed lineages without spending \
+             contact is precisely what was looked for and not found",
+            running.contact_fraction()
+        );
+        assert!(
+            running.alive * 4 < still.alive * 3,
+            "a current of {MIXING_CURRENT} left {} organisms alive against the still world's \
+             {}, and the measured figures are 1,009 and 1,753. The population falling is the \
+             mechanism: the shear thins the world out rather than carrying its bodies past one \
+             another",
+            running.alive,
+            still.alive
+        );
     }
 }

@@ -266,6 +266,24 @@ pub const DIALS: &[Dial] = &[
         write: |raw, value| raw.physics.spring_damping = value,
     },
     Dial {
+        table: "physics",
+        // ⚠️ Not `0.0 - 1000.0`, and the far end is not a gate constant either — `config.rs`
+        // deliberately puts no ceiling on a current, because the integrator is a contraction
+        // under any constant force and there is nothing on the other side of a bound that
+        // fails. What stops the slider here is where the **measurements** stop being about the
+        // shipped world: `assay.rs`'s `a_current_buys_strangers_by_spending_contact` walked
+        // eleven settings and 100 is the largest at which the population and the standing
+        // biomass are still the ones every figure in SPEC was taken on — 1,867 bodies against
+        // 1,753, and 26,886 units against 25,123. At 180 it is 1,336, and by 1,000 it is 650.
+        // A person who wants that world can have it, and should have to write it in a file.
+        label: "current",
+        least: 0.0,
+        most: 100.0,
+        places: Some(1),
+        read: |raw| raw.physics.current,
+        write: |raw, value| raw.physics.current = value,
+    },
+    Dial {
         table: "behaviour",
         label: "resting_amplitude",
         least: 0.0,
@@ -842,7 +860,8 @@ mod tests {
         for (table, settings) in [
             // ⭐ Eight since Phase 7's Group L: `season_period` and `season_amplitude`.
             ("light", 8),
-            ("physics", 4),
+            // ⭐ Five since `physics.current`: a depth-dependent sideways force on every cell.
+            ("physics", 5),
             ("behaviour", 2),
             ("metabolism", 5),
             ("mutation", 7),
@@ -857,7 +876,7 @@ mod tests {
         }
         assert_eq!(
             DIALS.len(),
-            27,
+            28,
             "the dials do not add up to the tables above"
         );
 

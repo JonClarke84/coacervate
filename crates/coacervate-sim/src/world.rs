@@ -3867,6 +3867,174 @@ mod tests {
         );
     }
 
+    /// A body of two sclerocytes, sprung together, and nothing else whatever.
+    ///
+    /// Chosen for what it *cannot* do rather than for what it can. It has no myocyte, so
+    /// `behaviour.rs` never enters the loop that charges `metabolism.movement_cost` and there is
+    /// no path by which moving could cost it anything. It has no photocyte, so it draws nothing
+    /// out of the tiles it passes over and drifting cannot change its **income** either — which
+    /// is the confound that would otherwise make the two runs below differ for a reason that has
+    /// nothing to do with what movement costs. And it has no gonocyte, so it cannot reproduce
+    /// and the run stays one body long.
+    ///
+    /// What is left pays upkeep and gene cost, both of which are fixed per tick, so its energy
+    /// at any moment is a number that arithmetic alone can predict — and any difference between
+    /// a still world and a moving one is the current charging for itself.
+    fn a_drifting_body(limits: &LimitsConfig) -> Genome {
+        let plain = Gene {
+            trigger_state: State::ZERO,
+            min_step: 0,
+            max_step: 0,
+            action: Action::Divide,
+            angle: 0.0,
+            adhere: true,
+            child_state: State::new(1),
+            child_kind: CellKind::Sclerocyte,
+            rest_length: 8.0,
+            stiffness: 10.0,
+            new_kind: CellKind::Sclerocyte,
+            new_state: State::new(2),
+            osc_freq: 0.0,
+            osc_phase: 0.0,
+            sensor_gain: 0.0,
+            sensor_target: SensorTarget::Light,
+        };
+
+        Genome::new(
+            vec![
+                // Step 0: the seed cell buds an armoured daughter.
+                plain,
+                // Step 1: and then turns itself into one, leaving a body of two sclerocytes in
+                // states no gene answers to, which is where development stops.
+                Gene {
+                    min_step: 1,
+                    max_step: 1,
+                    action: Action::Differentiate,
+                    ..plain
+                },
+            ],
+            limits,
+        )
+    }
+
+    /// ⭐⭐ **Drifting is free.** A body carried a hundred units by the current ends its run
+    /// holding exactly what the same body holds standing still — to the bit — and the energy
+    /// ledger balances on every tick of both.
+    ///
+    /// ⚠️ **This is the one place `physics.current` could touch the invariant this whole
+    /// project rests on**, and it must not. SPEC section 5 makes light the only source of
+    /// energy in the world, and CLAUDE.md is explicit that an unbalanced ledger is how these
+    /// simulations quietly become runaway blooms or instant extinctions. A current that charged
+    /// a body for being carried would be a second, invisible upkeep proportional to depth; one
+    /// that *paid* a body for it would be energy from nowhere.
+    ///
+    /// Neither is hypothetical arithmetic. `behaviour.rs` charges `metabolism.movement_cost`
+    /// against the work a muscle does on its own springs — `tension × distance` — and a spring
+    /// stretched by a shear has tension in it. What keeps the current free is that the charge is
+    /// raised inside the muscle loop and against the muscle's *own* change of rest length, so a
+    /// body with no myocyte in it is never asked. **Sinking has been free on exactly the same
+    /// grounds since buoyancy arrived, and drifting has to be free for the same reason**: both
+    /// are the water moving a body rather than a body moving itself.
+    ///
+    /// The equality is bit-for-bit rather than approximate, for the reason `every_number_in`
+    /// gives: a tolerance here would wave through a small charge per tick, which over a
+    /// twelve-hour run is the difference between a world that works and one that quietly
+    /// starves.
+    #[test]
+    fn drifting_is_free() {
+        /// How hard the water is running in the moving world. See `physics.rs`'s
+        /// `a_cell_carried_by_the_water_settles_at_a_speed_the_drag_decides` for what the
+        /// number means: a cell settles at `current / 313` world units a tick.
+        const CARRIED: f64 = 36.0;
+
+        let run = |current: f64| -> (f64, f32, usize) {
+            let settings = config(|raw| {
+                raw.world.width = 512.0;
+                raw.world.height = 288.0;
+                raw.world.grid_cols = 64;
+                raw.world.grid_rows = 36;
+                raw.light.influx = 0.012;
+                raw.limits.max_organisms = 1;
+                raw.physics.current = current;
+            });
+            let mut world = World::new(&settings);
+            let limits = world.config().limits.clone();
+
+            // The light falls first: `World::seed` takes a body's energy out of the tiles it is
+            // standing on, and a world seeded on tick zero can give it nothing.
+            for _ in 0..2_000 {
+                world.tick();
+            }
+
+            // A quarter of the way down, so the shear is running at half strength and in a
+            // direction - a body seeded at mid-depth would be carried nowhere at all.
+            let slot = world
+                // Twelve units against the 8.4 two sclerocytes and two genes spend over the
+                // window, so the body is solvent throughout and the run is not measuring a
+                // death.
+                .seed(a_drifting_body(&limits), Vec2::new(128.0, 72.0), 12.0)
+                .expect("a lit world holds twelve units under a two-celled body");
+            let began = world.cells_of(slot)[0].pos.x;
+
+            for _ in 0..2_000 {
+                world.tick();
+
+                // Every tick, and in the release profile too. `World::tick` checks the books
+                // every hundredth tick there, and a charge levied once per tick is exactly the
+                // kind of leak that a periodic check would find only after it had grown.
+                world.ledger().check(world.grid().total_energy());
+            }
+
+            let body = world.organisms()[slot]
+                .as_ref()
+                .expect("a sclerocyte lives four thousand ticks and this run is two");
+
+            (
+                body.energy(),
+                world.cells_of(slot)[0].pos.x - began,
+                world
+                    .cells_of(slot)
+                    .iter()
+                    .filter(|cell| cell.kind == CellKind::Sclerocyte)
+                    .count(),
+            )
+        };
+
+        let (still_holds, still_moved, still_cells) = run(0.0);
+        let (carried_holds, carried_moved, carried_cells) = run(CARRIED);
+
+        // The body is what it was meant to be, in both worlds. A body that had grown a
+        // photocyte would earn differently in the two and this test would be measuring that.
+        assert_eq!(
+            (still_cells, carried_cells),
+            (2, 2),
+            "the drifting body grew {still_cells} sclerocytes standing still and \
+             {carried_cells} being carried, and it was written to grow two of them and nothing \
+             else"
+        );
+
+        // ⭐ It really was carried, which is what stops this being a test of two still worlds.
+        assert!(
+            carried_moved.abs() > 50.0,
+            "a body in a current of {CARRIED} moved {carried_moved} units in two thousand \
+             ticks, so there is nothing here for the current to have been charged for"
+        );
+        assert!(
+            still_moved.abs() < 1.0,
+            "the body in still water moved {still_moved} units, so the control is drifting too"
+        );
+
+        // ⭐⭐ And it cost nothing.
+        assert_eq!(
+            carried_holds.to_bits(),
+            still_holds.to_bits(),
+            "a body carried {carried_moved} units by the water is holding {carried_holds} \
+             where the same body standing still holds {still_holds}. The current is charging \
+             for itself, which makes it a second upkeep that varies with depth and appears in \
+             no table"
+        );
+    }
+
     /// ⭐ Phase 2's headline claim, re-run over a world that now has bodies in it.
     ///
     /// `energy_is_conserved_over_100k_ticks` proved the books balance over a world of water

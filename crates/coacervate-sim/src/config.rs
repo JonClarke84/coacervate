@@ -89,6 +89,7 @@ pub struct RawPhysics {
     pub drag_anisotropy: f64,
     pub collision_stiffness: f64,
     pub spring_damping: f64,
+    pub current: f64,
 }
 
 /// The `[behaviour]` table as written: how hard SPEC section 9's controller drives a muscle.
@@ -199,6 +200,7 @@ pub fn spec_defaults() -> RawConfig {
             drag_anisotropy: 2.0,
             collision_stiffness: 40.0,
             spring_damping: 0.35,
+            current: 0.0,
         },
         behaviour: RawBehaviour {
             resting_amplitude: 0.8,
@@ -1045,6 +1047,73 @@ pub struct PhysicsConfig {
 
     pub collision_stiffness: f32,
     pub spring_damping: f32,
+
+    /// How hard the water is pushed sideways at the surface, in the same units as
+    /// [`crate::cell::CellKind::buoyancy`], reversing to the same push the other way at the
+    /// floor.
+    ///
+    /// ⭐⭐ **The only force in this world that moves one body past another**, and — measured —
+    /// **not one that can do it without thinning the world out.** It ships at nought, and the
+    /// paragraphs below are why it exists and why it stays there.
+    ///
+    /// Everything else that moves a cell either cancels over a body — springs and collisions
+    /// are `+f` here and `−f` there — or moves every body the same way, which changes where the
+    /// population is and not who is next to whom. A shear does neither: `physics.rs` adds
+    /// `current × (1 − 2 × depth ÷ height)` to a cell's sideways force, so water near the
+    /// surface runs one way, water near the floor runs the other, and how fast a body is
+    /// carried is decided by how deep it is — which, since buoyancy already sorts bodies by
+    /// depth, means **what a body is made of decides how fast the water takes it**.
+    ///
+    /// # The question it was built to answer
+    ///
+    /// Measured in the shipped world: at equilibrium there are about **23 world units between
+    /// neighbouring cells**, two photocytes touch at **6.0**, a newborn is set down **6.2** from
+    /// its parent, and a body covers about **8 units in a whole lifetime**. So a body has to
+    /// travel 23 units to meet anybody and travels 8, and the consequence is that **contact is
+    /// inherited rather than encountered**: 99.96% of what a devorocyte touches is its own
+    /// family, and two lineages seeded 256 units apart spread until they overlap completely in
+    /// space while four cells in four thousand ever touch a stranger. Predation is therefore a
+    /// transfer *within* one family, which no change to the price of a bite can reach.
+    ///
+    /// # ⚠️⚠️ The answer, and it is a negative
+    ///
+    /// `assay.rs`'s `a_current_buys_strangers_by_spending_contact` holds the sweep. The short
+    /// version, over eleven settings from nought to a thousand:
+    ///
+    /// | `current` | contact fraction | stranger share | alive |
+    /// | --- | --- | --- | --- |
+    /// | **0.0 — as shipped** | **0.4723** | **0.0004** | 1,753 |
+    /// | 180 | 0.3762 | 0.0468 | 1,336 |
+    /// | 600 | 0.3105 | 0.4250 | 1,009 |
+    /// | 1,000 | 0.3226 | 0.6554 | **650** |
+    ///
+    /// **A current fierce enough to mix lineages is a current that empties the world**, and
+    /// there is no setting at which the stranger share rises above 0.30 while the contact
+    /// fraction stays above 0.35. It buys strangers by spending contact, which is the same
+    /// trade wider dispersal offers and a worse one.
+    ///
+    /// # ⭐ It is a force, and it is charged for nothing
+    ///
+    /// Added beside buoyancy in [`crate::physics::Physics::carry`] rather than written straight
+    /// into a velocity, so it goes through the same drag and the same anisotropy as everything
+    /// else: a long flat body is carried differently from a compact one, exactly as it already
+    /// sinks differently. And `metabolism.movement_cost` is charged only against a muscle's own
+    /// work, so **drifting is free exactly as sinking is free** — `world.rs`'s `drifting_is_free`
+    /// holds a body carried a hundred units to spending, bit for bit, what a still one spends.
+    ///
+    /// A cell under a constant force settles where the drag takes back what the force adds, at
+    /// `current × drag × DT ÷ (1 − drag)` world units per **second** — 0.1917 × `current` at the
+    /// shipped drag, which is `current ÷ 313` units per *tick*.
+    ///
+    /// # Nought is the world that ships
+    ///
+    /// And it is the control for every claim about a moving one: every selection coefficient in
+    /// SPEC and every figure in `docs/PHASE7.md` was measured with no current in the water. It
+    /// cannot be less than nought, because this is a *strength* and not a direction — the shear
+    /// already runs both ways at once, so a negative value only swaps which half of the world
+    /// goes which way and leaves the relative motion, which is the whole object of it,
+    /// identical.
+    pub current: f32,
 }
 
 /// The checked `[behaviour]` table: how hard SPEC section 9's controller drives a muscle.
@@ -1300,6 +1369,21 @@ impl RawConfig {
                     "physics.spring_damping",
                     self.physics.spring_damping,
                 )?,
+                // ⭐ May be nothing, and nothing is what ships: a still world is the one every
+                // figure in this project was measured in and the control for every claim about a
+                // moving one. Not less than nothing, and that is not the usual reason. A
+                // negative current is not water running backwards - the shear runs both ways at
+                // once whatever its sign, so the only thing a minus sign changes is which half of
+                // the world goes which way. It is a second way of writing a world this setting
+                // can already express, and `PhysicsConfig::current` says so.
+                //
+                // No upper bound, deliberately, and for the reason `spring_damping` above it has
+                // none: SPEC says nothing about how fast water may move, a bound invented here is
+                // one somebody argues with on the evening an experiment is refused, and there is
+                // nothing on the other side of it that fails. The integrator is a contraction
+                // under any constant force - see `physics.rs` - so a fierce current is a fast
+                // world rather than an unstable one.
+                current: non_negative("physics.current", self.physics.current)?,
             },
             behaviour: BehaviourConfig {
                 // SPEC section 9 clamps the amplitude into `0..=1` on the line after this
@@ -1434,6 +1518,7 @@ mod tests {
                 raw.physics.collision_stiffness,
             ),
             ("physics.spring_damping", raw.physics.spring_damping),
+            ("physics.current", raw.physics.current),
             (
                 "behaviour.resting_amplitude",
                 raw.behaviour.resting_amplitude,
@@ -1482,8 +1567,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            29,
-            "SPEC section 3 has twenty-nine decimal settings; this list has {}, so one has \
+            30,
+            "SPEC section 3 has thirty decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );
@@ -1582,6 +1667,7 @@ mod tests {
         assert_eq!(config.physics.drag_anisotropy, 2.0);
         assert_eq!(config.physics.collision_stiffness, 40.0);
         assert_eq!(config.physics.spring_damping, 0.35);
+        assert_eq!(config.physics.current, 0.0);
 
         assert_eq!(config.metabolism.upkeep_scale, 1.0);
         assert_eq!(config.metabolism.gene_cost, 0.0001);
@@ -1653,7 +1739,7 @@ mod tests {
         // because 0.5 *is* a fraction: what excludes it is the stability of the arithmetic
         // rather than the meaning of the setting, and it is the value somebody would
         // actually write.
-        let corruptions: [(&str, Corruption); 26] = [
+        let corruptions: [(&str, Corruption); 27] = [
             ("world.width", |raw| raw.world.width = 0.0),
             ("world.height", |raw| raw.world.height = 0.0),
             ("world.years_per_tick", |raw| raw.world.years_per_tick = 0.0),
@@ -1680,6 +1766,11 @@ mod tests {
             ("physics.spring_damping", |raw| {
                 raw.physics.spring_damping = -0.1;
             }),
+            // A current has no upper end - see `RawConfig::validate` - so what is refused is
+            // the one value its meaning excludes. A minus sign is not water running the other
+            // way, because the shear already runs both ways at once; it is a second spelling
+            // of a world the positive half of the range already covers.
+            ("physics.current", |raw| raw.physics.current = -0.1),
             ("metabolism.upkeep_scale", |raw| {
                 raw.metabolism.upkeep_scale = 0.0;
             }),

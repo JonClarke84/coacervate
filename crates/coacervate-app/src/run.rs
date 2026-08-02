@@ -1123,6 +1123,93 @@ mod tests {
     // something different.
     // -------------------------------------------------------------------------------------
 
+    /// Where every cell in the world is, as one number.
+    ///
+    /// An FNV-1a hash over the bit patterns of every living cell's position, walked in slot
+    /// order. Bit patterns rather than the numbers themselves, for the reason `world.rs`'s
+    /// `every_number_in` gives about its own comparisons: two runs that are supposed to agree
+    /// exactly are not helped by a tolerance, and a difference in the last place is precisely
+    /// how a determinism failure starts.
+    ///
+    /// A hash rather than the whole list because the whole list is a quarter of a million
+    /// numbers and what a golden vector needs is something a person can write down.
+    fn where_everybody_is(world: &World) -> u64 {
+        const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+        let mut hash = OFFSET;
+        for slot in 0..world.organisms().len() {
+            for cell in world.cells_of(slot) {
+                for bits in [cell.pos.x.to_bits(), cell.pos.y.to_bits()] {
+                    hash ^= u64::from(bits);
+                    hash = hash.wrapping_mul(PRIME);
+                }
+            }
+        }
+
+        hash
+    }
+
+    /// ⭐⭐ **A world with no current is the world that was there before one existed** — the
+    /// same population, the same cells, and every one of them in exactly the same place.
+    ///
+    /// **This is what keeps the blast radius of `physics.current` at zero.** Every coefficient
+    /// in `SPEC.md`, every figure in `docs/PHASE7.md` and the golden vector directly below this
+    /// one were all measured on a world with no current in it. Shipping the mechanism switched
+    /// off means that world is still the world `config/default.toml` describes, to the bit, and
+    /// none of those readings has to be taken again. It is the same trade
+    /// `light.season_amplitude` made — see `grid.rs`'s
+    /// `a_world_with_no_season_is_the_world_that_was_there_before`, and `main.rs`'s
+    /// `the_shipped_documents_carry_a_season_and_it_ships_inert`.
+    ///
+    /// The digest below was recorded from a build in which `physics.current` was a
+    /// configuration key and **nothing read it**, which is the only moment at which "the world
+    /// that was there before" can be measured rather than argued.
+    ///
+    /// ⚠️ **The second half is the one that makes the first half mean anything.** A test that
+    /// only pinned a digest would pass just as happily against a program in which the setting
+    /// is inert at *every* value — a config key nobody can tell is there — which is the failure
+    /// Group H's own headline change spent a whole round hiding behind. So the same world is
+    /// run again with the current turned on, and it has to come back somewhere else.
+    #[test]
+    #[ignore = "two shipped-world dawns and ten thousand ticks; check.ps1 runs it in release"]
+    fn a_world_with_no_current_is_the_world_that_was_there_before() {
+        let ran = |current: f64| {
+            let mut world = World::new(&config(|raw| raw.physics.current = current));
+            genesis(&mut world, 8);
+            for _ in 0..5_000 {
+                world.tick();
+            }
+
+            (
+                world.organisms().iter().flatten().count(),
+                world.living_cells().len(),
+                where_everybody_is(&world),
+            )
+        };
+
+        assert_eq!(
+            ran(0.0),
+            // 318 organisms alive holding 631 cells between them, five thousand ticks after a
+            // shipped-world dawn founded with eight bodies, and every one of those cells in the
+            // place this digest describes.
+            (318, 631, 0x35fe_af96_9d17_98e0),
+            "a shipped world with `physics.current = 0.0` is no longer the world this project \
+             has been measuring all along. **Investigate; do not paste in the new numbers.** \
+             Every selection coefficient in SPEC and every figure in docs/PHASE7.md was taken \
+             on the world this digest describes"
+        );
+
+        // ⭐ And the current is a real force rather than a key nobody reads.
+        assert_ne!(
+            ran(0.6).2,
+            ran(0.0).2,
+            "the same world run with the current on and the current off left every cell in \
+             exactly the same place, so `physics.current` is a setting a person can turn and \
+             a world that cannot feel it"
+        );
+    }
+
     /// ⭐ **A5 group control.** A run of a fixed seed and configuration produces exactly what
     /// it produced before Phase 5 touched anything.
     ///

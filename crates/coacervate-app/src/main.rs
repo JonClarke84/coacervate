@@ -1082,6 +1082,70 @@ mod tests {
         }
     }
 
+    /// ⭐⭐ **`config/current.toml` is `config/default.toml` with one number changed, and the
+    /// shipped default is nought.**
+    ///
+    /// The same claim `the_shipped_documents_carry_a_season_and_it_ships_inert` makes about the
+    /// season, for the same two reasons. A profile that quietly also moved the mutation rates
+    /// would be an experiment with two variables in it and no way to tell which had done the
+    /// work; and shipping the mechanism switched off means `config/default.toml` is bit-for-bit
+    /// the world every figure in `SPEC.md` and `docs/PHASE7.md` was measured on, so nothing has
+    /// to be re-recorded and the moving world is one profile away.
+    ///
+    /// ⚠️ **The `current` profile is a recorded negative rather than a recommendation**, and
+    /// the file says so at length. `assay.rs`'s `a_current_buys_strangers_by_spending_contact`
+    /// swept eleven settings and found no value at which lineages mix without the population
+    /// falling with them. What the profile is for is re-running that sweep rather than arguing
+    /// about it.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the two documents' numbers are pinned against each other; an approximate \
+                  match would let a profile drift away from the one it is a variation on"
+    )]
+    fn the_shipped_documents_carry_a_current_and_it_ships_inert() {
+        let moving: RawConfig = toml::from_str(include_str!("../../../config/current.toml"))
+            .expect("the current profile parses");
+        let shipped: RawConfig = toml::from_str(DEFAULT_CONFIG).expect("the shipped config parses");
+
+        moving
+            .clone()
+            .validate()
+            .expect("the current profile is a world the program will accept");
+
+        assert_eq!(
+            shipped.physics.current, 0.0,
+            "the shipped world has a current running through it, so it is no longer the world \
+             every figure in SPEC.md and docs/PHASE7.md was measured on"
+        );
+        assert_eq!(
+            moving.physics.current, 600.0,
+            "the current profile does not carry the value the sweep was read at"
+        );
+
+        // One number changed, and nothing else whatever.
+        let mut restored = moving;
+        restored.physics.current = shipped.physics.current;
+        assert_eq!(
+            restored, shipped,
+            "the current profile changes something besides how hard the water is running, so a \
+             run of it is an experiment with more than one variable in it"
+        );
+
+        // The key is required. A document missing it is refused rather than guessed at, because
+        // a replay that did not record the current is a replay of a world nobody can rebuild.
+        let without: String = DEFAULT_CONFIG
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("current"))
+            .collect::<Vec<&str>>()
+            .join("\n");
+        assert!(
+            toml::from_str::<RawConfig>(&without).is_err(),
+            "a document with no `physics.current` was accepted, so a run can be recorded \
+             without the water that produced it"
+        );
+    }
+
     /// The number written in the configuration document is the number the randomness
     /// actually comes from.
     ///

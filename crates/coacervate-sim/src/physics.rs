@@ -591,6 +591,7 @@ pub struct Physics {
     drag: f32,
     collision_stiffness: f32,
     spring_damping: f32,
+    current: f32,
 
     /// What a cell keeps of its motion **across** its own body axis, which is `drag` raised
     /// to `physics.drag_anisotropy`.
@@ -652,6 +653,7 @@ impl Physics {
             drag: config.physics.drag,
             collision_stiffness: config.physics.collision_stiffness,
             spring_damping: config.physics.spring_damping,
+            current: config.physics.current,
             across_drag: config.physics.drag.powf(config.physics.drag_anisotropy),
             hash: SpatialHash::new(config),
             axes: vec![None; capacity],
@@ -664,14 +666,21 @@ impl Physics {
 
     /// Take the `[physics]` table again, on a running world.
     ///
-    /// SPEC section 3 does not lock `[physics]`, so drag, stiffness and damping can all be
-    /// turned mid-run. Nothing here is a size, so nothing here is allocated: `width` and
-    /// `height` come from `[world]`, which is locked, and every array was built from
+    /// SPEC section 3 does not lock `[physics]`, so drag, stiffness, damping and the current
+    /// can all be turned mid-run. Nothing here is a size, so nothing here is allocated: `width`
+    /// and `height` come from `[world]`, which is locked, and every array was built from
     /// `[limits]`, which is locked too. See [`crate::world::World::retune`].
+    ///
+    /// ⭐ A current is a legitimate thing to turn up on a world that is already living, and it
+    /// is the one setting here that reads as *weather* rather than as a property of the water.
+    /// It creates nothing and destroys nothing — it is a force on cells that already exist —
+    /// so unlike the light there is no state anywhere for it to leave behind, and turning it
+    /// back to nought is the still world again on the very next tick.
     pub fn retune(&mut self, config: &Config) {
         self.drag = config.physics.drag;
         self.collision_stiffness = config.physics.collision_stiffness;
         self.spring_damping = config.physics.spring_damping;
+        self.current = config.physics.current;
         self.across_drag = config.physics.drag.powf(config.physics.drag_anisotropy);
     }
 
@@ -688,11 +697,12 @@ impl Physics {
         self.forces[..cells.len()].fill(Vec2::ZERO);
         self.pull_springs(cells, springs);
         self.push_apart(cells);
-        self.lift(cells);
+        self.carry(cells);
         self.integrate(cells);
     }
 
-    /// Let the water carry each cell up or down according to what kind of cell it is.
+    /// Let the water carry each cell — up or down according to what kind of cell it is, and
+    /// sideways according to how deep it is.
     ///
     /// ⭐⭐ **The one force in this module that does not cancel**, and that is the entire
     /// point of it. Springs and collisions are `+f` on one cell and `-f` on another, which is
@@ -715,9 +725,46 @@ impl Physics {
     /// the rate a loose cell would. A long flat body settles more slowly than a compact one,
     /// which is what a long flat body in water actually does, and none of it needed writing
     /// down separately.
-    fn lift(&mut self, cells: &[Cell]) {
+    ///
+    /// # ⭐⭐ And the sideways half: `physics.current`
+    ///
+    /// The second external force in this world, added here rather than anywhere else because
+    /// it is the same kind of thing — the water acting on a cell, through the same drag and the
+    /// same anisotropy, so that everything the paragraph above says about a long flat body
+    /// sinking slowly is true of a long flat body being carried slowly.
+    ///
+    /// What it adds is `current × (1 − 2 × depth ÷ height)`: a **shear**, running one way at
+    /// the surface, the other way at the floor and not at all halfway down. That profile is the
+    /// whole of the design, and the reason is that a current which pushed every cell the same
+    /// way would move the population without moving one body past another. Measured in the
+    /// shipped world, there are about 23 units between neighbouring cells, two cells touch at
+    /// 6, and a body covers about 8 units in a whole lifetime — so nothing here has ever met
+    /// anybody it was not born touching, and only a velocity that varies with position can
+    /// change that at unchanged density.
+    ///
+    /// It follows that what a body is *made of* decides how fast it is carried, by the same
+    /// route buoyancy already provides: composition sets depth, and depth sets speed. Nothing
+    /// tells a body where to go.
+    ///
+    /// ⚠️⚠️ **It does not, in fact, buy contact with strangers at unchanged density, and that
+    /// is measured rather than feared.** `assay.rs`'s
+    /// `a_current_buys_strangers_by_spending_contact` sweeps eleven settings: the share of a
+    /// mouth's contacts that are with a foreign lineage does not leave a thousandth until the
+    /// water is running nine times faster than a grain of detritus sinks, and by then the
+    /// population has fallen from 1,753 to 1,009 and the contact fraction from 0.4723 to
+    /// 0.3105. A current fierce enough to mix is a current that thins the world out. **The
+    /// shipped value is nought and there is no evidence for any other.**
+    ///
+    /// ⚠️ At `current = 0.0` — which is what ships — the term added is `0.0 × profile`, which
+    /// is a signed zero, and adding a signed zero to a force leaves its bit pattern exactly
+    /// where it was. `run.rs`'s `a_world_with_no_current_is_the_world_that_was_there_before`
+    /// holds a whole shipped world to that.
+    fn carry(&mut self, cells: &[Cell]) {
+        let (current, height) = (self.current, self.height);
+
         for (force, cell) in self.forces[..cells.len()].iter_mut().zip(cells) {
             force.y += cell.kind.buoyancy();
+            force.x += current * (1.0 - 2.0 * cell.pos.y / height);
         }
     }
 
@@ -2353,6 +2400,232 @@ mod tests {
                  risk in this change"
             );
         }
+    }
+
+    /// A current strong enough to read off a short run, and the one every test below uses.
+    ///
+    /// At the shipped drag a cell settles at `current / 313` world units a tick, so this is
+    /// **0.115 units a tick** at the surface — a little over half the 0.2 a grain of detritus
+    /// sinks at (`metabolism.rs`'s `SINK_SPEED`), and the same again the other way at the
+    /// floor. It is a number to measure a mechanism with rather than a recommendation: what
+    /// `config/current.toml` ships is chosen by what mixes the population, and that is a
+    /// different question from what a spring can survive.
+    const A_READABLE_CURRENT: f64 = 36.0;
+
+    /// One loose cell of a kind with no buoyancy of its own, at this depth, carried for this
+    /// many ticks. Returns how far it went sideways and how fast it was going at the end.
+    ///
+    /// A myocyte, because SPEC section 6 gives it a buoyancy of exactly nought — so the cell
+    /// holds the depth it was put at and what is measured is the current and nothing else. A
+    /// photocyte would rise out of its own answer.
+    fn carried(current: f64, depth: f32, ticks: u32) -> (f32, f32) {
+        let world = config(|raw| {
+            raw.physics.current = current;
+            raw.limits.max_organisms = 1;
+        });
+        let mut physics = Physics::new(&world);
+        let began = Vec2::new(1_000.0, depth);
+        let mut cells = vec![Cell::new(CellKind::Myocyte, began)];
+
+        for _ in 0..ticks {
+            physics.step(&mut cells, &[]);
+        }
+
+        (cells[0].pos.x - began.x, cells[0].vel.x)
+    }
+
+    /// ⭐⭐ **The water runs one way at the top and the other at the bottom.**
+    ///
+    /// `physics.current` is a **shear**: `current × (1 − 2 × depth ÷ height)`, so it is at its
+    /// strongest and opposite at the two ends of the world and exactly nothing halfway down.
+    ///
+    /// # Why a shear and not a wind
+    ///
+    /// A current that pushed every cell the same way would move the whole population and
+    /// change nothing about it, because what a body meets is decided by its motion *relative*
+    /// to its neighbours. Measured in the shipped world: about 23 units between neighbouring
+    /// cells, two cells touching at 6, a newborn set down 6.2 from its parent, and a body
+    /// covering about 8 units in a whole lifetime — so a body has to travel 23 units to meet
+    /// anybody and travels 8, and everything it will ever touch was placed touching it.
+    /// **Only a velocity that varies with position produces relative motion at unchanged
+    /// density**, and depth is the one coordinate this world already sorts bodies along.
+    ///
+    /// ⚠️ **The third assertion is the one that says it is a shear rather than a slope.** A
+    /// profile written `current × depth ÷ height`, or one that forgot the minus sign, would
+    /// pass both of the first two and would be a wind with a gradient on it: every body in the
+    /// world sailing the same way, some faster than others. Exactly nought at mid-depth is
+    /// what makes the two halves opposite.
+    #[test]
+    fn the_water_runs_one_way_at_the_top_and_the_other_at_the_bottom() {
+        let height = config(|_| {}).world.height;
+        let ticks = 2_000;
+
+        let (surface, _) = carried(A_READABLE_CURRENT, 0.0, ticks);
+        let (floor, _) = carried(A_READABLE_CURRENT, height, ticks);
+        let (middle, _) = carried(A_READABLE_CURRENT, height * 0.5, ticks);
+
+        assert!(
+            surface > 1.0,
+            "a cell held at the surface of a world with a current of {A_READABLE_CURRENT} in \
+             it moved {surface} units sideways in {ticks} ticks"
+        );
+        assert!(
+            floor < -1.0,
+            "a cell on the floor moved {floor} units sideways where the one at the surface \
+             moved {surface}. The two ends of the world are supposed to run opposite ways, and \
+             a current that carried both the same way would move the whole population without \
+             moving one body past another"
+        );
+        assert!(
+            (surface + floor).abs() < surface.abs() * 1e-3,
+            "the surface moved {surface} and the floor {floor}, and a shear is antisymmetric \
+             about mid-depth - so this is a wind with a gradient on it rather than water \
+             turning over"
+        );
+        assert_eq!(
+            middle.to_bits(),
+            0.0f32.to_bits(),
+            "a cell exactly halfway down moved {middle} units, and `1 − 2 × depth ÷ height` is \
+             exactly nought there"
+        );
+    }
+
+    /// ⭐ **A cell carried by the water settles at a speed the drag decides**, which is what
+    /// makes the current a force rather than a velocity.
+    ///
+    /// SPEC section 8's terminal velocity for a constant force is `f × dt × drag ÷ (1 − drag)`
+    /// — the same arithmetic `motion_is_viscous_not_ballistic` pins for buoyancy, because it is
+    /// the same integrator and that is the whole point. **A drift written straight into the
+    /// velocity would bypass the drag and the anisotropy both**, and with them the one
+    /// consequence worth having: a body's shape decides how the water treats it, so a long flat
+    /// thing lying across the flow is carried more slowly than a compact one, exactly as it
+    /// already sinks more slowly.
+    ///
+    /// ⚠️ **The units are worth stating, because they are easy to get wrong by a factor of
+    /// sixty.** A velocity in this project is world units per *second* and a tick is a
+    /// sixtieth of one, so the settled speed below is `0.1917 × current` units a second and a
+    /// cell covers `current ÷ 313` units per tick. At the shipped drag, a current of 36 carries
+    /// a cell 0.115 units a tick — about half the speed a grain of detritus sinks at.
+    #[test]
+    fn a_cell_carried_by_the_water_settles_at_a_speed_the_drag_decides() {
+        let world = config(|_| {});
+        let drag = f64::from(world.physics.drag);
+
+        for current in [1.0, A_READABLE_CURRENT, 200.0] {
+            let terminal = current * f64::from(DT) * drag / (1.0 - drag);
+            let (_, settled) = carried(current, 0.0, 4_000);
+
+            assert!(
+                (f64::from(settled) - terminal).abs() < terminal * 0.01,
+                "a loose cell in a current of {current} settled at {settled} units a second, \
+                 against the {terminal} that a standing force of {current} gives in water of \
+                 drag {drag}. A current written into the velocity rather than into the force \
+                 would read {} here",
+                current * f64::from(DT)
+            );
+        }
+    }
+
+    /// A column of cells, adhered top to bottom, spanning this much depth about mid-water.
+    ///
+    /// Vertical rather than horizontal - which [`made_of`] builds - because the current varies
+    /// with depth and a body lying flat feels the same push at both ends. A body standing on
+    /// end is the worst case there is for a shear pulling it apart.
+    fn a_column(cells: u8, apart: f32, height: f32) -> (Vec<Cell>, Vec<Spring>) {
+        let span = f32::from(cells - 1) * apart;
+        let top = height * 0.5 - span * 0.5;
+
+        let mut body = Vec::new();
+        let mut springs = Vec::new();
+
+        for index in 0..usize::from(cells) {
+            let down = apart * f32::from(u8::try_from(index).expect("a body is a few cells long"));
+            body.push(Cell::new(CellKind::Myocyte, Vec2::new(1_000.0, top + down)));
+
+            if index > 0 {
+                springs.push(Spring {
+                    a: index - 1,
+                    b: index,
+                    rest_length: apart,
+                    stiffness: 10.0,
+                });
+            }
+        }
+
+        (body, springs)
+    }
+
+    /// ⭐⭐ **A body is carried whole.** The shear is gentle at the scale of a body, and a
+    /// column of cells standing on end in it does not come apart.
+    ///
+    /// This is the one thing a depth-dependent force could plausibly break, and it is worth
+    /// being precise about why. The current at one end of a body is not the current at the
+    /// other, so a body standing on end is being pulled in two directions at once — and the
+    /// only thing holding it together is `development.rs`'s springs, which were given their
+    /// stiffness for a world in which the only external force was buoyancy and buoyancy is the
+    /// same at both ends.
+    ///
+    /// # The arithmetic, and then the measurement
+    ///
+    /// The difference in force across a body spanning `s` of a world `h` deep is
+    /// `2 × current × s ÷ h`. At the current below, over a 20-unit body in the shipped 1,152
+    /// unit column, that is **1.25** against a spring stiffness of 10 — so the ends are pulled
+    /// about an eighth of a unit further apart than they would otherwise sit, on a rest length
+    /// of four. That is the claim this test checks rather than trusts, over ten thousand ticks,
+    /// which is about six lifetimes.
+    ///
+    /// ⚠️ **If this ever fails the answer is a smaller current, not a stiffer spring.** A
+    /// stiffness is a property of the gene that grew the adhesion and evolution owns it; a
+    /// current is a property of the water and is one number in a settings file.
+    #[test]
+    fn a_body_is_carried_whole() {
+        let height = config(|_| {}).world.height;
+        let ticks = 10_000;
+
+        let stretched = |current: f64| -> f32 {
+            let world = config(|raw| {
+                raw.physics.current = current;
+                raw.limits.max_organisms = 1;
+                raw.limits.max_cells_per_organism = 64;
+            });
+            let (mut cells, springs) = a_column(6, 4.0, height);
+            let mut physics = Physics::new(&world);
+            let mut worst = 0.0f32;
+
+            for _ in 0..ticks {
+                physics.step(&mut cells, &springs);
+
+                for spring in &springs {
+                    let apart =
+                        wrapped_offset(cells[spring.a].pos, cells[spring.b].pos, world.world.width)
+                            .length();
+                    worst = worst.max((apart - spring.rest_length).abs());
+                }
+            }
+
+            assert!(
+                cells.iter().all(|cell| cell.pos.x.is_finite()),
+                "a body in a current of {current} left the numbers behind entirely"
+            );
+
+            worst
+        };
+
+        let still = stretched(0.0);
+        let carried = stretched(A_READABLE_CURRENT);
+
+        assert!(
+            carried < still + 0.25,
+            "a six-celled column spanning 20 units of depth was pulled {carried} out of shape \
+             in a current of {A_READABLE_CURRENT}, against {still} in still water. The \
+             arithmetic says an eighth of a unit; more than that and the profile is too steep \
+             at the scale of a body, and the number that comes down is the current"
+        );
+        assert!(
+            carried < 4.0,
+            "the springs of a body in a current of {A_READABLE_CURRENT} were {carried} units \
+             from their rest length of 4, so the body has come apart"
+        );
     }
 
     /// ⭐⭐ **A body with a wave running down it swims, and in isotropic water it cannot.**

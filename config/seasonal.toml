@@ -59,6 +59,7 @@ drag = 0.92
 drag_anisotropy = 2.0
 collision_stiffness = 40.0
 spring_damping = 0.35
+current = 0.0
 
 [behaviour]
 resting_amplitude = 0.8

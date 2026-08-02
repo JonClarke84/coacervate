@@ -404,9 +404,9 @@ struct Condition {
 /// changes made by the user"* among the things worth recording beside a mass extinction.
 ///
 /// The five tables here are exactly the ones [`World::retune`] will accept a change to, and
-/// exactly `settings.rs`'s twenty-five sliders less `run.max_ticks_per_second` — which is not a
-/// fact about the world at all, but about how fast a person is watching it.
-const CONDITIONS: [Condition; 26] = [
+/// exactly `settings.rs`'s sliders less `run.max_ticks_per_second` — which is not a fact about
+/// the world at all, but about how fast a person is watching it.
+const CONDITIONS: [Condition; 27] = [
     Condition {
         table: "light",
         label: "influx",
@@ -487,6 +487,17 @@ const CONDITIONS: [Condition; 26] = [
         label: "spring_damping",
         phrase: "how quickly an adhesion stops springing",
         read: |config| f64::from(config.physics.spring_damping),
+    },
+    Condition {
+        table: "physics",
+        // ⭐ A current is the one condition in this table that reads as weather rather than as a
+        // property of the water, which is exactly what SPEC section 3 means by *"the rest can be
+        // changed live, which is how environmental events work"*. Turning it up on a running
+        // world is the sea starting to move, and it belongs in the log for the same reason a
+        // change to the light does.
+        label: "current",
+        phrase: "how hard the water runs, one way at the surface and the other at the floor",
+        read: |config| f64::from(config.physics.current),
     },
     Condition {
         table: "behaviour",

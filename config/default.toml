@@ -65,6 +65,23 @@ drag_anisotropy = 2.0    # the power `drag` is raised to across a cell's own bod
                          # SPEC 8.
 collision_stiffness = 40.0
 spring_damping = 0.35
+current = 0.0            # a sideways force on every cell, running one way at the surface and
+                         # the other at the floor: `current × (1 - 2 × depth / height)`, added
+                         # beside buoyancy so it goes through the same drag. A cell settles at
+                         # `current × drag × dt / (1 - drag)` units a second, which is
+                         # `current / 313` units a TICK.
+                         #
+                         # **SHIPS INERT, and 0.0 is bit-for-bit the world every figure in this
+                         # project was measured on.** It was built to ask one question — can
+                         # bodies be made to pass one another without thinning the world out? —
+                         # because at equilibrium there are about 23 world units between
+                         # neighbouring cells, two cells touch at 6, and a body covers about 8
+                         # in a whole lifetime, so 99.96% of what a mouth touches is its own
+                         # family. ⚠️ The answer was NO: the stranger share does not leave a
+                         # thousandth until the water runs nine times faster than detritus
+                         # sinks, and by then the population has fallen 42% and the contact
+                         # fraction from 0.4723 to 0.3105. `config/current.toml` is the live
+                         # profile and carries the whole sweep. SPEC 8.
 
 [behaviour]
 resting_amplitude = 0.8  # how hard a myocyte contracts with nothing telling it otherwise —

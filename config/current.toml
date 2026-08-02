@@ -1,0 +1,115 @@
+# The `current` profile: the shipped world, with the water turning over.
+#
+# ⭐⭐ **This exists because nothing in this world has ever met anybody it was not born touching.**
+# Measured in the shipped world: about 23 world units between neighbouring cells at equilibrium,
+# two cells touching at 6.0, a newborn set down 6.2 from its parent, and a body covering about 8
+# units in a whole lifetime. A body has to travel 23 units to meet somebody and travels 8. So
+# contact is *inherited* rather than encountered — **99.96% of what a devorocyte touches is its
+# own family** — and predation, whose ledger entry moves energy `Biomass → Biomass`, is a
+# transfer within one lineage that no change to the price of a bite can reach.
+#
+# `physics.current` is a **shear**: `current × (1 - 2 × depth / height)` added to every cell's
+# sideways force, so the surface runs one way, the floor runs the other, and how fast a body is
+# carried is decided by how deep it is. Since `CellKind::buoyancy` already sorts bodies by depth,
+# what a body is *made of* decides how fast the water takes it. Nothing tells a body where to go.
+#
+# Everything below is `default.toml` with **one number changed**: `physics.current`, from 0.0 to
+# 600.0. Read `default.toml` for what the rest of them mean; the comments there are the document
+# and are deliberately not copied.
+#
+# ⚠️⚠️ **Do not expect predation from it. This profile is a recorded negative.** It is here so the
+# sweep can be re-run rather than argued about. Seed 42, 60,000 ticks, 32 devorocyte-carrying
+# founders, sampling every living mouth every 20 ticks — `assay.rs`'s
+# `a_current_buys_strangers_by_spending_contact`:
+#
+#   current | contact fraction | stranger share | alive | biomass
+#   --------+------------------+----------------+-------+--------
+#       0.0 |           0.4723 |         0.0004 |  1753 |  25123
+#      0.06 |           0.4697 |         0.0005 |  1778 |  24759
+#       0.3 |           0.4436 |         0.0013 |  1693 |  24459
+#       0.6 |           0.4640 |         0.0007 |  1731 |  24189
+#         6 |           0.4574 |         0.0006 |  1766 |  24423
+#        36 |           0.4350 |         0.0005 |  1509 |  24561
+#       100 |           0.3994 |         0.0209 |  1867 |  26886
+#       180 |           0.3762 |         0.0468 |  1336 |  29307
+#       300 |           0.3215 |         0.1855 |  1615 |  29553
+#       600 |           0.3105 |         0.4250 |  1009 |  34406
+#      1000 |           0.3226 |         0.6554 |   650 |  35067
+#
+# The bar, set before any of it was run, was a stranger share above 0.30 while the contact
+# fraction stayed above 0.35. **No row clears both.** The last setting still above 0.35 contact
+# is 180, at a stranger share a sixth of what was wanted; the first setting past 0.30 strangers
+# is 600, and by then a third of the population is gone. Biomass *rises* 40% while the population
+# falls 63% — the same energy in fewer and larger bodies, which is a world with more space
+# between its occupants. **A current fierce enough to mix lineages is a current that thins the
+# world out**, which is the same trade wider dispersal offers and a worse one: dispersal buys a
+# stranger share of 0.7617 at a contact fraction of 0.3568.
+#
+# ⚠️ 600 is not a recommendation. It is the smallest value measured to mix at all, and a run of
+# this profile is a run of a world whose carrying capacity is not the shipped one — so **no
+# coefficient taken here is comparable with any figure in SPEC or docs/PHASE7.md**.
+
+[world]
+seed = 42
+width = 2048.0
+height = 1152.0
+grid_cols = 256
+grid_rows = 144
+years_per_tick = 1000.0
+
+[light]
+influx = 0.001
+cap = 8.0
+gradient = 0.75
+patchiness = 0.5
+patch_drift = 0.0006
+diffusion = 0.04
+season_period = 21000
+season_amplitude = 0.0
+
+[physics]
+drag = 0.92
+drag_anisotropy = 2.0
+collision_stiffness = 40.0
+spring_damping = 0.35
+current = 600.0          # ⭐ **The one number this profile changes.** At the shipped drag a cell
+                         # settles at `current / 313` world units a tick, so this is 1.9 a tick
+                         # at the surface and 1.9 the other way at the floor — about nine times
+                         # the 0.2 a grain of detritus sinks at, and a body spanning 20 units of
+                         # depth is pulled about a fifth of a unit out of shape by the
+                         # difference across it, against springs whose rest lengths are eights.
+                         # It is charged for nothing: `metabolism.movement_cost` is levied only
+                         # against a muscle's own work, so drifting is free exactly as sinking
+                         # is. What it costs is the population — see the table above.
+
+[behaviour]
+resting_amplitude = 0.8
+stroke = 1.0
+
+[metabolism]
+upkeep_scale = 1.0
+gene_cost = 0.0001
+movement_cost = 0.0001
+reproduction_threshold = 2.2
+offspring_share = 0.45
+
+[mutation]
+point_rate = 0.06
+point_sigma = 0.12
+duplication_rate = 0.02
+deletion_rate = 0.02
+insertion_rate = 0.01
+reorder_rate = 0.02
+genome_duplication_rate = 0.0008
+
+[limits]
+max_organisms = 4000
+max_cells_per_organism = 64
+max_genes = 128
+max_dev_steps = 16
+
+[run]
+max_wall_clock_hours = 12.0
+max_ticks = 0
+max_ticks_per_second = 0
+reseed_on_extinction = false

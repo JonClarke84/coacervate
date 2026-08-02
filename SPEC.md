@@ -91,6 +91,10 @@ drag_anisotropy = 2.0    # power `drag` is raised to across a cell's body axis �
                          # see section 8. 1.0 is isotropic water, in which nothing can swim
 collision_stiffness = 40.0
 spring_damping = 0.35
+current = 0.0            # a sideways force running one way at the surface and the other at the
+                         # floor: `current × (1 - 2 × depth / height)`. ⚠️ Ships at nought, and
+                         # `config/current.toml` is the same world at 600 — a **recorded
+                         # negative**, see section 8
 
 [behaviour]
 resting_amplitude = 0.8  # how hard a myocyte contracts with nothing telling it otherwise —
@@ -1250,6 +1254,8 @@ Per tick, semi-implicit Euler:
 force = 0
 force += spring forces from adhered neighbours (Hooke, with spring_damping)
 force += collision repulsion from overlapping non-adhered cells
+force.y += buoyancy(cell.kind)                     // external; see below
+force.x += current × (1 - 2 × pos.y / height)      // external; ships at nought, see below
 
 vel += force × dt
 along = the direction between this cell's adhered neighbours, if it has two
@@ -1396,6 +1402,66 @@ facts about *this* section's arithmetic rather than about cells:
   lying flat has its axis across the pull, so it sinks at about half the rate a loose cell
   would. A long flat body settles more slowly than a compact one — which is correct, and which
   came out of the anisotropy rather than being written down.
+
+### ⭐⭐ `physics.current`, and the measurement that says to leave it at nought
+
+The second external force, added beside buoyancy in the same pass and for the same reasons —
+`force.x += current × (1 − 2 × depth / height)`. It is a **shear**: the surface runs one way,
+the floor runs the other, and mid-depth does not move. It is a force rather than a velocity, so
+it goes through both drags above; and `metabolism.movement_cost` is levied only inside the
+muscle loop, so **being carried is free exactly as sinking is free**. A cell settles at
+`current × drag × dt / (1 − drag)` world units a second, which is `current / 313` a tick.
+
+**What it was built to ask.** Section 8's locomotion finding — a body covers about two thirds of
+its own length in a whole lifetime — has a twin nobody had written down. At equilibrium there are
+about **23 world units between neighbouring cells**, two cells touch at **6.0**, a newborn is set
+down **6.2** from its parent, and a body covers about **8 units in a life**. *A body has to
+travel 23 units to meet somebody and travels 8.* So contact in this world is **inherited, not
+encountered**: 99.96% of what a devorocyte touches is its own family, and two lineages seeded 256
+units apart spread until they overlap completely in space while four cells in four thousand ever
+touch a stranger. Since `Ledger::predate` moves energy `Biomass → Biomass`, predation is a
+transfer *within* one family — which is why no change to the price of a bite has ever moved a
+coefficient, and why a shear, which raises relative motion without lowering density, was worth
+one config value.
+
+**⚠️⚠️ The answer is no.** Seed 42, 60,000 ticks, 32 devorocyte-carrying founders, every living
+mouth sampled every 20 ticks — `assay.rs`'s `a_current_buys_strangers_by_spending_contact`:
+
+| `current` | contact fraction | stranger share | alive | biomass |
+| --- | --- | --- | --- | --- |
+| **0.0 — as shipped** | **0.4723** | **0.0004** | 1,753 | 25,123 |
+| 0.06 | 0.4697 | 0.0005 | 1,778 | 24,759 |
+| 0.3 | 0.4436 | 0.0013 | 1,693 | 24,459 |
+| 0.6 | 0.4640 | 0.0007 | 1,731 | 24,189 |
+| 6 | 0.4574 | 0.0006 | 1,766 | 24,423 |
+| 36 | 0.4350 | 0.0005 | 1,509 | 24,561 |
+| 100 | 0.3994 | 0.0209 | 1,867 | 26,886 |
+| 180 | 0.3762 | 0.0468 | 1,336 | 29,307 |
+| 300 | 0.3215 | 0.1855 | 1,615 | 29,553 |
+| 600 | 0.3105 | **0.4250** | 1,009 | 34,406 |
+| 1,000 | 0.3226 | **0.6554** | **650** | 35,067 |
+
+The bar, set before any of it was run, was a stranger share above **0.30** while the contact
+fraction stayed above **0.35**. **No setting clears both.** The last one still above 0.35 contact
+is 180, whose stranger share is a sixth of what was wanted; the first past 0.30 strangers is 600,
+by which point a third of the population is gone.
+
+The last two columns say what is happening. **Biomass rises 40% while the population falls 63%**
+— the same energy in fewer and larger bodies, which is a world with *more* space between its
+occupants. A current fierce enough to mix lineages is a current that thins the world out, which
+is the same trade wider dispersal offers and a worse one: dispersal buys a stranger share of
+0.7617 at a contact fraction of 0.3568.
+
+**So the shipped value is nought**, `config/default.toml` is bit-for-bit the world every
+coefficient in this document was measured on — `run.rs`'s
+`a_world_with_no_current_is_the_world_that_was_there_before` holds a whole shipped world to that,
+population, cell count and every cell position — and `config/current.toml` exists so the sweep
+can be re-run rather than argued about. It is not a recommendation.
+
+⚠️ What this does **not** say is that a current changes nothing. It works: composition sets
+depth, depth sets speed, and a body's genome therefore decides how fast the water takes it, with
+nothing telling it where to go. What it says is that the amount of shear needed before that
+matters to *who a mouth meets* is more shear than this ecology survives.
 
 Neighbour queries use a **uniform spatial hash** sized to **twice** the largest cell radius.
 This is the single most important performance decision on the CPU side: it takes collision
