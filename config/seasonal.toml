@@ -15,8 +15,10 @@
 # 8,000-tick filling time, which is 4.6 lifetimes, so no body ever lives through a change in its
 # own conditions. The competition assay was run flat and seasoned, three seeds, two whole
 # periods: the selection coefficient on the largest free shape change this genome can express
-# moved from **+0.71 %/generation flat to +0.88 %/generation seasoned**, a difference of 0.17
-# against a seed-to-seed spread of ±0.5. **The season does not detectably change what shape is
+# moved from **+0.50 %/generation flat to +0.61 %/generation seasoned**, a difference of 0.12
+# against a seed-to-seed spread of ±0.35 — recorded as +0.71 → +0.88 against ±0.5 before SPEC
+# section 6's generation-time correction, which scales all three by one factor and leaves the
+# comparison untouched. **The season does not detectably change what shape is
 # worth.** What it does change is that the population rises and falls on a known clock, which is
 # what makes Q32's claim — that body size tracks the population rather than the light — testable
 # for the first time.

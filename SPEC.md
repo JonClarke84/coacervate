@@ -24,6 +24,60 @@ is the entire ruleset. Everything interesting is meant to be a *consequence*, no
 events; no scoring; no designed progression; no scripted behaviours; no hand-authored
 species.
 
+### ⭐⭐⭐ What the specification actually produces, measured
+
+Eight design rounds have converged on one arithmetic fact. It belongs at the front of this
+document rather than inside the section whose parameter it happens to concern, because it is a
+statement about the whole ruleset above and not about any one number in it.
+
+> **Coacervate as specified produces photosynthetic multicellular life with real body-plan
+> diversity, gene duplication driving serial repetition, and named lineages that split and go
+> extinct. It does not produce predation or locomotion.**
+
+A body travels about **0.4 of its own length in a whole lifetime** — on the order of 8 world
+units against the twenty-odd a two-celled body spans. Its neighbouring cells sit about **23 units
+away**, and the nearest body of an unrelated lineage **60 to 88 units away**. Every specialised
+cell in section 6's table is therefore paying, every tick it is alive, for machinery it can never
+get into position to use. The cost side is real and the payoff side is out of reach, and that is
+a fact about distance rather than about price — which is why five rounds of changing prices did
+not move it.
+
+⚠️ **Read this the way section 11 requires the event log to be read.** Complexity of one kind
+appeared here and complexity of another did not. That is a result about this world's arithmetic;
+it is not a verdict on the lineages that live in it, and a world without mouths in it is not a
+world that failed to grow any.
+
+The five measurements it rests on, all taken in one week and all reproducible from the repository:
+
+- **Predation, definitively.** The invasion analysis in
+  `crates/coacervate-app/src/assay.rs` — calibrated against the competition assay, both signs and
+  the 1 : 4.1 against 1 : 3.3 arm ratio reproducing — records a third devorocyte at **nought
+  establishments out of thirty-six independent introductions**, across dispersal ×1, ×32 and
+  ×128. At ×128, **76% of what a mouth touches is a stranger** and a third photocyte invades at
+  **+30.6 %/generation** in the same water on the same tick, so the instrument demonstrably
+  resolves there. Mixing was not the binding constraint.
+- **Contact is inherited rather than encountered.** **99.9%** of a devorocyte's contacts are its
+  own descendants. A newborn is set down **6.2 units** from its parent and two photocytes touch
+  at **6.0**, so the only thing in this world that reliably puts two cells beside one another is
+  birth. `ledger.rs`'s `predate` is a lossless `biomass → biomass` transfer, so a bite taken out
+  of a relative moves energy from one pocket of a family into another and is worth nothing.
+- **Every cost-side lever is self-cancelling, because income is endogenous.** Tripling
+  `LIFETIME_UPKEEP` moved field drawdown from **52% to 63.4%** and the founder's net income from
+  **+0.0108 to +0.0072** a tick — and the equilibrium simply re-formed, with the marginal body at
+  break-even in poorer water. Making life dearer makes the water richer per body by killing
+  bodies, which is the same feedback section 3 records for `upkeep_scale` arriving from the other
+  direction.
+- **The economy is linear or worse in every term.** Income, upkeep, the reproduction bar and
+  lifespan are all linear in cells, and occlusion is actively *sub*-linear because a bigger body
+  self-shades more. So growth is a random walk and specialisation is a pure loss — see section
+  6's price list.
+- ⚠️ **The dense world is nine times steeper, and nobody knows why.** A third photocyte is worth
+  **+12.80 %/generation** at four times density against **+1.45** in the shipped world, monotone
+  across six densities with no threshold anywhere between them. Re-recorded at section 6's
+  corrected generation time those are **+8.94** and **+1.01**; the ratio is **8.8 either way**,
+  which is the part that matters. **This is the strongest unexplained signal in the project and
+  the best lead for the next round.** `docs/NEXT.md` carries it.
+
 ---
 
 ## 2. Units, coordinates, determinism
@@ -276,10 +330,10 @@ the other direction.
 | Profile | Intent |
 | --- | --- |
 | `default` | Balanced. The starting point for experiments on the PC. Settles near 2,200 organisms with the field about half eaten. |
-| `dense` | ⭐ **The same total energy in a quarter of the water** — `world.height` cut to 288 with `light.influx` raised fourfold to match, so `tiles × influx` is the `default` profile's exactly. It exists to ask section 6's open question: does a feeding-strategy split appear once bodies actually *meet* one another? At the shipped density only **13.5%** of cells are in contact with a foreign body; at four times it, **58.8%** are, and predation measured **eight times** higher. ⚠️ **The height is what shrinks, never the width.** Section 8 warns that springs have no length limit and are not found by the spatial hash, and a 64-cell body at `MAX_REST_LENGTH` reaches 870 units — so in a world narrower than about 1,200 a single chain reaches more than half way round it and that warning goes live. ⚠️ And the population *falls* here rather than holding: raising `influx` further to prop it back up is the `bloom` failure below, arrived at by a different road. |
+| `dense` | ⭐ **The same total energy in a quarter of the water** — `world.height` cut to 288 with `light.influx` raised fourfold to match, so `tiles × influx` is the `default` profile's exactly. It exists to ask section 6's open question: does a feeding-strategy split appear once bodies actually *meet* one another? ⚠️⚠️ **This row claimed 13.5% of cells in foreign contact rising to 58.8%, and eight times the predation. Re-measured, it is corrected to: contact 0.4723 → 0.5274 (×1.12) and predation ×1.09.** The open-world figure reproduces to four decimals against a committed test, so the Phase 4 number is the wrong one; bodies here were never rarely in contact, they were in contact with their own descendants. ⭐ **What density does buy is the stranger share — 0.0004 → 0.0463, a factor of 116** — which is the statistic this row should have quoted, and which is still not enough to make a mouth pay (see section 10). ⚠️ **The height is what shrinks, never the width.** Section 8 warns that springs have no length limit and are not found by the spatial hash, and a 64-cell body at `MAX_REST_LENGTH` reaches 870 units — so in a world narrower than about 1,200 a single chain reaches more than half way round it and that warning goes live. ⚠️ And the population *falls* here rather than holding: raising `influx` further to prop it back up is the `bloom` failure below, arrived at by a different road. |
 | `slow` | `max_ticks_per_second` reduced so meaningful change happens over hours rather than minutes. For leaving it up on a second screen and noticing it rather than watching it. |
 | `bloom` | High light influx — the old `0.012` is exactly this. **The population fills `max_organisms` and stops, with the water still full**, which is stagnation by way of the arena rather than by way of abundance. Worth shipping precisely because it is what a too-bright world actually looks like from the outside: a healthy-looking constant population with no selection acting on it. |
-| `seasonal` | ⭐⭐ **The shipped world with the light rising and falling** — `light.season_amplitude` 0.0 → 0.25 and nothing else changed. It exists because every other profile in this project is a *constant* environment, in which being adapted is a fixed fact about a lineage. ⚠️ **Do not expect a muscle from it**, and that is measured rather than hoped: the competition assay run flat and seasoned, three seeds, two whole periods, moved the coefficient on the largest free shape change from **+0.71 to +0.88 %/generation** against a seed-to-seed spread of ±0.5 — no detectable difference. The fastest the standing field can change is its own 8,000-tick filling time, which is 4.6 lifetimes, so **no body ever lives through a change in its own conditions.** What it is for is ecology and chronicle: a population that rises and falls on a known clock is the first thing in this project that makes section 15's Q32 — does body size track the light or the population? — testable at all. |
+| `seasonal` | ⭐⭐ **The shipped world with the light rising and falling** — `light.season_amplitude` 0.0 → 0.25 and nothing else changed. It exists because every other profile in this project is a *constant* environment, in which being adapted is a fixed fact about a lineage. ⚠️ **Do not expect a muscle from it**, and that is measured rather than hoped: the competition assay run flat and seasoned, three seeds, two whole periods, moved the coefficient on the largest free shape change from **+0.50 to +0.61 %/generation** against a seed-to-seed spread of ±0.35 — no detectable difference. (Recorded as +0.71 → +0.88 against ±0.5 before section 6's generation-time correction, which scales all three together and leaves the comparison exactly as it was.) The fastest the standing field can change is its own 8,000-tick filling time, which is 4.6 lifetimes, so **no body ever lives through a change in its own conditions.** What it is for is ecology and chronicle: a population that rises and falls on a known clock is the first thing in this project that makes section 15's Q32 — does body size track the light or the population? — testable at all. |
 | `famine` | Low influx — a world of a few hundred bodies rather than a few thousand. ⚠️ **It does not produce extinction, and that is a measured finding rather than an oversight.** At a tenth of the shipped light the population settles at about 210 and goes on turning over indefinitely, because how hard a body has to work to replace itself does not depend on how much light there is — only how many bodies the world can carry does. What *does* end a run is `upkeep_scale`: at 3 or above, a founder dies of old age before it has earned the reproduction threshold, and nothing is ever born. If a preset is wanted that demonstrates extinction, that is the slider it has to move. |
 
 ---
@@ -537,17 +591,19 @@ world does not collapse, and it carries **more** organisms on average rather tha
 the same energy goes into more and smaller bodies (5.65 cells a body flat against 3.32 at ±50%).
 
 ⚠️ **The bound of 0.5 is where the evidence stops and it is not a drift argument.** With a trough
-of a few hundred bodies and the largest real selection coefficient in this world at 0.85
-%/generation, `N·s` is comfortably above 1 at every amplitude the gate allows and for some way
+of a few hundred bodies and the largest real selection coefficient in this world at 0.59
+%/generation (0.85 at the divisor section 6 corrects), `N·s` is comfortably above 1 at every
+amplitude the gate allows and for some way
 past it — drift does not outrun selection anywhere in the range. A bound is still not optional:
 above 1.0 the multiplier goes negative, which is light running backwards.
 
 #### ⚠️ And the honest headline: the season does not change what shape is worth
 
 Run under a ±25% season at period 21,000, three seeds, two whole periods, the competition assay
-returns the coefficient on the largest free shape change the genome can express at **+0.88
-%/generation**, against **+0.71** flat. The difference is 0.17 against a seed-to-seed spread of
-±0.5. **There is no detectable effect.** The reason is in the floor above: the fastest the
+returns the coefficient on the largest free shape change the genome can express at **+0.61
+%/generation**, against **+0.50** flat — +0.88 against +0.71 at the divisor section 6 corrects.
+The difference is 0.12 against a seed-to-seed spread of
+±0.35. **There is no detectable effect**, at either divisor, since both scale together. The reason is in the floor above: the fastest the
 standing field can change is its own 8,000-tick filling time, which is 4.6 lifetimes, so no body
 ever lives through a change in its own conditions. Build a season because a world that varies is
 the world this project is about; do not build one expecting a muscle.
@@ -845,18 +901,34 @@ written, by an instrument that prices a body plan in forty minutes instead of a 
 competition assay — `crates/coacervate-app/src/assay.rs` — seeds two founder sets that differ by
 **exactly one mutation** alternately into the shipped world after the dawn, attributes every
 organism born afterwards to the arm its parent belonged to, and reads the ratio of living
-descendants after 42,000 ticks (23.9 generations). Its noise floor is **±0.16 %/generation** and
-it resolves about **0.3**.
+descendants after 42,000 ticks (**34.3** generations). Its noise floor is **±0.11 %/generation**
+and it resolves about **0.21**.
 
-| Arm B, against an identical arm A | upkeep added | descendant ratio | **coefficient** |
-| --- | --- | --- | --- |
-| a third **photocyte** | +0.004/tick | 1.076 | **+0.04 %/gen** — neutral |
-| the longest **`rest_length`** the genome can ask for (8.0 → 13.6) | none | 1.297 / 1.063 / 1.289 | **+0.71 %/gen** |
-| a third **sclerocyte** | +0.002/tick | 0.855 / 0.755 | **−1.07 %/gen** |
-| a third **myocyte**, holding still | +0.005/tick | 0.593 | **−2.46 %/gen** |
-| a third **myocyte**, beating at 2.5 rad/s | +0.005/tick | 0.516 / 0.355 | **−2.7 to −4.4 %/gen** |
-| a third **devorocyte** | +0.009/tick | 0.126 / 0.236 | **−6.1 to −9.0 %/gen** |
-| a **myocyte with an adhered sensocyte** | +0.011/tick | **0.097** | **−8.6 %/gen** |
+#### ⚠️⚠️ The divisor was wrong, and every figure below is re-recorded
+
+`assay.rs`'s `GENERATION` was **1,753.9**, which is the mean **lifetime** — how long a body lives.
+A generation is the mean age of a parent at the moment it has a child, and that is **1,225.2**
+(measured over ticks 50,000–150,000 and 102,622 births; 1,214.3 over a whole run, the filling
+phase being full of young parents). A body here reaches its reproduction bar around tick 458 of
+its own life and goes on breeding until it dies, so the two numbers are a long way apart, and it
+is the birth clock that selection compounds on.
+
+**A shorter generation is *more* generations in the same window** — 42,000 ticks is 34.3 rather
+than 23.9 — so the same log-ratio spread over more of them is a **smaller** coefficient. Every
+%/generation figure this project has ever recorded multiplies by **0.6986**; every generation
+*count* multiplies by 1.4315. ⭐ **No sign, no ordering, no ratio and no conclusion moves**,
+because one factor multiplies all of them at once — including both sides of every break-even
+comparison below. The descendant ratios are the measurement and they are untouched.
+
+| Arm B, against an identical arm A | upkeep added | descendant ratio | **coefficient** | was, at 1,753.9 |
+| --- | --- | --- | --- | --- |
+| a third **photocyte** | +0.004/tick | 1.076 | **+0.03 %/gen** — neutral | +0.04 |
+| the longest **`rest_length`** the genome can ask for (8.0 → 13.6) | none | 1.297 / 1.063 / 1.289 | **+0.50 %/gen** | +0.71 |
+| a third **sclerocyte** | +0.002/tick | 0.855 / 0.755 | **−0.75 %/gen** | −1.07 |
+| a third **myocyte**, holding still | +0.005/tick | 0.593 | **−1.72 %/gen** | −2.46 |
+| a third **myocyte**, beating at 2.5 rad/s | +0.005/tick | 0.516 / 0.355 | **−1.89 to −3.07 %/gen** | −2.7 to −4.4 |
+| a third **devorocyte** | +0.009/tick | 0.126 / 0.236 | **−4.26 to −6.29 %/gen** | −6.1 to −9.0 |
+| a **myocyte with an adhered sensocyte** | +0.011/tick | **0.097** | **−6.01 %/gen** | −8.6 |
 
 The world keeps extra photocytes — 3.28 cells a body after 24 generations against the control's
 1.98 — and **sheds every other kind of cell inside two dozen generations**: 2.22 for a sclerocyte,
@@ -866,17 +938,18 @@ The world keeps extra photocytes — 3.28 cells a body after 24 generations agai
 > photocyte's income scales linearly with photocyte count, upkeep scales linearly with cells,
 > section 10's reproduction threshold is linear in cells and section 10's lifespan is linear in
 > cells. Occlusion is actively *sub*linear, because a bigger body self-shades more. So growth is
-> a random walk and specialisation is a pure loss, at about **−0.5 %/generation for every
-> 0.001/tick of upkeep, whatever the cell does.**
+> a random walk and specialisation is a pure loss, at about **−0.35 %/generation for every
+> 0.001/tick of upkeep, whatever the cell does** (−0.5 at the old divisor).
 
-**The arithmetic that closes the muscle question.** A muscle must earn **+2.5 %/generation** to
-break even. The entire measured value of shape in this world — the largest free shape change the
-genome can express, taken in full and for nothing — is **+0.85 %/generation**. A beating muscle
-shifts its body's mean geometry by 0.8% against `rest_length`'s 70%, so its share of that channel
-is about 1%: **+0.01 against −2.7, a ratio of 1 : 270.** Even a muscle that could hold a shape
-perfectly captures at most the whole channel, **+0.85 against −2.5** — and `rest_length` already
-collects it for nothing, one point mutation away. This is why a self-shading payoff is not built,
-and it is a measurement rather than an opinion.
+**The arithmetic that closes the muscle question.** A muscle must earn **+1.75 %/generation** to
+break even (+2.5 at the old divisor). The entire measured value of shape in this world — the
+largest free shape change the genome can express, taken in full and for nothing — is **+0.59
+%/generation** (+0.85). A beating muscle shifts its body's mean geometry by 0.8% against
+`rest_length`'s 70%, so its share of that channel is about 1%: **+0.007 against −1.89, a ratio of
+1 : 270** — the ratio being untouched by the divisor, which is the point. Even a muscle that
+could hold a shape perfectly captures at most the whole channel, **+0.59 against −1.75** — and
+`rest_length` already collects it for nothing, one point mutation away. This is why a self-shading
+payoff is not built, and it is a measurement rather than an opinion.
 
 ⚠️ **Two things every coefficient here must be quoted with.** It measures the **filling** regime —
 two-celled bodies, a population rising towards 2,100 — and section 15's 300,000-tick world holds
@@ -887,9 +960,10 @@ excess over its own same-seed control.
 
 ⚠️ **The photocyte row does not reproduce and the honest note belongs here.** Rebuilt from the
 public API with arm B being the founder plus one appended gene, that arm comes back at **1.531**
-rather than 1.076 — `+1.52 %/generation` against a noise floor of ±0.16. The noise floor itself
-reproduces (+0.063 against a recorded +0.064 at seed 42) and the myocyte row reproduces (−3.07
-against −2.46 %/gen), so the instrument agrees with itself; what differs is what a *third cell*
+rather than 1.076 — `+1.06 %/generation` against a noise floor of ±0.11 (+1.52 against ±0.16 at
+the old divisor). The noise floor itself
+reproduces (+0.063 against a recorded +0.064 at seed 42) and the myocyte row reproduces (−2.14
+against −1.72 %/gen), so the instrument agrees with itself; what differs is what a *third cell*
 was made of. Doubling a body's photocytes while adding 44% to its bill is not neutral. What
 survives, and it is the load-bearing half, is the **pair**: the same three-celled body differing
 in one `child_kind` keeps the earning cell over the silent one at three to one, and the arm that
@@ -1765,6 +1839,31 @@ Detritus sinks slowly and decays into the field tile beneath it.
 soup, so devorocytes contacting foreign cells is simply a better strategy under some
 conditions. Whether a herbivore/predator split appears is one of the genuinely interesting
 outcomes and must never be scripted.
+
+### ⭐⭐⭐ It does not appear, and that is now a measurement rather than an absence
+
+The paragraph above says *under some conditions*. Those conditions have been looked for and are
+not reachable in this world. Section 1 carries the headline; what belongs here is the mechanism.
+
+A devorocyte's entire income is a bite, and a bite requires something to be inside `r₁ + r₂` of
+it. In the shipped world **99.9% of what a mouth touches is its own descendant**, because birth
+is the only thing that puts two cells beside one another: a newborn is set down 6.2 units from
+its parent, two cells touch at 6.0, neighbouring cells at equilibrium are about 23 units apart,
+and the nearest unrelated body is 60 to 88 away — against a lifetime's travel of about 8. And
+`ledger.rs`'s `predate` is a lossless `biomass → biomass` transfer, so eating a relative moves
+energy from one pocket of a family into another.
+
+Two instruments were then built to ask whether *mixing* was the missing condition, and both say
+no. `assay.rs`'s dispersal sweep reaches **76% strangers** at ×128 dispersal, in a world holding
+**44% more bodies** than the shipped one rather than fewer — and a third devorocyte released into
+that water establishes in **nought of twelve introductions**, three settings and thirty-six
+introductions in all, while a third photocyte released on the same tick invades at **+30.6
+%/generation**. The instrument resolves; the mouth does not pay.
+
+⚠️ **So the constraint is arithmetic and no price moves it.** A devorocyte costs 0.009 a tick
+against a photocyte's 0.004, and it must find a stranger to earn anything at all. Recording this
+is not the same as closing it — section 1's fifth measurement and `docs/NEXT.md` name what would
+have to change — but a future round should not spend a 300,000-tick run rediscovering it.
 
 ---
 

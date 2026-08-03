@@ -29,6 +29,7 @@ of the apparently odd choices are load-bearing.
 | `CLAUDE.md` (this file) | Working agreement, architecture, safety limits, Windows setup, decision log |
 | [`SPEC.md`](SPEC.md) | The simulation model in implementable detail: genome, development, physics, energy, rendering, file formats |
 | [`README.md`](README.md) | Public-facing description. This is a portfolio piece — keep it good. |
+| [`docs/NEXT.md`](docs/NEXT.md) | ⭐ **Read this before starting a round.** What is measured, what is refuted, and the three things worth trying next in priority order. Written to be picked up cold. |
 
 ---
 
@@ -514,3 +515,33 @@ Recorded so they are not silently relitigated. Each was argued through.
   observability early so you can see *why* a run failed.
 - **A gorgeous renderer showing boring organisms is still boring.** The visuals depend on
   evolution producing shapes worth looking at. That's the simulation's job.
+
+### ⭐⭐⭐ The first risk has been measured, and the answer is *half*
+
+The bullet above asked whether the model produces interesting complexity. Eight design rounds and
+two purpose-built instruments have now answered it, and the answer splits cleanly in two rather
+than coming back yes or no. **It produces complexity of one kind and not of another, and it is
+worth being precise about which.**
+
+> **Coacervate as specified produces photosynthetic multicellular life with real body-plan
+> diversity, gene duplication driving serial repetition, and named lineages that split and go
+> extinct. It does not produce predation or locomotion.**
+
+The developmental genome was the decision this whole project rested on — the Decision Log calls it
+"the single most important decision" — and it did the work asked of it. Bodies gain structure.
+Duplication produces serial repetition. Lineages diverge far enough to be clustered, named and
+watched going extinct. None of that was guaranteed and most evolution simulators do not get it.
+
+What did not appear is anything that has to **reach** something. A body travels about **0.4 of its
+own length in a whole lifetime** — on the order of 8 world units — against neighbouring cells
+about **23 units** away and the nearest unrelated body **60 to 88**. So a mouth, a muscle or a
+sensor is paying upkeep every tick for machinery it can never get into position to use. That is a
+fact about distance, not about price, which is why five rounds of changing prices did not move it;
+`SPEC.md` section 1 carries the five measurements, section 10 carries the mechanism, and
+`docs/NEXT.md` carries what would have to change.
+
+⚠️ Two things this is **not**. It is not a defect to be fixed before the renderer or the GPU port —
+the world runs, the ecology is stable and the chronicle has things to say about it. And it is not
+a judgement on the lineages: the *Generated text must never imply a direction* rule above applies
+to this paragraph as much as to the event log. A world without mouths in it is not a world that
+failed to grow any.

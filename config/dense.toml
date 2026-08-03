@@ -4,9 +4,29 @@
 # actually meet each other?** SPEC section 6 makes predation emergent rather than scripted, and
 # half a million ticks of the `default` profile produced one devorocyte in a population of 794.
 # The diagnostic reason is not that eating is a bad living; it is that in the shipped world a
-# body hardly ever touches a stranger. Measured: at the shipped density **13.5%** of cells are
-# in contact with a foreign body at any moment, and at four times that density **58.8%** are —
-# which came out as **eight times the predation**.
+# body hardly ever touches a stranger.
+#
+# ⚠️⚠️ **CORRECTED. This file claimed 13.5% rising to 58.8%, and eight times the predation. None
+# of the three reproduces.** Re-measured with `assay.rs`'s `what_a_mouth_meets`, 60,000 ticks,
+# seed 42, 32 devorocyte-carrying founders, this profile against `default.toml`:
+#
+#   contact fraction   0.4723 -> 0.5274   (x1.12, not 13.5% -> 58.8%)
+#   predation          x1.09              (not x8)
+#   stranger share     0.0004 -> 0.0463   (x116)
+#
+# The open-world figure is the one to trust: **0.4723 reproduces to four decimals** against the
+# committed assertion in `a_current_buys_strangers_by_spending_contact`, so it is Phase 4's
+# 13.5% that is wrong rather than the re-measurement. Bodies were never rarely in contact; they
+# were in contact with **their own descendants**, which is a quite different fact and one no
+# amount of density changes much.
+#
+# ⭐ **What density actually buys is the stranger share, and it buys a great deal of it: x116.**
+# That is the statistic neither this file nor `main.rs` quoted, and it is the one the profile
+# should have been read against all along — a mouth in the shipped world meets a foreign lineage
+# four times in ten thousand contacts, and here it meets one about once in twenty. ⚠️ It is
+# still not enough: `assay.rs`'s invasion analysis puts a third devorocyte at nought
+# establishments out of thirty-six introductions, including a world at three quarters strangers.
+# See `docs/NEXT.md`.
 #
 # Everything below is `default.toml` with three numbers changed, and the reasoning for each is
 # beside it. Read `default.toml` for what the rest of them mean; the comments there are the

@@ -927,8 +927,21 @@ mod tests {
     /// SPEC section 3 lists the named presets and `config/dense.toml` is the fourth. It exists to
     /// ask whether a feeding-strategy split appears once bodies actually meet one another - SPEC
     /// section 6 makes predation emergent, and half a million ticks of the shipped world produced
-    /// one devorocyte, because at that density a cell is in contact with a stranger 13.5% of the
-    /// time.
+    /// one devorocyte.
+    ///
+    /// ⚠️⚠️ **Corrected: this comment said "in contact with a stranger 13.5% of the time", and
+    /// that figure does not reproduce.** Re-measured with `assay.rs`'s `what_a_mouth_meets` over
+    /// 60,000 ticks at seed 42, this profile against the shipped world: the contact fraction goes
+    /// **0.4723 to 0.5274**, a factor of **1.12** rather than 13.5% to 58.8%, and predation
+    /// **x1.09** rather than eight times. The open-world reading is the reliable one, since
+    /// 0.4723 reproduces to four decimals against
+    /// `a_current_buys_strangers_by_spending_contact`'s committed assertion, so Phase 4's number
+    /// is the wrong one. Bodies in the shipped world are in contact constantly; what they are in
+    /// contact with is their own descendants.
+    ///
+    /// ⭐ **What density buys is the stranger share: 0.0004 to 0.0463, a factor of 116**, which
+    /// is the statistic neither document quoted. It is still not enough to make a mouth pay - see
+    /// `docs/NEXT.md` and `assay.rs`'s invasion analysis.
     ///
     /// Three claims, and each of them is a way the file could be quietly wrong.
     ///

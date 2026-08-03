@@ -1715,10 +1715,19 @@ and the section headed *One row does not reproduce* below is the correction. Rea
 the best available price list and the two re-measured rows as the calibration — and **re-run the
 arm before quoting a row of it as a fact**, which now costs four minutes.
 
+⚠️⚠️ **And every %/generation figure in this section is at the old divisor.** `assay.rs`'s
+`GENERATION` was 1,753.9, which is the mean *lifetime*; a generation is the mean age of a parent
+at a birth, and that is **1,225.2**. A shorter generation is *more* generations in the same
+window, so **multiply every coefficient below by 0.6986** and every generation count by 1.4315.
+The tables are left as they were taken because one factor multiplies all of them at once — no
+sign, ordering, ratio or conclusion moves. The re-recorded headline figures are in
+[`NEXT.md`](NEXT.md) §5.
+
 Two founder sets that differ by **exactly one mutation** are seeded alternately into the shipped
 world after the dawn — 32 founders, 16 per arm, at alternating positions so neither arm gets
 systematically better water. Every organism born afterwards is attributed to the arm its parent
-belonged to. After 42,000 ticks (23.9 generations at the measured 1,753.9-tick generation) the
+belonged to. After 42,000 ticks (**34.3** generations at the measured **1,225.2**-tick
+generation; recorded at the time as 23.9 at 1,753.9) the
 ratio of living descendants **is** the selection coefficient.
 
 | Arm B, against an identical arm A | upkeep added | descendant ratio | **coefficient** |
@@ -2058,6 +2067,20 @@ consecutive samples takes; `the_series_records_how_many_species_there_are` is ig
 debug suite for exactly that reason and run by the release pass.
 
 ## Open questions carried forward
+
+⭐⭐⭐ **Q34 and Q36 below are the live ones, and [`NEXT.md`](NEXT.md) is where the next round is
+planned.** That document carries the headline finding — *this world produces photosynthetic
+multicellular life and does not produce predation or locomotion* — the three candidates in
+priority order, the `GENERATION` correction with every coefficient re-recorded, and the list of
+things not worth spending another 300,000-tick run rediscovering.
+
+**Q36** (new) — ⚠️⚠️ **why is the dense world nine times steeper, and it is the best lead the
+project has.** A third photocyte is worth **+12.80 %/generation** at four times density against
+**+1.45** shipped — +8.94 against +1.01 at the corrected generation — monotone across six
+densities with no threshold between them. Q34 says nothing here has an increasing return to size;
+this says something does, somewhere, and nobody has found it. It is the one measurement in the
+project that contradicts the economy-wide linearity claim, and finding the mechanism behind it is
+cheaper than inventing one. See [`NEXT.md`](NEXT.md) §1 and §2.
 
 **Q31** (Group I) — ⭐⭐ **answered in Group J, and the answer moved the addressing without moving
 the bodies.** The recommendation was taken: development's rule is untouched, and the *distribution*

@@ -418,8 +418,10 @@ impl std::fmt::Display for ConfigError {
             // or about the world, but about **what has been run**. It says that and nothing
             // else. In particular it does not say the population falls far enough for drift to
             // outrun selection: with the flat world's own trough measured at 766 organisms and
-            // the largest real coefficient in this world at 0.85 %/generation, `N·s` is 3.6 at
-            // an amplitude of a half and 1.8 at three quarters - so that sentence would be
+            // the largest real coefficient in this world at 0.59 %/generation - 0.85 before
+            // `assay.rs`'s `GENERATION` was corrected, which moved every coefficient in the
+            // project by 0.6986 and none of them across a threshold - `N·s` is 2.5 at
+            // an amplitude of a half and 1.3 at three quarters - so that sentence would be
             // false everywhere the gate allows, and a refusal somebody can disprove is a
             // refusal somebody deletes.
             Self::Unmeasured {
@@ -715,8 +717,9 @@ pub const SEASON_PERIOD_FLOOR: u64 = 8_000;
 /// *the trough does not deepen much* and no further.
 ///
 /// ⚠️ **It is not a drift bound**, and the refusal must not say it is. With a trough of a few
-/// hundred bodies and the largest real selection coefficient in this world at 0.85 %/generation,
-/// `N·s` is comfortably above one everywhere the gate allows and for some way past it.
+/// hundred bodies and the largest real selection coefficient in this world at 0.59 %/generation
+/// — 0.85 before `assay.rs`'s `GENERATION` was corrected — `N·s` is comfortably above one
+/// everywhere the gate allows and for some way past it.
 ///
 /// A bound is still not optional. Above **1.0** the multiplier goes negative, which is light
 /// running backwards: tiles draining into no account, and SPEC section 5's invariant failing.
@@ -2340,7 +2343,8 @@ mod tests {
     /// 0.25 and 0.5 are the only amplitudes ever run. The bound is where the **evidence** stops
     /// and it is not an argument about drift: with the flat world's own second-half trough
     /// measured at 766 organisms and the largest real selection coefficient in this world at
-    /// 0.85 %/generation, `N·s` is 3.6 at an amplitude of a half and still 1.8 at three
+    /// 0.59 %/generation — 0.85 before `assay.rs`'s `GENERATION` was corrected — `N·s` is 2.5 at
+    /// an amplitude of a half and still 1.3 at three
     /// quarters. "The population falls far enough that drift outruns selection" is not true
     /// anywhere this gate allows, and a refusal that said so would be a sentence somebody could
     /// disprove and then delete the bound over.
@@ -2396,7 +2400,7 @@ mod tests {
             assert!(
                 !complaint.contains("drift"),
                 "the complaint about an amplitude of {amplitude} claims something about drift, \
-                 and `N·s` is 3.6 at a half and 1.8 at three quarters — so the claim is false \
+                 and `N·s` is 2.5 at a half and 1.3 at three quarters — so the claim is false \
                  everywhere this gate allows: {complaint}"
             );
         }

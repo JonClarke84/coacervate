@@ -9,17 +9,23 @@
 //!
 //! This is the instrument that removes the wait. Two founder sets that differ by **exactly one
 //! mutation** are seeded alternately into the shipped world after the dawn; every organism born
-//! afterwards is attributed to the arm its parent belonged to; and after 42,000 ticks - 23.9
-//! generations at the measured 1,753.9-tick generation - the ratio of living descendants **is**
+//! afterwards is attributed to the arm its parent belonged to; and after 42,000 ticks - 34.3
+//! generations at the measured 1,225.2-tick generation - the ratio of living descendants **is**
 //! the selection coefficient. No mutation lottery, no waiting for the configuration to appear.
 //!
-//! | | |
-//! | --- | --- |
-//! | Window | 42,000 ticks = **23.9 generations** |
-//! | Founders | **32**, alternating arms and positions |
-//! | Noise floor | **±0.16 %/generation** (1 s.d., three seeds, the same genome in both arms) |
-//! | Resolution | about **0.3 %/generation** with three seeds |
-//! | Attribution loss | **0 to 4 births in ~40,000** |
+//! | | | was |
+//! | --- | --- | --- |
+//! | Window | 42,000 ticks = **34.3 generations** | 23.9 |
+//! | Founders | **32**, alternating arms and positions | — |
+//! | Noise floor | **±0.11 %/generation** (1 s.d., three seeds, the same genome in both arms) | ±0.16 |
+//! | Resolution | about **0.21 %/generation** with three seeds | 0.3 |
+//! | Attribution loss | **0 to 4 births in ~40,000** | — |
+//!
+//! ⚠️⚠️ **The third column is the [`GENERATION`] correction and it runs through every
+//! coefficient in this file.** 1,753.9 was the mean *lifetime*; a generation is the mean age of a
+//! parent at a birth, and that is 1,225.2. A shorter generation is *more* generations in the same
+//! window, so every %/generation figure taken here goes **down** by a factor of **0.6986**. No
+//! sign moves, no ordering moves and no conclusion moves - see [`GENERATION`] and `docs/NEXT.md`.
 //!
 //! # ⚠️ It changes nothing in the simulation, and that is the point
 //!
@@ -51,7 +57,8 @@ use std::collections::HashMap;
 /// How many bodies an assay is founded with, sixteen to the arm.
 ///
 /// Seed-to-seed noise falls with the founder count, and sixteen a side is what puts the noise
-/// floor at ±0.16 %/generation. It is also small enough that both arms are still filling an
+/// floor at ±0.11 %/generation (±0.16 at the old [`GENERATION`]). It is also small enough that
+/// both arms are still filling an
 /// empty world rather than competing for the last free slot in a full one - which is the regime
 /// this module's header warns the readings belong to.
 const FOUNDERS: u32 = 32;
@@ -68,7 +75,34 @@ const POLL_EVERY: u64 = 100;
 ///
 /// Every coefficient here is per *generation* rather than per tick, because a generation is the
 /// unit selection acts in and the unit a ratio of descendants is compounded over.
-const GENERATION: f64 = 1_753.9;
+///
+/// ⚠️⚠️ **This was 1,753.9 and 1,753.9 is a different quantity.** Two numbers were being used
+/// interchangeably and only one of them is a generation:
+///
+/// | | Measured | What it is |
+/// | --- | --- | --- |
+/// | **Mean lifetime** | 1,753.9, and 1,737.2 re-measured over ticks 50,000–150,000 | how long a body lives — the *death* clock |
+/// | **Generation time** | **1,225.2** over ticks 50,000–150,000, 102,622 births | the mean age of a parent at the moment it has a child — the *birth* clock |
+///
+/// A generation is the second one. Selection compounds a ratio of descendants once per *birth*,
+/// not once per death, and a body in this world breeds well before it dies — it reaches its
+/// reproduction bar at around tick 458 of its own life and goes on breeding until it is gone, so
+/// its mean age at a birth is a long way below its age at death. Dividing by a lifetime asks how
+/// many times the population has *turned over*, which is not the number of times selection has
+/// acted. The whole-run figure is 1,214.3 over 141,102 births; the equilibrium window is quoted
+/// here because the filling phase is full of young parents and pulls the mean down.
+///
+/// ⚠️ **Every %/generation figure recorded before this correction is on the old divisor, and the
+/// direction is the opposite of the obvious one.** A shorter generation means *more* generations
+/// in a fixed window — 42,000 ticks is **34.3** generations rather than 23.9 — so the same
+/// log-ratio spread over more of them is a **smaller** coefficient. Multiply an old figure by
+/// **0.6986** to re-record it, and a generation *count* by 1.4315.
+///
+/// ⭐ **No sign changes and no conclusion changes.** Every coefficient this module has ever
+/// produced scales by that one factor, so every ordering, every ratio between two arms and every
+/// comparison against a break-even bar is exactly what it was. The re-recorded figures appear
+/// beside the old ones throughout this file and in `docs/NEXT.md`.
+const GENERATION: f64 = 1_225.2;
 
 /// Which arm an organism's ancestry belongs to. Two, and never more: an assay compares one
 /// change against its absence.
@@ -308,7 +342,8 @@ fn attribute(world: &World, side_of: &mut HashMap<u64, Option<u8>>) -> ([u64; AR
 // ⭐⭐⭐ The invasion assay: what a **rare** mutant is worth in a world that is already full.
 //
 // The competition assay above seeds two arms side by side and reads the ratio of their
-// descendants. Its ±0.13 %/generation noise floor exists **precisely because the arms never
+// descendants. Its ±0.09 %/generation noise floor — ±0.13 at the old [`GENERATION`] — exists
+// **precisely because the arms never
 // meet**: each grows in its own patch, and what is read is a difference of growth rates rather
 // than the outcome of a competition. The moment lineages genuinely mix, that instrument becomes
 // a competitive-exclusion lottery — at dispersal ×32 one arm drove the other to extinction and
@@ -352,11 +387,13 @@ fn attribute(world: &World, side_of: &mut HashMap<u64, Option<u8>>) -> ([u64; AR
 // **And a mouth still does not invade.** Twelve introductions of each arm, released together
 // into a resident of about 2,200, every coefficient an excess over that world's own control arm:
 //
+// ⚠️ Re-recorded at the corrected [`GENERATION`]; the figures as first taken are in brackets.
+//
 // | dispersal | a third photocyte | invaded | a third devorocyte | invaded |
 // | --- | --- | --- | --- | --- |
-// | ×1, three seeds | +5.21 / +8.28 / +7.31 | 10, 8, 11 of 12 | −17.03 / −28.94 / −22.27 | **0 of 12, three times** |
+// | ×1, three seeds | +3.64 / +5.78 / +5.11 (was +5.21 / +8.28 / +7.31) | 10, 8, 11 of 12 | −11.90 / −20.22 / −15.56 (was −17.03 / −28.94 / −22.27) | **0 of 12, three times** |
 // | ×32 | *void* | 0 of 12 | *void* | **0 of 12** |
-// | **×128** | **+43.78** | 6 of 12, 1,681 alive | **−17.20** | **0 of 12** |
+// | **×128** | **+30.58** (was +43.78) | 6 of 12, 1,681 alive | **−12.02** (was −17.20) | **0 of 12** |
 //
 // ⚠️ **The ×32 row is void and is kept as one.** All three arms including the control were
 // extinct inside the settling-in period, so the instrument had no resolution at that setting and
@@ -366,7 +403,7 @@ fn attribute(world: &World, side_of: &mut HashMap<u64, Option<u8>>) -> ([u64; AR
 //
 // ⭐⭐⭐ **The ×128 row is the finding.** It is a genuinely mixed world — three quarters of what
 // a mouth touches there is a foreign lineage, against four ten-thousandths as shipped — the
-// instrument demonstrably still resolves in it, since a third photocyte invades at +43.8
+// instrument demonstrably still resolves in it, since a third photocyte invades at +30.6
 // %/generation and reaches 1,681 bodies from twelve introductions, and **a third devorocyte
 // released into the same water on the same tick is extinct in every one of its twelve.** Nought
 // established out of **thirty-six independent introductions across all three settings.**
@@ -408,7 +445,8 @@ const INTRODUCTIONS: u32 = 12;
 /// established ones, and the first thing that happens to it is not selection.** It has to grow,
 /// reach its reproduction bar and produce a first brood, and until it has, its frequency is
 /// moving for a reason that has nothing to do with what its extra cell is worth. Four thousand
-/// ticks is 2.3 generations at the measured 1,753.9. Every arm pays the same transit, including
+/// ticks is 3.3 generations at the measured 1,225.2 (2.3 at the old 1,753.9). Every arm pays the
+/// same transit, including
 /// the control arm, so the *difference* between two arms would survive without this — it is
 /// dropped so that each arm's own number means what it says.
 const SETTLING_IN: u64 = 4_000;
@@ -960,7 +998,8 @@ mod tests {
     use coacervate_sim::world::World;
     use std::collections::HashMap;
 
-    /// How many ticks a full assay runs for: 42,000, which is 23.9 generations.
+    /// How many ticks a full assay runs for: 42,000, which is 34.3 generations at the corrected
+    /// [`GENERATION`] and was quoted as 23.9 at the old one.
     const WINDOW: u64 = 42_000;
 
     /// How many ticks a body lives, which is what a displacement is measured over.
@@ -1048,9 +1087,10 @@ mod tests {
     /// tiles they landed on decides a great deal over twenty-four generations.
     ///
     /// Measured, 42,000 ticks, shipped world: log-ratios **+0.064**, **+0.009**, **−0.008** -
-    /// a spread of 0.038, which is **±0.16 %/generation** at one standard deviation. The bound
-    /// below is three times that spread, so a coefficient of about **0.3 %/generation** is what
-    /// three seeds of this instrument can resolve.
+    /// a spread of 0.038, which is **±0.11 %/generation** at one standard deviation — re-recorded
+    /// from ±0.16 at the old [`GENERATION`], the log-ratios themselves being untouched. The bound
+    /// below is three times that spread, so a coefficient of about **0.21 %/generation** (was 0.3)
+    /// is what three seeds of this instrument can resolve.
     ///
     /// ⚠️ **The second assertion is what stops a null being a starvation artefact.** An arm that
     /// stopped reproducing at tick 10,000 and an arm with no advantage both come back level, and
@@ -1098,17 +1138,21 @@ mod tests {
     /// reproduction threshold is `reproduction_threshold × Σ construction` and is linear in
     /// cells, and lifespan is `LIFETIME_UPKEEP × cells ÷ cost` and is linear again. Occlusion is
     /// actively *sub*linear. So a third cell that earns is worth precisely its own cost, and a
-    /// third cell that does not is a pure loss - measured at about **−0.5 %/generation for every
-    /// 0.001/tick of upkeep, whatever the cell does**.
+    /// third cell that does not is a pure loss - measured at about **−0.35 %/generation for every
+    /// 0.001/tick of upkeep, whatever the cell does** (recorded as −0.5 at the old
+    /// [`GENERATION`]).
     ///
     /// Measured here over 42,000 ticks of the shipped world at seed 42, arm B being the founder
     /// with **one appended gene** that buds a third cell off its photocyte at the next
     /// developmental step:
     ///
-    /// | Arm B against arm A, the plain founder | upkeep added | ratio | %/gen | cells/body |
-    /// | --- | --- | --- | --- | --- |
-    /// | a third **photocyte** | +0.004/tick | **1.531** | **+1.78** | 3.41 against 2.03 |
-    /// | a third **myocyte**, holding still | +0.005/tick | **0.511** | **−2.81** | 2.14 against 1.99 |
+    /// | Arm B against arm A, the plain founder | upkeep added | ratio | %/gen | was, at 1,753.9 | cells/body |
+    /// | --- | --- | --- | --- | --- | --- |
+    /// | a third **photocyte** | +0.004/tick | **1.531** | **+1.24** | +1.78 | 3.41 against 2.03 |
+    /// | a third **myocyte**, holding still | +0.005/tick | **0.511** | **−1.96** | −2.81 | 2.14 against 1.99 |
+    ///
+    /// ⚠️ **The ratios are the measurement and they have not moved.** Only the divisor did — see
+    /// [`GENERATION`] — so the fifth column is the same reading through the old arithmetic.
     ///
     /// Attribution was **complete** in both — nought unattributed births out of 38,261 and 42,335
     /// — and both arms' founders received the same 32.0 units out of the water, so neither was
@@ -1125,7 +1169,8 @@ mod tests {
     /// design this was built from measured the same arm at **1.076** and concluded that *nothing
     /// in this world has an increasing return to being more than one thing* — a third photocyte
     /// worth precisely its own cost, so no gradient to climb. Rebuilt here from the public API it
-    /// comes back at **1.531**, which is +1.78 %/generation against a noise floor of ±0.16 and is
+    /// comes back at **1.531**, which is +1.24 %/generation against a noise floor of ±0.11 (+1.78
+    /// against ±0.16 at the old [`GENERATION`]) and is
     /// twice the largest coefficient that design records for anything. Doubling a body's
     /// photocytes while adding 44% to its bill is not neutral, and the difference between the two
     /// readings is what a *third cell* was made of rather than what the world does with one. The
@@ -1159,7 +1204,7 @@ mod tests {
         assert!(
             photocyte.log_ratio() > 0.12,
             "a body with a third photocyte came back at {:.4} against the plain founder, and \
-             the measured reading is 1.531 - well outside the ±0.16 %/generation noise floor. A \
+             the measured reading is 1.531 - well outside the ±0.11 %/generation noise floor. A \
              photocyte that stopped paying for itself is a different economy. {:?}",
             photocyte.ratio(),
             photocyte.alive
@@ -1270,9 +1315,13 @@ mod tests {
     /// | | reading |
     /// | --- | --- |
     /// | arm B travels, per 2,000-tick lifetime | **16.6 units**, against **1.66** with the same muscles held still and the founder's 2.55 |
-    /// | arm B against the founder | **−10.3 %/generation** (three seeds: −10.03, −9.85, −11.01, spread 0.62) |
-    /// | **arm B against its own held-still twin** — the stroke alone, its bill on neither side | **+1.0 ± 1.7 %/generation**, which is nothing |
-    /// | **arriving in the best water a lifetime's swim away, free and perfectly aimed** | **−0.01 ± 0.13 %/generation**, which is nothing |
+    /// | arm B against the founder | **−7.20 %/generation** (three seeds: −7.01, −6.88, −7.69, spread 0.43) — was −10.3 (−10.03, −9.85, −11.01) |
+    /// | **arm B against its own held-still twin** — the stroke alone, its bill on neither side | **+0.7 ± 1.2 %/generation**, which is nothing — was +1.0 ± 1.7 |
+    /// | **arriving in the best water a lifetime's swim away, free and perfectly aimed** | **−0.01 ± 0.09 %/generation**, which is nothing — was −0.01 ± 0.13 |
+    ///
+    /// ⚠️ **Re-recorded at the corrected [`GENERATION`], factor 0.6986.** The displacements are
+    /// untouched; only the divisor moved, and it moved every coefficient below by the same one
+    /// factor. Nothing here changes sign, ordering or conclusion.
     /// | what a lifetime's swim is worth in light: best direction | **×1.05** |
     /// | ... and in a direction nothing chose, which is the only kind available | **×1.00** |
     ///
@@ -1297,13 +1346,21 @@ mod tests {
     /// season of the light was walked to its gate, three seeds each, arm B against the plain
     /// founder, every coefficient an excess over its **own same-seed control** and every
     /// condition reporting arm B's measured displacement beside it, against this module's
-    /// **±0.16 %/generation** noise floor — ±0.13 on the placed arms.
+    /// **±0.11 %/generation** noise floor — ±0.09 on the placed arms. (Recorded as ±0.16 and
+    /// ±0.13 at the old [`GENERATION`], as is everything in the two tables below.)
     ///
     /// A blotch is `NOISE_LATTICE_SPACING` **tiles** and a tile is `width / grid_cols`, so the
     /// only handle a configuration has on the scale of the light is the size of a tile. Shrinking
     /// the world with the grid held fixed leaves influx per tile, `cap`, the standing energy of a
     /// tile, a photocyte's income, the 8,000-tick refill and the dawn all bit-for-bit the shipped
     /// world's, and moves nothing but how many world units a blotch is.
+    ///
+    /// ⚠️ **Every coefficient in this table is as first recorded, at the old 1,753.9-tick
+    /// [`GENERATION`].** Multiply by **0.6986** to re-record: the shipped row becomes **−7.20**
+    /// (−7.01, −6.88, −7.69) and the same factor applies to every other cell, the control spreads
+    /// included. The table is left as it was taken because one factor multiplies all of it, so
+    /// nothing about its shape — the ordering, the monotone worsening with finer light, which
+    /// rows are extinct — depends on which divisor is read.
     ///
     /// | Condition | blotch | travels/lifetime | **coefficient, three seeds** |
     /// | --- | --- | --- | --- |
@@ -1361,6 +1418,10 @@ mod tests {
     /// and arm B's are simply *put* in the best water within reach. Nobody who has to swim there
     /// can collect more than this.
     ///
+    /// ⚠️ As above: recorded at the old [`GENERATION`], re-record by ×0.6986. The first row
+    /// becomes **−0.01 ± 0.09** and the 512-unit row **−1.04**, which is the same nothing and the
+    /// same negative.
+    ///
     /// | Arriving free, instantaneously and perfectly aimed | **%/generation** |
     /// | --- | --- |
     /// | a lifetime's swim (16.6) away, shipped world | **−0.01 ± 0.13** |
@@ -1376,6 +1437,14 @@ mod tests {
     /// # ⭐⭐⭐ The arithmetic, in one line
     ///
     /// > **A body in this world travels about two thirds of its own length in a whole lifetime.**
+    ///
+    /// ⚠️ **Two thirds is the *fastest* body, and about 0.4 is the ordinary one.** Everything
+    /// below is hand-built and driven, and arm B is the quickest thing here that can also breed.
+    /// A body of the living population covers about **8 world units in a whole lifetime** —
+    /// measured in `a_current_buys_strangers_by_spending_contact` below — which against the
+    /// twenty-odd units such a body spans is **about 0.4 of its own length**. Both figures are on
+    /// the record and neither corrects the other; quote 0.4 for what the world does and 0.65 for
+    /// the ceiling on what a body in it could do.
     ///
     /// Measured three ways: arm B spans **25.6 × 19.2** units and covers **16.6** (×0.65); the
     /// same body at `MAX_REST_LENGTH` spans 34.8 × 26.1 and covers **21.7** (×0.62); SPEC section
@@ -1518,13 +1587,15 @@ mod tests {
         assert!(
             cost < -5.0,
             "a body that swims came back at {cost:+.3} %/generation against the founder, and \
-             the measured reading is −10.3. A swimmer that had stopped being priced far below \
+             the measured reading is −7.20 (−10.3 before the GENERATION correction, which moved \
+             every coefficient by 0.6986 and none of them across zero). A swimmer that had \
+             stopped being priced far below \
              break-even would reopen every payoff question Phase 7 closed"
         );
         assert!(
             ceiling.abs() < 1.0,
             "arriving in the best water a lifetime's swim away is worth {ceiling:+.3} \
-             %/generation, and the measured reading is −0.01 against a noise floor of ±0.13. If \
+             %/generation, and the measured reading is −0.01 against a noise floor of ±0.09. If \
              this is no longer nothing, then locomotion has somewhere to go and the whole \
              finding above is reopened"
         );
@@ -1902,19 +1973,23 @@ mod tests {
     ///
     /// # ⭐⭐ What both instruments said, measured on the same day
     ///
-    /// Competition assay, seed 42, 42,000 ticks: a third **photocyte** at **+1.780 %/gen**
-    /// (ratio 1.5314, 3.41 cells a body against 2.03) and a third **devorocyte** at **−7.228**
-    /// (ratio 0.1771). The photocyte row reproduces this module's own recorded 1.531 to the
-    /// fourth decimal, so the old instrument is where it was left.
+    /// ⚠️ **Every %/generation figure below is re-recorded at the corrected [`GENERATION`], with
+    /// the figure as first taken in brackets.** Both instruments divide by the same constant, so
+    /// the calibration — which is a comparison of one against the other — is exactly what it was.
+    ///
+    /// Competition assay, seed 42, 42,000 ticks: a third **photocyte** at **+1.243 %/gen**
+    /// (was +1.780; ratio 1.5314, 3.41 cells a body against 2.03) and a third **devorocyte** at
+    /// **−5.049** (was −7.228; ratio 0.1771). The photocyte row reproduces this module's own
+    /// recorded 1.531 to the fourth decimal, so the old instrument is where it was left.
     ///
     /// Invasion assay, three seeds, twelve introductions of each arm into a resident of about
     /// 2,150 — **nought unattributed births in every run**:
     ///
     /// | seed | control | a third photocyte | **excess** | invaded | a third devorocyte | **excess** | invaded |
     /// | --- | --- | --- | --- | --- | --- | --- | --- |
-    /// | 42 | +2.587 | +7.794 | **+5.21** | 10 of 12 | extinct | **−17.03** | **0 of 12** |
-    /// | 7 | −0.553 | +7.723 | **+8.28** | 8 of 12 | extinct | **−28.94** | **0 of 12** |
-    /// | 99 | +0.007 | +7.315 | **+7.31** | 11 of 12 | extinct | **−22.27** | **0 of 12** |
+    /// | 42 | +1.807 (+2.587) | +5.445 (+7.794) | **+3.64** (+5.21) | 10 of 12 | extinct | **−11.90** (−17.03) | **0 of 12** |
+    /// | 7 | −0.386 (−0.553) | +5.395 (+7.723) | **+5.78** (+8.28) | 8 of 12 | extinct | **−20.22** (−28.94) | **0 of 12** |
+    /// | 99 | +0.005 (+0.007) | +5.110 (+7.315) | **+5.11** (+7.31) | 11 of 12 | extinct | **−15.56** (−22.27) | **0 of 12** |
     ///
     /// **Both signs reproduce, the ordering reproduces, and the ratio between the two arms very
     /// nearly does**: competition prices them 1 : 4.1 apart and invasion 1 : 3.3. What does not
@@ -1922,13 +1997,14 @@ mod tests {
     /// competition on both arms alike, consistently, which is what a full world ought to do to a
     /// margin that two arms growing into empty water never feel.
     ///
-    /// ⚠️ **The noise floor is ±1.6 %/generation, ten times the competition assay's.** That is
-    /// the control arm's own spread across the three seeds above (+2.59, −0.55, +0.01), and it
+    /// ⚠️ **The noise floor is ±1.12 %/generation (was ±1.6), ten times the competition assay's.**
+    /// That ratio is unchanged, because both floors moved by the same factor. It is the control
+    /// arm's own spread across the three seeds above (+1.81, −0.39, +0.00), and it
     /// is the price of the thing that makes this instrument work at all: twelve rare
     /// introductions in a full world are demographically noisy where sixteen founders filling an
-    /// empty one are not. It resolves about **5 %/generation** at three seeds, so it is the
-    /// coarser of the two instruments and should not be reached for where the competition assay
-    /// can answer.
+    /// empty one are not. It resolves about **3.5 %/generation** (was 5) at three seeds, so it is
+    /// the coarser of the two instruments and should not be reached for where the competition
+    /// assay can answer.
     #[test]
     #[ignore = "two 42,000-tick competition runs and one 92,000-tick invasion; check.ps1 runs it \
                 in release"]
@@ -1963,8 +2039,8 @@ mod tests {
         assert!(
             competed[0] > 0.3 && competed[1] < -0.3,
             "the competition assay itself has stopped saying that a third photocyte pays \
-             ({:+.3} %/gen) and a third devorocyte does not ({:+.3}). Until it does, there is \
-             nothing here to calibrate against",
+             ({:+.3} %/gen) and a third devorocyte does not ({:+.3}); the measured readings are \
+             +1.243 and −5.049. Until it does, there is nothing here to calibrate against",
             competed[0],
             competed[1]
         );
@@ -1972,7 +2048,7 @@ mod tests {
         assert!(
             invaded[0] > 2.0,
             "a third photocyte competes at {:+.3} %/generation and *invades* at {:+.3}, and the \
-             measured readings are +5.21, +8.28 and +7.31 against a ±1.6 noise floor. The two \
+             measured readings are +3.64, +5.78 and +5.11 against a ±1.12 noise floor. The two \
              instruments have stopped agreeing about the one arm this world is known to reward, \
              so the invasion assay is not calibrated and nothing measured with it counts",
             competed[0],
@@ -1981,7 +2057,7 @@ mod tests {
         assert!(
             invaded[1] < -5.0,
             "a third devorocyte competes at {:+.3} %/generation and *invades* at {:+.3}, and the \
-             measured readings are −17.03, −28.94 and −22.27. A mouth that had started paying in \
+             measured readings are −11.90, −20.22 and −15.56. A mouth that had started paying in \
              the shipped world would be the finding of the round, and it is far likelier that \
              the instrument is wrong",
             competed[1],
@@ -1990,7 +2066,7 @@ mod tests {
         assert!(
             invaded[0] - invaded[1] > 10.0,
             "invasion separates a third photocyte from a third devorocyte by only {:.3} \
-             %/generation, against the competition assay's {:.3} and the measured 22.2. An \
+             %/generation, against the competition assay's {:.3} and the measured 15.5. An \
              instrument that cannot tell those two apart cannot tell anything apart",
             invaded[0] - invaded[1],
             competed[0] - competed[1]
@@ -2075,7 +2151,14 @@ mod tests {
         }
 
         /// The share of what a mouth touches that belongs to a foreign lineage. Shipped world:
-        /// **0.0010**.
+        /// **0.0004**.
+        ///
+        /// ⚠️ **Corrected. This comment said 0.0010 and 0.0010 does not reproduce.** SPEC section
+        /// 3's own sweep table, the assertion in
+        /// [`a_current_buys_strangers_by_spending_contact`], the invasion module's dispersal
+        /// table above and a re-measurement taken this week all say **0.0004**. The reading was
+        /// never in dispute anywhere else in the project; only this line was wrong, and it was
+        /// the line most likely to be quoted, being the one attached to the arithmetic.
         fn stranger_share(&self) -> f64 {
             #[expect(
                 clippy::cast_precision_loss,
