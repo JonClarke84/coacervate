@@ -304,6 +304,411 @@ fn attribute(world: &World, side_of: &mut HashMap<u64, Option<u8>>) -> ([u64; AR
     (born, lost)
 }
 
+// ---------------------------------------------------------------------------------
+// ⭐⭐⭐ The invasion assay: what a **rare** mutant is worth in a world that is already full.
+//
+// The competition assay above seeds two arms side by side and reads the ratio of their
+// descendants. Its ±0.13 %/generation noise floor exists **precisely because the arms never
+// meet**: each grows in its own patch, and what is read is a difference of growth rates rather
+// than the outcome of a competition. The moment lineages genuinely mix, that instrument becomes
+// a competitive-exclusion lottery — at dispersal ×32 one arm drove the other to extinction and
+// the coefficient read +∞, and at ×128 the *control* arm went extinct.
+//
+// ⚠️ That is the whole difficulty, because **a well-mixed world is simultaneously the only
+// place predation could pay and the only place the competition assay cannot measure.**
+// `Ledger::predate` is a lossless `biomass → biomass` transfer, so a bite taken out of a
+// relative moves energy from one side of an arm to the other and cannot move an arm ratio by
+// any amount; and in the shipped world 99.9% of what a mouth touches is its own family.
+//
+// So this is the other instrument evolutionary ecology has for exactly this situation. Let one
+// resident population reach equilibrium; introduce a **rare** mutant into it; follow the
+// mutant's *frequency*. Invasion fitness is the slope of ln(frequency) against time. It never
+// asks two populations to be spatially separated, so mixing does not break it — mixing is the
+// condition it was designed for.
+//
+// ⭐⭐⭐ **And the answer it was built to get is no: a mouth does not pay in a mixed world
+// either.** That is written here rather than left as a test, because the *mixing* it took to
+// ask the question was a `metabolism.dispersal` multiplier on where `reproduction.rs` puts a
+// newborn — measurement scaffolding, built for one afternoon, measured, and **taken back out**,
+// because nothing in what follows asks for it to ship. Seed 42, and everything below measured
+// in one sitting with the instrument above.
+//
+// **The mixing works, and it is not paid for out of the population.** 60,000 ticks, 32
+// devorocyte-carrying founders, every living mouth sampled every 20 ticks:
+//
+// | dispersal | contact fraction | stranger share | alive | biomass |
+// | --- | --- | --- | --- | --- |
+// | **×1 — as shipped** | **0.4723** | **0.0004** | 1,753 | 25,123 |
+// | ×32 | 0.2457 | 0.6383 | 1,653 | 33,672 |
+// | **×128** | **0.3568** | **0.7608** | **2,527** | 26,792 |
+//
+// ⚠️⚠️ **A previous round recorded dispersal as a failure on the ground that it "thins the world
+// out", and that reading was wrong.** Its two mixing figures reproduce exactly — 0.7617 strangers
+// at 0.3568 contact then, **0.7608 at 0.3568** today — and the world at ×128 holds **2,527
+// organisms against the shipped world's 1,753**, which is 44% *more* bodies in the same water.
+// A current fierce enough to mix does thin the world out; dispersal does not. What the earlier
+// round was reading was the competition assay coming apart, not a mechanism failing.
+//
+// **And a mouth still does not invade.** Twelve introductions of each arm, released together
+// into a resident of about 2,200, every coefficient an excess over that world's own control arm:
+//
+// | dispersal | a third photocyte | invaded | a third devorocyte | invaded |
+// | --- | --- | --- | --- | --- |
+// | ×1, three seeds | +5.21 / +8.28 / +7.31 | 10, 8, 11 of 12 | −17.03 / −28.94 / −22.27 | **0 of 12, three times** |
+// | ×32 | *void* | 0 of 12 | *void* | **0 of 12** |
+// | **×128** | **+43.78** | 6 of 12, 1,681 alive | **−17.20** | **0 of 12** |
+//
+// ⚠️ **The ×32 row is void and is kept as one.** All three arms including the control were
+// extinct inside the settling-in period, so the instrument had no resolution at that setting and
+// the numbers it produced (+192, +208) are the control's own collapse divided into the others'.
+// A reading taken while the control arm is going extinct is a broken instrument, which is the
+// mistake this round exists to correct rather than repeat.
+//
+// ⭐⭐⭐ **The ×128 row is the finding.** It is a genuinely mixed world — three quarters of what
+// a mouth touches there is a foreign lineage, against four ten-thousandths as shipped — the
+// instrument demonstrably still resolves in it, since a third photocyte invades at +43.8
+// %/generation and reaches 1,681 bodies from twelve introductions, and **a third devorocyte
+// released into the same water on the same tick is extinct in every one of its twelve.** Nought
+// established out of **thirty-six independent introductions across all three settings.**
+//
+// So mixing was not the binding constraint, and **predation is genuinely out of reach in this
+// model** — a real result rather than a shrug. What is left standing is arithmetic no dispersal
+// touches: a devorocyte costs 0.009 a tick against a photocyte's 0.004, and its entire income is
+// a bite it can only take when something is already inside `r₁ + r₂` of it.
+// ---------------------------------------------------------------------------------
+
+/// How many ticks the resident population is left alone after the dawn before anything is
+/// introduced into it.
+///
+/// ⭐ **This is what makes the reading an invasion fitness rather than a growth rate.** The
+/// shipped world's own numbers — `docs/PHASE7.md`'s 300,000-tick table — are 879 organisms at
+/// tick 20,000, **2,070 at 50,000** and 2,159 at 100,000, so the population is within 5% of its
+/// plateau by tick 50,000 and flat thereafter. The dawn takes 10,000 ticks, so forty thousand
+/// after it is where a resident stops filling and starts merely persisting. An invader released
+/// before that would be measured climbing into empty water beside the resident, which is the
+/// competition assay's regime and the one its own header warns every coefficient belongs to.
+const SETTLE: u64 = 40_000;
+
+/// How many **independent** introductions of each arm one world carries.
+///
+/// The two requirements pull against each other and this is where they meet. *Rare enough that
+/// the mutant does not change the environment it is invading* — twelve bodies against a resident
+/// of about 2,100 is **0.57%**, and three arms together are 1.7%, so the water, the light and
+/// the crowding an invader meets are the resident's and not its own. *Common enough to survive
+/// demographic noise* — a single introduction dies by chance most of the time even when
+/// favoured, which is a fact about invasion and not a defect of it, so twelve of them are
+/// released at twelve places and each is followed separately. What that buys is the second
+/// reading this instrument gives and the competition assay cannot: an **invasion probability**
+/// beside the growth rate.
+const INTRODUCTIONS: u32 = 12;
+
+/// How much of the window after an introduction is thrown away before a slope is fitted.
+///
+/// ⚠️ **An invader arrives as a two-celled body holding [`FOUNDER_ENERGY`] in a world of
+/// established ones, and the first thing that happens to it is not selection.** It has to grow,
+/// reach its reproduction bar and produce a first brood, and until it has, its frequency is
+/// moving for a reason that has nothing to do with what its extra cell is worth. Four thousand
+/// ticks is 2.3 generations at the measured 1,753.9. Every arm pays the same transit, including
+/// the control arm, so the *difference* between two arms would survive without this — it is
+/// dropped so that each arm's own number means what it says.
+const SETTLING_IN: u64 = 4_000;
+
+/// What one arm of an invasion came back with.
+///
+/// A record of what was counted rather than of what it means, for the reason [`Outcome`] is: the
+/// arithmetic that turns a trajectory into an invasion fitness is [`Invader::per_generation`],
+/// and it is separate so that the trajectory can be quoted raw.
+#[derive(Debug)]
+struct Invader {
+    /// What was introduced, for the report.
+    what: &'static str,
+
+    /// How many of the [`INTRODUCTIONS`] the world accepted, and how many it refused. See
+    /// [`Outcome::energy`]: a refusal is an ordinary event, and an arm that was smaller than
+    /// another would otherwise be invisible.
+    released: u32,
+    refused: u32,
+
+    /// What the world said the last time it refused one.
+    ///
+    /// ⚠️ A bare count cannot be acted on. `WorldIsFull` means the introduction was too large
+    /// for the arena and `FieldTooPoor` means the resident had eaten the water an invader was to
+    /// start life out of — opposite problems with opposite fixes, and the first run of this
+    /// instrument hit the second one.
+    refusal: Option<String>,
+
+    /// Ticks since the release, this arm's living descendants, and the living residents, at
+    /// every poll.
+    ///
+    /// ⚠️ **The third column is not decoration.** Invasion fitness is the slope of a
+    /// *frequency*, and a resident that was itself growing or collapsing would put its own slope
+    /// into every arm's reading.
+    track: Vec<(u64, u32, u32)>,
+
+    /// Living descendants of each independent introduction at the end of the window.
+    standing: Vec<u32>,
+}
+
+impl Invader {
+    /// ⭐⭐ **The invasion fitness: the slope of ln(frequency) against generations.**
+    ///
+    /// In units of per generation, which is deliberately the same unit the competition assay's
+    /// [`Outcome::per_generation`] reports in — a log-ratio spread over the generations it
+    /// accumulated in — so the two instruments can be laid straight against each other. That
+    /// comparison is the only thing that says whether this one is calibrated.
+    ///
+    /// ⭐ **Least squares over the whole trajectory rather than first-and-last.** A ratio of two
+    /// endpoints throws away four hundred readings and keeps the two that demographic noise
+    /// happens to be sitting on; the slope of a line through all of them is the same quantity
+    /// measured with all of the evidence. It is also what makes extinction survivable: a run
+    /// whose arm died at generation 15 still has fifteen generations of slope in it, where an
+    /// endpoint ratio has a zero in the numerator and reads −∞.
+    ///
+    /// ⚠️ **An arm that was gone before [`SETTLING_IN`] ended is fitted from the release
+    /// instead**, and [`Invader::through_the_transit`] says so, because that is exactly what
+    /// happened to a third devorocyte the first time this was run: all twelve introductions were
+    /// extinct inside 2.3 generations and the instrument had nothing left to fit. Refusing to
+    /// give a number there would mean the one arm this world is known to punish hardest is the
+    /// one arm the instrument cannot price. The reading is worse — it has the arrival transient
+    /// in it — and it is flagged rather than quietly mixed in with the others.
+    ///
+    /// `None` only when the arm never had two readings with anybody in them at all.
+    fn per_generation(&self) -> Option<f64> {
+        self.fitted_after(SETTLING_IN)
+            .or_else(|| self.fitted_after(0))
+    }
+
+    /// Whether this arm's slope had to be fitted through its own arrival to exist.
+    fn through_the_transit(&self) -> bool {
+        self.fitted_after(SETTLING_IN).is_none()
+    }
+
+    /// The slope of ln(frequency) against generations, over the readings from `after` onwards.
+    fn fitted_after(&self, after: u64) -> Option<f64> {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a tick count divided by the measured length of a generation; a window is \
+                      tens of thousands of ticks long and f64 holds every one of those exactly"
+        )]
+        let points: Vec<(f64, f64)> = self
+            .track
+            .iter()
+            .filter(|(since, mine, _)| *since >= after && *mine > 0)
+            .map(|(since, mine, resident)| {
+                let generations = *since as f64 / GENERATION;
+                let frequency = f64::from(*mine) / f64::from((*resident).max(1));
+                (generations, frequency.ln())
+            })
+            .collect();
+
+        let readings = u32::try_from(points.len())
+            .expect("a poll every hundred ticks of a forty-thousand-tick window is a few hundred");
+        if readings < 2 {
+            return None;
+        }
+        let readings = f64::from(readings);
+
+        let mean_at = points.iter().map(|(at, _)| at).sum::<f64>() / readings;
+        let mean_of = points.iter().map(|(_, of)| of).sum::<f64>() / readings;
+        let spread: f64 = points.iter().map(|(at, _)| (at - mean_at).powi(2)).sum();
+        let together: f64 = points
+            .iter()
+            .map(|(at, of)| (at - mean_at) * (of - mean_of))
+            .sum();
+
+        (spread > 0.0).then(|| together / spread)
+    }
+
+    /// How many of the independent introductions still had living descendants at the end.
+    fn established(&self) -> u32 {
+        u32::try_from(self.standing.iter().filter(|left| **left > 0).count())
+            .expect("an arm holds a dozen introductions")
+    }
+
+    /// ⭐ **The invasion probability: the share of introductions that were still there.**
+    ///
+    /// ⚠️ **Extinction is data rather than failure**, and this is where it is reported. A rare
+    /// mutant dies by chance a great deal of the time even when it is favoured — the classical
+    /// result is that a mutant with advantage `s` establishes about `2s` of the time — so a
+    /// growth rate quoted without this is a statement about the introductions that happened to
+    /// survive.
+    fn invasion_probability(&self) -> f64 {
+        f64::from(self.established()) / f64::from(self.released.max(1))
+    }
+
+    /// This arm's living descendants at the last poll.
+    fn alive(&self) -> u32 {
+        self.track.last().map_or(0, |(_, mine, _)| *mine)
+    }
+}
+
+/// What one whole invasion came back with: every arm, and the resident they were released into.
+#[derive(Debug)]
+struct Invasion {
+    arms: Vec<Invader>,
+
+    /// How many organisms were standing when the invaders arrived. The denominator of *rare*.
+    resident: u32,
+
+    /// Births whose parent was gone before the poll that would have placed them. See
+    /// [`POLL_EVERY`]. They are counted as residents, which is what they overwhelmingly are.
+    unattributed: u64,
+}
+
+/// ⭐⭐⭐ Run one invasion: found a resident, let it fill, then put a few strangers in it.
+///
+/// The arms are released **together, into the same world, at interleaved positions**, and that
+/// is the design decision the whole instrument rests on. One of them is always the resident's
+/// own genome, which is the control: an invader pays a real price for arriving as a two-celled
+/// newcomer among established bodies, and the only way to know what that price is, is to release
+/// a genome that differs in nothing and watch it pay the same one. Every arm then meets the same
+/// water, the same crowding and the same weather on the same ticks, so the *difference* between
+/// two arms is what the change is worth and nothing else.
+///
+/// # Panics
+///
+/// If the window does not end on a poll, for [`placed_assay`]'s reason.
+fn invade(
+    config: &Config,
+    resident: &Genome,
+    arms: &[(&'static str, Genome)],
+    introductions: u32,
+    settle: u64,
+    window: u64,
+) -> Invasion {
+    assert!(
+        window.is_multiple_of(POLL_EVERY),
+        "an invasion must end on a poll, or its last {POLL_EVERY} ticks of births go uncounted"
+    );
+
+    let (width, height) = (config.world.width, config.world.height);
+    let mut world = World::new(config);
+    dawn(&mut world);
+
+    // The resident: `founding.rs`'s own grid, and then left entirely alone. Mutation runs
+    // throughout, so what an invader meets is a population that has drifted, which is what a
+    // resident is.
+    for founder in 0..FOUNDERS {
+        let at = place(founder, FOUNDERS, width, height);
+        let _ = world.seed(resident.clone(), at, FOUNDER_ENERGY);
+    }
+    let founded = world.ticks();
+    while world.ticks() < founded + settle {
+        world.tick();
+    }
+
+    // Everybody standing when the invaders arrive is a resident, whatever it has mutated into.
+    let mut side_of: HashMap<u64, Option<(usize, u32)>> = HashMap::new();
+    for organism in world.organisms().iter().flatten() {
+        side_of.insert(organism.serial(), None);
+    }
+    let resident_count =
+        u32::try_from(side_of.len()).expect("a world holds at most a few thousand organisms");
+
+    let sides = u32::try_from(arms.len()).expect("an invasion carries a handful of arms");
+    let mut invaders: Vec<Invader> = arms
+        .iter()
+        .map(|(what, _)| Invader {
+            what,
+            released: 0,
+            refused: 0,
+            refusal: None,
+            track: Vec::new(),
+            standing: vec![0; usize::try_from(introductions).expect("a dozen introductions")],
+        })
+        .collect();
+
+    // Interleaved, so no arm is systematically seeded into better water than another - the same
+    // guard, and the same grid, `placed_assay` uses.
+    for at in 0..introductions * sides {
+        let arm = usize::try_from(at % sides).expect("an arm number is a small integer");
+        let which = at / sides;
+        let put = place(at, introductions * sides, width, height);
+
+        match world.seed(arms[arm].1.clone(), put, FOUNDER_ENERGY) {
+            Ok(slot) => {
+                let serial = world.organisms()[slot]
+                    .as_ref()
+                    .expect("a seeding that was accepted put an organism in that slot")
+                    .serial();
+                side_of.insert(serial, Some((arm, which)));
+                invaders[arm].released += 1;
+            }
+            Err(why) => {
+                invaders[arm].refused += 1;
+                invaders[arm].refusal = Some(format!("{why:?}"));
+            }
+        }
+    }
+
+    let released = world.ticks();
+    let mut unattributed = 0;
+    let mut mine = vec![0u32; arms.len()];
+
+    while world.ticks() < released + window {
+        world.tick();
+
+        let since = world.ticks() - released;
+        if !since.is_multiple_of(POLL_EVERY) {
+            continue;
+        }
+
+        unattributed += descend(&world, &mut side_of);
+
+        mine.fill(0);
+        let mut residents = 0;
+        for organism in world.organisms().iter().flatten() {
+            match side_of.get(&organism.serial()) {
+                Some(&Some((arm, _))) => mine[arm] += 1,
+                _ => residents += 1,
+            }
+        }
+        for (arm, invader) in invaders.iter_mut().enumerate() {
+            invader.track.push((since, mine[arm], residents));
+        }
+    }
+
+    for organism in world.organisms().iter().flatten() {
+        if let Some(&Some((arm, which))) = side_of.get(&organism.serial()) {
+            invaders[arm].standing[usize::try_from(which).expect("a dozen introductions")] += 1;
+        }
+    }
+
+    Invasion {
+        arms: invaders,
+        resident: resident_count,
+        unattributed,
+    }
+}
+
+/// Walk the living and give every organism whatever its parent was, returning how many could not
+/// be reached.
+///
+/// [`attribute`] with an introduction number carried beside the arm, and **in serial order** for
+/// that function's reason: a parent's serial is always lower than its child's, so a whole chain
+/// of descent resolves inside one polling window.
+fn descend(world: &World, side_of: &mut HashMap<u64, Option<(usize, u32)>>) -> u64 {
+    let mut fresh: Vec<(u64, Option<u64>)> = world
+        .organisms()
+        .iter()
+        .flatten()
+        .filter(|organism| !side_of.contains_key(&organism.serial()))
+        .map(|organism| (organism.serial(), organism.parent()))
+        .collect();
+    fresh.sort_unstable();
+
+    let mut lost = 0;
+    for (serial, parent) in fresh {
+        let known = parent.and_then(|of| side_of.get(&of).copied());
+        if known.is_none() {
+            lost += 1;
+        }
+        side_of.insert(serial, known.flatten());
+    }
+
+    lost
+}
+
 /// Whether these two genomes are one mutation apart: identical, one gene appended, or one field
 /// of one gene changed.
 ///
@@ -545,9 +950,10 @@ fn seeded_world(seed: u64, change: impl FnOnce(&mut RawConfig)) -> Config {
 #[cfg(test)]
 mod tests {
     use super::{
-        ARMS, BEAT, FOUNDER_ENERGY, FOUNDERS, Outcome, assay, dawn, founder_genome,
-        founder_with_a_third_cell, held_still, one_mutation_apart, package_assay, place,
-        placed_assay, seeded_world, swimmer, travels,
+        ARMS, BEAT, FOUNDER_ENERGY, FOUNDERS, GENERATION, INTRODUCTIONS, Invader, Invasion,
+        Outcome, POLL_EVERY, SETTLE, assay, dawn, founder_genome, founder_with_a_third_cell,
+        held_still, invade, one_mutation_apart, package_assay, place, placed_assay, seeded_world,
+        swimmer, travels,
     };
     use coacervate_sim::cell::{CellKind, Vec2};
     use coacervate_sim::config::{Config, RawConfig};
@@ -1282,6 +1688,333 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------------
+    // ⭐⭐⭐ The invasion assay, and the calibration that is the only thing making it count.
+    // ---------------------------------------------------------------------------------
+
+    /// Print one invasion, so a run of these tests is a measurement and not only a pass.
+    fn report_invasion(what: &str, invasion: &Invasion) {
+        println!(
+            "INVASION {what}: released into a resident of {} organisms, {} unattributed births",
+            invasion.resident, invasion.unattributed
+        );
+        for arm in &invasion.arms {
+            println!(
+                "  {:<26} {:>+7.3} %/gen | invaded {:>2} of {:>2} ({:.2}) | {:>4} alive at the \
+                 end | refused {} {}",
+                if arm.through_the_transit() {
+                    format!("{} (extinct, fitted through its arrival)", arm.what)
+                } else {
+                    arm.what.to_owned()
+                },
+                arm.per_generation().unwrap_or(f64::NAN) * 100.0,
+                arm.established(),
+                arm.released,
+                arm.invasion_probability(),
+                arm.alive(),
+                arm.refused,
+                arm.refusal.as_deref().unwrap_or("")
+            );
+        }
+    }
+
+    /// ⭐ **The arithmetic, on a trajectory whose answer is known before it is fitted.**
+    ///
+    /// A mutant of ten in a resident of a thousand, growing at exactly 5% a generation for
+    /// twenty-four of them, sampled every hundred ticks and rounded to whole organisms because
+    /// organisms are whole. What the fit has to give back is 0.05, and what it is allowed to
+    /// lose to the rounding is a twentieth of that.
+    ///
+    /// Without this, [`Invader::per_generation`] is a dozen lines of least squares that have
+    /// only ever been asked questions nobody knows the answer to.
+    #[test]
+    fn an_invasion_fitness_is_the_slope_of_log_frequency() {
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_precision_loss,
+            clippy::cast_sign_loss,
+            reason = "a hand-built trajectory of a few dozen organisms, rounded to whole \
+                      organisms on the way in because that is what a count of organisms is"
+        )]
+        let track: Vec<(u64, u32, u32)> = (0..=420)
+            .map(|poll| {
+                let since = poll * POLL_EVERY;
+                let generations = since as f64 / GENERATION;
+                (
+                    since,
+                    (10.0 * (0.05 * generations).exp()).round() as u32,
+                    1_000,
+                )
+            })
+            .collect();
+
+        let arm = Invader {
+            what: "a known slope",
+            released: 12,
+            refused: 0,
+            refusal: None,
+            track,
+            standing: vec![3, 0, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0],
+        };
+
+        let fitted = arm
+            .per_generation()
+            .expect("a trajectory that never hit nought has a slope");
+        assert!(
+            (fitted - 0.05).abs() < 0.0025,
+            "a trajectory built to rise at 5.00 %/generation was fitted at {:.3} %/generation, \
+             so the least squares is not measuring what it is quoted as measuring",
+            fitted * 100.0
+        );
+
+        // And the second reading: three of the twelve introductions left descendants.
+        assert_eq!(
+            arm.established(),
+            3,
+            "three of the twelve are still standing"
+        );
+        assert!(
+            (arm.invasion_probability() - 0.25).abs() < 1e-9,
+            "three of twelve is an invasion probability of 0.25, not {}",
+            arm.invasion_probability()
+        );
+    }
+
+    /// ⭐⭐ **The instrument's first claim: every living organism is an invader or a resident.**
+    ///
+    /// The same claim [`an_arm_can_be_followed_through_its_descendants`] makes about the
+    /// competition assay, and it matters more here: an invasion is a ratio of a small number to
+    /// a large one, so an attribution that leaked would move the small number by a large
+    /// fraction and the large one by nothing, and the leak would read as selection.
+    #[test]
+    fn a_rare_invader_is_followed_through_its_descendants() {
+        // ⚠️ The one setting that is not `a_small_world`'s: room. An invasion is released into a
+        // world that is *already full of residents*, so a cap the resident has itself reached is
+        // a cap that refuses every introduction - which is what the first run of this test did.
+        let config = seeded_world(42, |raw: &mut RawConfig| {
+            raw.world.width = 512.0;
+            raw.world.height = 288.0;
+            raw.world.grid_cols = 64;
+            raw.world.grid_rows = 36;
+            raw.limits.max_organisms = 2_000;
+            raw.light.influx = 0.012;
+        });
+        let plain = founder_genome(&config.limits);
+        let arms = [
+            ("the resident's own genome", plain.clone()),
+            (
+                "a third photocyte",
+                founder_with_a_third_cell(&config.limits, CellKind::Photocyte),
+            ),
+        ];
+
+        let invasion = invade(&config, &plain, &arms, 4, 3_000, 2_000);
+
+        assert!(
+            invasion.resident > 32,
+            "the resident was {} organisms after three thousand ticks, which is no more than the \
+             {FOUNDERS} founders - so nothing was invaded",
+            invasion.resident
+        );
+        for arm in &invasion.arms {
+            assert_eq!(
+                arm.refused,
+                0,
+                "the world refused {} of the four introductions of {} ({}), so the arms are not \
+                 the same size",
+                arm.refused,
+                arm.what,
+                arm.refusal.as_deref().unwrap_or("")
+            );
+        }
+
+        // ⭐ Rare, which is the property that makes this an invasion rather than a competition.
+        let invaders: u32 = invasion.arms.iter().map(|arm| arm.released).sum();
+        assert!(
+            invaders * 5 < invasion.resident,
+            "{invaders} invaders went into a resident of {}, which is more than a fifth of it - \
+             at that share a mutant is changing the environment it is being measured against",
+            invasion.resident
+        );
+
+        // ⭐⭐ And the arms plus the residents are the whole living population, bar the handful
+        // whose parent died between two polls - which is counted rather than assumed.
+        let (_, _, residents) = *invasion.arms[0]
+            .track
+            .last()
+            .expect("a two-thousand-tick window holds twenty polls");
+        let counted: u32 = invasion.arms.iter().map(Invader::alive).sum::<u32>() + residents;
+        assert!(
+            counted > 0 && invasion.unattributed * 50 < u64::from(counted),
+            "{} of {counted} living organisms could not be traced to an arm or to the resident, \
+             which is more than two per cent - so the polling interval is not short enough \
+             against a lifetime",
+            invasion.unattributed
+        );
+    }
+
+    /// The three arms every invasion in this module is run with: the resident's own genome as
+    /// the control, and the two whose competition coefficients are solidly known.
+    fn the_three_arms(config: &Config) -> [(&'static str, coacervate_sim::genome::Genome); 3] {
+        [
+            ("the resident's own genome", founder_genome(&config.limits)),
+            (
+                "a third photocyte",
+                founder_with_a_third_cell(&config.limits, CellKind::Photocyte),
+            ),
+            (
+                "a third devorocyte",
+                founder_with_a_third_cell(&config.limits, CellKind::Devorocyte),
+            ),
+        ]
+    }
+
+    /// An arm's invasion fitness as an **excess over the control arm**, in %/generation.
+    ///
+    /// ⚠️ Quoted this way and never bare, for the competition assay's reason: an invader pays a
+    /// price for being a newcomer, the control arm is what that price is, and a bare number
+    /// would be the two added together.
+    fn excess(invasion: &Invasion, arm: usize) -> f64 {
+        let control = invasion.arms[0]
+            .per_generation()
+            .expect("the control arm did not survive its own settling-in");
+        let measured = invasion.arms[arm]
+            .per_generation()
+            .expect("an arm did not survive its own settling-in");
+
+        (measured - control) * 100.0
+    }
+
+    /// ⭐⭐⭐ **The calibration, and nothing this instrument measures counts without it.**
+    ///
+    /// Both instruments, on the same seed, on the same day, on the two arms whose competition
+    /// coefficients are known: a **third photocyte**, which the competition assay prices well
+    /// above break-even, and a **third devorocyte**, which it prices well below. If invasion
+    /// analysis does not reproduce those signs and rough magnitudes then it is not measuring
+    /// selection and every later reading is a number with nothing behind it.
+    ///
+    /// The two instruments are not the same experiment and are not expected to agree to a
+    /// decimal. The competition assay reads two arms **filling an empty world side by side**,
+    /// which is a difference of growth rates in a rising population; this reads a handful of
+    /// strangers dropped into a world that is **already full**, which is a frequency in a
+    /// population at its carrying capacity. What has to reproduce is the sign, the ordering and
+    /// the rough size — and it is the invasion reading that belongs to the regime the shipped
+    /// world actually spends its life in.
+    ///
+    /// # ⭐⭐ What both instruments said, measured on the same day
+    ///
+    /// Competition assay, seed 42, 42,000 ticks: a third **photocyte** at **+1.780 %/gen**
+    /// (ratio 1.5314, 3.41 cells a body against 2.03) and a third **devorocyte** at **−7.228**
+    /// (ratio 0.1771). The photocyte row reproduces this module's own recorded 1.531 to the
+    /// fourth decimal, so the old instrument is where it was left.
+    ///
+    /// Invasion assay, three seeds, twelve introductions of each arm into a resident of about
+    /// 2,150 — **nought unattributed births in every run**:
+    ///
+    /// | seed | control | a third photocyte | **excess** | invaded | a third devorocyte | **excess** | invaded |
+    /// | --- | --- | --- | --- | --- | --- | --- | --- |
+    /// | 42 | +2.587 | +7.794 | **+5.21** | 10 of 12 | extinct | **−17.03** | **0 of 12** |
+    /// | 7 | −0.553 | +7.723 | **+8.28** | 8 of 12 | extinct | **−28.94** | **0 of 12** |
+    /// | 99 | +0.007 | +7.315 | **+7.31** | 11 of 12 | extinct | **−22.27** | **0 of 12** |
+    ///
+    /// **Both signs reproduce, the ordering reproduces, and the ratio between the two arms very
+    /// nearly does**: competition prices them 1 : 4.1 apart and invasion 1 : 3.3. What does not
+    /// carry across is the *scale* — invasion reads about three and a half times as steep as
+    /// competition on both arms alike, consistently, which is what a full world ought to do to a
+    /// margin that two arms growing into empty water never feel.
+    ///
+    /// ⚠️ **The noise floor is ±1.6 %/generation, ten times the competition assay's.** That is
+    /// the control arm's own spread across the three seeds above (+2.59, −0.55, +0.01), and it
+    /// is the price of the thing that makes this instrument work at all: twelve rare
+    /// introductions in a full world are demographically noisy where sixteen founders filling an
+    /// empty one are not. It resolves about **5 %/generation** at three seeds, so it is the
+    /// coarser of the two instruments and should not be reached for where the competition assay
+    /// can answer.
+    #[test]
+    #[ignore = "two 42,000-tick competition runs and one 92,000-tick invasion; check.ps1 runs it \
+                in release"]
+    fn invasion_analysis_reproduces_the_competition_coefficients() {
+        let config = seeded_world(42, |_| {});
+        let plain = founder_genome(&config.limits);
+        let arms = the_three_arms(&config);
+
+        // The old instrument, today, so that nothing here rests on a figure from another day.
+        let photocyte = assay(&config, [&plain, &arms[1].1], WINDOW);
+        report("competition: a third photocyte", &photocyte);
+        let devorocyte = assay(&config, [&plain, &arms[2].1], WINDOW);
+        report("competition: a third devorocyte", &devorocyte);
+
+        // And the new one.
+        let invasion = invade(&config, &plain, &arms, INTRODUCTIONS, SETTLE, WINDOW);
+        report_invasion("the shipped world, dispersal x1", &invasion);
+
+        let (competed, invaded) = (
+            [
+                photocyte.per_generation() * 100.0,
+                devorocyte.per_generation() * 100.0,
+            ],
+            [excess(&invasion, 1), excess(&invasion, 2)],
+        );
+        println!(
+            "CALIBRATION: a third photocyte competes at {:+.3} %/gen and invades at {:+.3}; a \
+             third devorocyte competes at {:+.3} and invades at {:+.3}",
+            competed[0], invaded[0], competed[1], invaded[1]
+        );
+
+        assert!(
+            competed[0] > 0.3 && competed[1] < -0.3,
+            "the competition assay itself has stopped saying that a third photocyte pays \
+             ({:+.3} %/gen) and a third devorocyte does not ({:+.3}). Until it does, there is \
+             nothing here to calibrate against",
+            competed[0],
+            competed[1]
+        );
+
+        assert!(
+            invaded[0] > 2.0,
+            "a third photocyte competes at {:+.3} %/generation and *invades* at {:+.3}, and the \
+             measured readings are +5.21, +8.28 and +7.31 against a ±1.6 noise floor. The two \
+             instruments have stopped agreeing about the one arm this world is known to reward, \
+             so the invasion assay is not calibrated and nothing measured with it counts",
+            competed[0],
+            invaded[0]
+        );
+        assert!(
+            invaded[1] < -5.0,
+            "a third devorocyte competes at {:+.3} %/generation and *invades* at {:+.3}, and the \
+             measured readings are −17.03, −28.94 and −22.27. A mouth that had started paying in \
+             the shipped world would be the finding of the round, and it is far likelier that \
+             the instrument is wrong",
+            competed[1],
+            invaded[1]
+        );
+        assert!(
+            invaded[0] - invaded[1] > 10.0,
+            "invasion separates a third photocyte from a third devorocyte by only {:.3} \
+             %/generation, against the competition assay's {:.3} and the measured 22.2. An \
+             instrument that cannot tell those two apart cannot tell anything apart",
+            invaded[0] - invaded[1],
+            competed[0] - competed[1]
+        );
+
+        // ⭐⭐ And the second reading, which the competition assay has no equivalent of: a mouth
+        // does not establish here at all, in twelve independent tries.
+        assert!(
+            invasion.arms[0].established() > 0,
+            "not one of the {INTRODUCTIONS} introductions of the resident's own genome was still \
+             standing after {WINDOW} ticks, so this window measures extinction by chance and \
+             nothing else"
+        );
+        assert!(
+            invasion.arms[1].established() > invasion.arms[2].established(),
+            "a third devorocyte established in {} of {INTRODUCTIONS} introductions against a \
+             third photocyte's {}, and the measured figures are nought and ten. An invasion \
+             probability that no longer separates them is an instrument with no second reading",
+            invasion.arms[2].established(),
+            invasion.arms[1].established()
+        );
+    }
+
+    // ---------------------------------------------------------------------------------
     // ⭐⭐⭐ Does a mouth ever meet anybody it is not related to?
     //
     // The measurement `physics.current` exists for. A devorocyte's income is a bite, a bite
@@ -1398,8 +2131,8 @@ mod tests {
     /// other by construction, and `behaviour.rs` will not let a devorocyte bite its own
     /// organism, so counting them would put a constant in both columns and flatten the thing
     /// being measured.
-    fn what_a_mouth_meets(seed: u64, current: f64, ticks: u64) -> Contacts {
-        let config = seeded_world(seed, |raw| raw.physics.current = current);
+    fn what_a_mouth_meets(seed: u64, change: impl FnOnce(&mut RawConfig), ticks: u64) -> Contacts {
+        let config = seeded_world(seed, change);
         let (width, height) = (config.world.width, config.world.height);
         let mouthed = founder_with_a_third_cell(&config.limits, CellKind::Devorocyte);
 
@@ -1543,9 +2276,9 @@ mod tests {
     }
 
     /// Print what one probe came back with, so a run of these is a measurement and not a pass.
-    fn report_contacts(current: f64, seen: &Contacts) {
+    fn report_contacts(what: &str, seen: &Contacts) {
         println!(
-            "CONTACT current {current}: contact fraction {:.4} ({} of {} mouth-samples), \
+            "CONTACT {what}: contact fraction {:.4} ({} of {} mouth-samples), \
              stranger share {:.4} ({} of {} contacts), alive {} holding {:.0}",
             seen.contact_fraction(),
             seen.touching,
@@ -1628,10 +2361,10 @@ mod tests {
     #[test]
     #[ignore = "two 60,000-tick runs of the shipped world; check.ps1 runs it in release"]
     fn a_current_buys_strangers_by_spending_contact() {
-        let still = what_a_mouth_meets(42, 0.0, 60_000);
-        report_contacts(0.0, &still);
-        let running = what_a_mouth_meets(42, MIXING_CURRENT, 60_000);
-        report_contacts(MIXING_CURRENT, &running);
+        let still = what_a_mouth_meets(42, |raw| raw.physics.current = 0.0, 60_000);
+        report_contacts("current 0 - as shipped", &still);
+        let running = what_a_mouth_meets(42, |raw| raw.physics.current = MIXING_CURRENT, 60_000);
+        report_contacts(&format!("current {MIXING_CURRENT}"), &running);
 
         // The calibration: the shipped world, and the fact the round existed to change.
         assert!(
