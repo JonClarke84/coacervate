@@ -85,6 +85,12 @@ judgement about the cap, not a measurement anybody still needs to take.
 
 ### ⭐⭐ 2. Travel per lifetime via `dt` rather than lifespan — the cheapest test
 
+> ⚠️⚠️ **Measured since this was written, and the orthogonality claim below is confirmed — which
+> is also why `dt` buys no evolutionary throughput whatever.** See §7. The candidate stands
+> exactly as written for what it was proposed for, which is travel; it must not be reached for as
+> a way of getting more generations into a night.
+
+
 Locomotion fails on distance: 8 units of travel against 23 to a neighbour and 60–88 to a stranger.
 The obvious lever is to let a body live longer, and **lifespan is the wrong lever and this is
 measured**. Lifespan is a cost-side quantity — `LIFETIME_UPKEEP × cells ÷ cost per tick` — and
@@ -308,3 +314,233 @@ are all one-sided in the direction the rescaling makes safer, and all still pass
   −3.38 %/generation and a third myocyte −1.67; both are cheaper than they were and both are still
   a loss by thirty and fifteen times the noise floor. Sub-linear metabolism makes *size*
   affordable, not specialisation.
+- **`dt` as a way of getting more generations into a night.** §7. It is a lever on travel per
+  lifetime and on nothing else, and that is now measured rather than argued.
+
+---
+
+## 7. ⭐⭐⭐ Throughput: where a tick goes, and what actually buys generations
+
+**The owner's requirement, in his words: he does not want correct physics that would need 10,000
+years of real time before anything meaningful appears.** Everything here was measured on the
+i5-13400F, seed 42, eight founders, release build. The instruments are `run.rs`'s
+`how_fast_the_shipped_world_turns`, `what_a_tick_costs_an_empty_world`,
+`what_dt_does_to_a_generation` and `what_a_generation_costs_in_ticks` — the tick-scale counterpart
+to what `assay.rs` does for a cell.
+
+### ⭐⭐⭐ The number the owner asked for: generations per wall-clock hour
+
+Two instruments, and the ratios are quoted **within** each rather than across them, because the
+two read the world at different ages and a generation lengthens as a run matures.
+
+`how_fast_the_shipped_world_turns` — 60,000 ticks past the founding, 4,385 cells before and 4,374
+after, which is as matched a pair as this project can take:
+
+| | ticks/s | ticks per generation | **generations/hour** | in a 12-hour run |
+| --- | --- | --- | --- | --- |
+| shipped, **before** this round | 757 | 1,196 | **2,277** | 27,300 |
+| shipped, **after** | **1,071** | 1,196 | **3,225** | 38,700 |
+
+`what_a_generation_costs_in_ticks` — every arm settled for `200,000 ÷ k` ticks, all on the code
+above:
+
+| | ticks/s | ticks per generation | **generations/hour** | in a 12-hour run |
+| --- | --- | --- | --- | --- |
+| shipped, `k = 1` | 799 | 1,297 | **2,220** | 26,600 |
+| `config/tempo.toml`, `k = 8` | 526 | **152** | **12,407** | **148,900** |
+
+**×1.42 from making a tick cheaper** — bit-identical, ships live, no golden vector moves. **×5.59
+from making a generation take fewer ticks** — which changes what a run produces, and therefore
+ships as a profile nobody runs by accident. Together, **about ×7.9**, though that last figure is
+the product of two separately-measured ratios rather than one end-to-end reading.
+
+### The arithmetic, and where it goes wrong
+
+Evolutionary output is generations × population. The cost of a tick rises with population, so
+ticks per second falls as population rises and **population cancels** — leaving how cheap a tick
+is, and how many ticks a generation takes. ⚠️ **The cancellation only holds for the part of a tick
+that is variable**, which is why the first question worth asking is what fraction is not.
+
+### Where a tick went, before any of this
+
+Shipped configuration, 60,000 ticks past the founding, 2,063 organisms holding 4,385 cells:
+**1,321.7 µs a tick, 757 ticks a second.**
+
+| pass | µs | share |
+| --- | --- | --- |
+| behaviour | 579.1 | 43.8% |
+| physics | 433.0 | 32.8% |
+| resource grid | 155.1 | 11.7% |
+| metabolism | 60.6 | 4.6% |
+| gather | 46.7 | 3.5% |
+| scatter | 25.6 | 1.9% |
+| reproduction | 11.5 | 0.9% |
+| ageing | 10.0 | 0.8% |
+| ledger check | 0.05 | 0.0% |
+
+Inside the two big ones, the two biggest single things were **the shading query in the behaviour
+pass at 22.1%** and **the collision search at 22.4%**.
+
+### ⚠️⚠️ A third of a tick was paid whatever was alive
+
+**36% of a tick was fixed cost**, and it was attributable rather than merely bounded:
+
+- **The resource grid, 155 µs.** 36,864 tiles regrown, diffused and capped every tick whatever
+  lives on them. Genuinely fixed, and still is.
+- **The three spatial-hash rebuilds, 105.35 µs each — measured on an empty crowd.** The shipped
+  world lays **50,869 buckets** over 4,000-odd living cells, and the counting sort cleared a
+  count for every bucket, prefix-summed across every bucket and copied a cursor for every bucket.
+  **Four fifths of the cost of hashing the world's entire population was the world being swept
+  rather than the crowd being sorted**, three times a tick.
+
+| crowd | rebuild, before | rebuild, after |
+| --- | --- | --- |
+| 0 cells | **105.35 µs** | **0.00 µs** |
+| 1,000 | 109.47 | 10.27 |
+| 4,000 | 132.92 | 44.93 |
+| 16,000 | 242.71 | 200.36 |
+
+⭐ **The fix is to remember which buckets were used and walk that list instead**, clearing them on
+the rebuild *after* the one that filled them. It is a change of cost and not of result: the runs
+no longer lie in bucket order, which nothing observes, while the order of cells *within* a run is
+unchanged — so every force is summed in exactly the order it was summed in before. Fixed cost is
+now the grid alone, **18% of a tick**.
+
+### What was done, and what each piece bought
+
+All three are **bit-identical**. All six golden vectors hold unchanged.
+
+| change | ticks/s |
+| --- | --- |
+| before | **757** |
+| spatial hash rebuilt in O(cells) rather than O(buckets) | 902 |
+| `rayon` on the behaviour pass's read-only half | 1,020 |
+| bucket runs packed into one `u32` pair array | **1,071** |
+
+Both ends of that measured at the same point in the same run — seed 42, eight founders, 60,000
+ticks past the founding, 4,385 cells before and 4,374 after. `kleiber` moves with it, 650 → 896.
+
+**×1.42 on the tick, for no change to a single number the simulation produces.** `rayon` is the
+one CLAUDE.md's stack named and nothing had used; SPEC section 2 built the per-organism RNG
+streams "which is what allows `rayon` parallelism without breaking reproducibility", and this is
+the first thing to spend that guarantee. It is spent narrowly and deliberately: `Behaviour::look`
+writes only `want[index]` and `signal[index]` and accumulates nothing, so it is the one pass whose
+answer cannot depend on the order the work was done in. **The passes that accumulate — the
+collision forces, the harvest, anything adding into a shared total — are not parallelisable
+without changing the order of the additions, which changes the roundings, which changes the
+world.**
+
+### ⚠️⚠️⚠️ Raising the population does not buy throughput. It **loses** it.
+
+The hypothesis was that a world running mostly empty — 4,000 cells over 50,869 buckets and 36,864
+tiles — would carry a much larger population almost free, so mutation supply could be bought for
+nothing. **It is measured and it is false, and it is false in the interesting direction.** One
+world let to fill, the cost of a tick read off as it goes:
+
+| shipped light | | | eight times the light | | |
+| --- | --- | --- | --- | --- | --- |
+| **cells** | **ticks/s** | µs/tick | **cells** | **ticks/s** | µs/tick |
+| 18 | 5,651 | 177 | 20 | 1,988 | 503 |
+| 692 | 2,736 | 366 | 2,169 | 931 | 1,074 |
+| 1,385 | 1,893 | 528 | 8,667 | 354 | 2,829 |
+| 2,219 | 1,401 | 714 | 17,476 | 190 | 5,252 |
+| 2,950 | 1,201 | 833 | 25,093 | 135 | 7,396 |
+| 4,026 | 1,034 | 967 | 33,228 | 93 | 10,811 |
+
+**The fixed cost is confirmed at 173 µs** — fit the shipped column and the intercept lands within
+four microseconds of the resource grid's measured 167, which is the whole of it. That is 17.9% of
+a tick at the shipped population, and the two independent routes to the number agree.
+
+⭐⭐ **But the cost per cell is not constant, and that is what kills the lever.** The shipped
+column's slope is **0.197 µs a cell**; the eight-times column's is **0.314**. A denser world costs
+*more per cell* than a sparse one, because a bucket that used to hold one cell now holds several
+and the collision search has to test every pair in it. Throughput is population × ticks per
+second:
+
+| | organisms | ticks/s | product |
+| --- | --- | --- | --- |
+| shipped | 1,997 | 1,034 | **2.06 M** |
+| eight times the light | 10,646 | 93 | **0.99 M** |
+
+**Five times the population is half the evolutionary throughput**, and eight times the arena's
+memory for it. The world was indeed running mostly empty, and the right answer was to stop paying
+for the emptiness rather than to fill it: deleting the fixed cost gave ×1.42 outright and cost
+nothing at all.
+
+⚠️ Worth noticing in the table: the eight-times column starts at **503 µs with twenty cells in
+it**, against the shipped column's 177. Nothing is alive in either. The difference is the arenas —
+sized from `limits.max_organisms`, so eight times the cap is eight times the memory to walk past
+even when it is empty. **A raised cap is not free even before anything is born into it.**
+
+Resident memory, measured on the running process: **34 MB** at the shipped cap of 4,000 organisms
+and **185 MB** at 32,000. Both are a long way inside CLAUDE.md's 2 GB target, so memory was never
+what stopped this — the cache was.
+
+### ⚠️⚠️ `dt` is not a lever on generations per hour, and this is now measured
+
+`physics.rs`'s `DT` is read by the integrator, by the speed detritus sinks at, and by the clock a
+myocyte's oscillation is phased against. It is read by **nothing** in `metabolism.rs`,
+`reproduction.rs`, `ledger.rs`, `grid.rs` or `organism.rs`. Upkeep is charged per tick, income
+arrives per tick, a body ages one tick per tick and its lifespan is a tick count.
+
+| `DT` | mean age of the living | alive | cells | biomass |
+| --- | --- | --- | --- | --- |
+| 1 / 60 — ships | **881** | 1,913 | 4,588 | 31,407 |
+| 4 / 60 | **893** | 1,368 | 4,915 | 33,414 |
+| 8 / 60 | **956** | 379 | 4,893 | 31,574 |
+
+**An eightfold `dt` moved the length of a generation by 8%, and the wrong way.** What it moved was
+the ecology — the same tissue in a fifth of the bodies. §2's orthogonality claim is therefore
+*confirmed*, and confirming it is exactly what refutes `dt` as a throughput lever: a setting the
+economy cannot feel cannot make the economy run faster. ⚠️ The integrator survived 8× without
+diverging, but `MAX_STIFFNESS` is `0.04 / dt²` and falls from 144 to 2.25 across that range, so
+the founder's own spring of 10.0 is being clamped from 4/60 onward — the ecological drift in the
+table is at least partly that rather than the physics.
+
+### ⭐⭐⭐ What does divide ticks-per-generation: run the economy faster
+
+Multiply every per-tick **rate** by `k` and leave every **stock** alone. `config/tempo.toml` is
+that at `k = 8`, and its header carries the argument; it is three existing keys and **no code at
+all**. Each arm below run for `200,000 ÷ k` ticks, so every one has lived the same amount of its
+own history:
+
+| `k` | alive | cells | biomass | births/1k ticks | mean age | cells/body | ticks/s | **gens/hour** |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 — ships | 641 | 5,236 | 33,182 | 356.0 | **928** | 8.17 | 799 | **2,220** |
+| 2 | 1,380 | 4,887 | 32,009 | 1,568.0 | **442** | 3.54 | 717 | **4,183** |
+| 4 | 1,503 | 4,687 | 31,592 | 3,423.0 | **224** | 3.12 | 724 | **8,340** |
+| 8 — `tempo` | 1,316 | 5,089 | 32,472 | 6,021.0 | **109** | 3.87 | 526 | **12,407** |
+
+**Mean age divides by `k`** — 928, 442, 224, 109 against a perfect 928, 464, 232, 116 — and the
+per-capita birth rate multiplies by `k` to match. ⭐ **Biomass and total living cells do not move**
+across an eightfold change: the world holds the same amount of life and turns it over eight times
+faster. This is not a cost-side lever self-cancelling in the §3 sense, because both sides of every
+body's books are multiplied and the balance between them is exactly what it was.
+
+⚠️ **Generations per hour goes up ×5.6 rather than ×8, and the shortfall is the price of the
+births.** A tick at `k = 8` costs 526 ticks a second against 799 — not because there is more
+tissue, since there is not, but because there are **seventeen times as many births in it**, and a
+birth is a genome copied, mutated and developed into a body. That is the one part of a tick that
+scales with the tempo rather than with the population, and it is where the next optimisation of
+this profile would go.
+
+⚠️⚠️ **The price is that the mean body halves**, 8.17 cells to 3.87, with the population roughly
+doubling — the same tissue differently divided. The step is between `k = 1` and `k = 2` and then
+flat, which reads like a discretisation threshold rather than a slope. **Nobody has found out
+which, and that is the first thing worth doing with this profile.** Until somebody has, a
+body-size result must not be read off it.
+
+### What is left, in the order it is worth taking
+
+1. **The collision search, 25% of a tick.** Bound by waiting for memory rather than by arithmetic:
+   4,000 cells spread over 50,869 buckets means nothing it wants is ever in cache. A bit-identical
+   parallel form exists — walk the neighbours read-only in parallel, recording the overlapping
+   pairs, then apply them sequentially in the original index order, which reproduces the
+   summation order exactly. It needs a bounded per-cell pair buffer, which is the part to design
+   carefully under CLAUDE.md's allocate-once rule.
+2. **The resource grid, 18% and all of the remaining fixed cost.** Parallelisable per tile; the
+   care needed is that `regrow` and `spill` hand the ledger an `f64` sum, and a parallel reduction
+   would change the order those add in.
+3. **Coarser buckets.** Occupancy is 0.08 cells per bucket, which is a world running mostly empty.
+   Wider buckets would trade cache misses for candidate tests. ⚠️ It changes the order neighbours
+   come back in, so it **moves every golden vector**, and it is the only item here that does.
