@@ -45,7 +45,8 @@
 
 use coacervate_sim::config::{
     Config, ConfigError, DIFFUSION_STABILITY_LIMIT, DRAG_ANISOTROPY_CEILING, DRAG_ANISOTROPY_FLOOR,
-    PATCH_DRIFT_CEILING, RawConfig, SEASON_AMPLITUDE_CEILING, SEASON_PERIOD_FLOOR,
+    LINEAR_SCALING, PATCH_DRIFT_CEILING, RawConfig, SCALING_EXPONENT_FLOOR,
+    SEASON_AMPLITUDE_CEILING, SEASON_PERIOD_FLOOR,
 };
 
 /// One setting a person may turn while the run is going.
@@ -126,6 +127,7 @@ impl std::fmt::Debug for Dial {
 /// | `light.diffusion` | `0 – 0.25` | ⭐ [`DIFFUSION_STABILITY_LIMIT`] itself. See this module's header |
 /// | `physics.drag_anisotropy` | `1 - 3` | ⭐ [`DRAG_ANISOTROPY_FLOOR`] and [`DRAG_ANISOTROPY_CEILING`] themselves. One is isotropic water, which is the world in which nothing can swim; three is where the arithmetic stopped computing |
 /// | `metabolism.upkeep_scale` | `0.01 – 8` | SPEC section 3: *"`3` and `4` both go extinct with the founder's death"*. A dial that stopped at 2 could not reach the one environmental event that measurement describes. Its low end is not nought because the gate calls it positive |
+/// | `metabolism.scaling_exponent` | `0.5 – 1` | ⭐ [`SCALING_EXPONENT_FLOOR`] and [`LINEAR_SCALING`] themselves. One is exactly linear, which is the world every figure in this project was measured on; a half is `d / (d + 1)` in one dimension, the flattest exponent a distribution network can have |
 /// | the `[mutation]` rates | `0 – 0.2` | All seven are fractions and the gate would take one, but a rate of one is every gene mutating at every birth. The dial covers ten times the shipped value, which is the range an experiment lives in |
 /// | `run.max_ticks_per_second` | `0 – 600` | Nought is SPEC's *"0 = uncapped"*. Six hundred is about what this machine manages headless, so the far end is "as fast as it goes" and everything below it is a real slowing |
 pub const DIALS: &[Dial] = &[
@@ -313,6 +315,20 @@ pub const DIALS: &[Dial] = &[
         places: Some(2),
         read: |raw| raw.metabolism.upkeep_scale,
         write: |raw, value| raw.metabolism.upkeep_scale = value,
+    },
+    Dial {
+        table: "metabolism",
+        // ⭐ Not `0.5 - 1.0` written out. Both ends are the gate's own constants, imported for
+        // the reason `light.patch_drift` imports `PATCH_DRIFT_CEILING`: one is exactly linear —
+        // the world every figure in this project was measured on — and a half is `d / (d + 1)`
+        // in one dimension, the flattest exponent a distribution network can have. A copy of
+        // either number written here would be silently wrong the day somebody moves it.
+        label: "scaling_exponent",
+        least: SCALING_EXPONENT_FLOOR as f64,
+        most: LINEAR_SCALING as f64,
+        places: Some(3),
+        read: |raw| raw.metabolism.scaling_exponent,
+        write: |raw, value| raw.metabolism.scaling_exponent = value,
     },
     Dial {
         table: "metabolism",
@@ -863,7 +879,9 @@ mod tests {
             // ⭐ Five since `physics.current`: a depth-dependent sideways force on every cell.
             ("physics", 5),
             ("behaviour", 2),
-            ("metabolism", 5),
+            // ⭐ Six since `metabolism.scaling_exponent`: the power a body's summed upkeep is
+            // raised to as it grows.
+            ("metabolism", 6),
             ("mutation", 7),
             ("run", 1),
         ] {
@@ -876,7 +894,7 @@ mod tests {
         }
         assert_eq!(
             DIALS.len(),
-            28,
+            29,
             "the dials do not add up to the tables above"
         );
 

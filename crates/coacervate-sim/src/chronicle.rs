@@ -406,7 +406,7 @@ struct Condition {
 /// The five tables here are exactly the ones [`World::retune`] will accept a change to, and
 /// exactly `settings.rs`'s sliders less `run.max_ticks_per_second` — which is not a fact about
 /// the world at all, but about how fast a person is watching it.
-const CONDITIONS: [Condition; 27] = [
+const CONDITIONS: [Condition; 28] = [
     Condition {
         table: "light",
         label: "influx",
@@ -516,6 +516,16 @@ const CONDITIONS: [Condition; 27] = [
         label: "upkeep_scale",
         phrase: "what it costs a cell simply to be alive",
         read: |config| f64::from(config.metabolism.upkeep_scale),
+    },
+    Condition {
+        table: "metabolism",
+        // ⭐ The phrase says what *changed* and not whether it is better, which is CLAUDE.md's
+        // rule about generated text. A world in which large bodies pay less per cell than small
+        // ones is not an improved world; it is a different one, and a lineage that was doing
+        // well in the old one has not failed at anything.
+        label: "scaling_exponent",
+        phrase: "how much less a large body pays per cell than a small one",
+        read: |config| f64::from(config.metabolism.scaling_exponent),
     },
     Condition {
         table: "metabolism",

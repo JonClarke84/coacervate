@@ -11,6 +11,20 @@
 //! Between them the two files close the loop the whole project turns on. Before this one
 //! there was no way to lose, so there was nothing for selection to select against.
 //!
+//! # ⭐⭐⭐ How much a body pays depends on how big it is, and that is the newest thing here
+//!
+//! SPEC section 10's `metabolism.scaling_exponent`. Every cell pays for itself, but the **sum**
+//! is raised to `n^(k − 1)` first, so a larger body spends less per unit of itself - Kleiber's
+//! law, and the one place in this simulation where being more than one thing is cheaper than
+//! being one thing twice. It ships at `k = 1`, where the multiplier is exactly 1.0 at every
+//! size and this file computes precisely what it computed before the setting existed.
+//!
+//! **It matters far beyond the one line it is written on**, because [`Metabolism::lifespan`]
+//! divides by what a body costs: an allowance of `LIFETIME_UPKEEP × cells ÷ cost` becomes
+//! proportional to `n^(1 − k)`, so a body that is cheaper to run is also longer-lived, and
+//! neither half was tuned. See [`Metabolism::due`] and
+//! [`crate::config::MetabolismConfig::scaling_exponent`].
+//!
 //! # Death is where energy conservation is easiest to get wrong
 //!
 //! Four of the traps are worth naming before the code, because none of them announces itself.
@@ -184,6 +198,29 @@ pub fn construction_energy(cells: &[Cell]) -> f64 {
         .sum()
 }
 
+/// What a body of each size multiplies its summed tissue upkeep by: `n^(exponent − 1)`, worked
+/// out once for every size a body is allowed to be.
+///
+/// One entry per possible cell count and one spare at the front, so the count itself is the
+/// index and there is no arithmetic between a body and its multiplier. A body larger than
+/// `limits.max_cells_per_organism` would index past the end and stop the run, which is the
+/// right answer to a body larger than the cap every arena in the simulation was sized from —
+/// `development.rs` is what makes that unreachable, and CLAUDE.md's rule is that an invariant
+/// is asserted at runtime rather than assumed.
+///
+/// ⭐ **At the shipped exponent every entry is exactly one**, because `x^0` is 1.0 for every
+/// finite `x` in this arithmetic, and multiplying by it returns the sum unchanged in its last
+/// bit. That is what lets the mechanism ship switched off. See
+/// [`crate::config::LINEAR_SCALING`].
+fn scaling_table(config: &Config) -> Vec<f64> {
+    let most = config.limits.max_cells_per_organism.get();
+    let power = f64::from(config.metabolism.scaling_exponent) - 1.0;
+
+    (0..=most)
+        .map(|cells| f64::from(cells).powf(power))
+        .collect()
+}
+
 /// Everything the expense pass is allowed to touch.
 ///
 /// Grouped into one argument rather than passed as four, for the same reason `behaviour.rs`
@@ -220,6 +257,20 @@ pub struct Metabolism {
     /// reason it looks like.
     gene_cost: f64,
 
+    /// What a body of each size multiplies its summed tissue upkeep by, worked out once:
+    /// `n^(scaling_exponent − 1)` at index `n`.
+    ///
+    /// A table rather than a `powf` in [`Self::due`], and the reason is the innermost loop of
+    /// the whole simulation. That call would be made once per living organism per tick — of
+    /// order a billion times over a 300,000-tick run of a full world — to raise one of
+    /// **sixty-four** possible whole numbers to one fixed power. Index nought is never read: a
+    /// body without cells is not an organism.
+    ///
+    /// ⭐ At the shipped exponent every entry is exactly 1.0, because `n^0` is one for every
+    /// `n`, so the multiplication below is the identity to the bit. See
+    /// [`crate::config::LINEAR_SCALING`].
+    scaling: Vec<f64>,
+
     /// The arena sizes, which is how a slot number is turned into a stretch of the cell
     /// array. Kept rather than reduced to a single width so that the arithmetic stays
     /// `organism.rs`'s, in one place, rather than being written out a second time here.
@@ -241,13 +292,14 @@ impl Metabolism {
         Self {
             upkeep_scale: f64::from(config.metabolism.upkeep_scale),
             gene_cost: f64::from(config.metabolism.gene_cost),
+            scaling: scaling_table(config),
             limits: config.limits.clone(),
             floor: config.world.height,
             room: crate::physics::cell_capacity(config),
         }
     }
 
-    /// Take the two live numbers of the `[metabolism]` table again, on a running world.
+    /// Take the three live numbers of the `[metabolism]` table again, on a running world.
     ///
     /// ⭐ **`upkeep_scale` is the one SPEC section 3 calls a temperature**, and raising it is the
     /// environmental event that section's measurements are about: at 3 and above a founder dies
@@ -260,6 +312,10 @@ impl Metabolism {
     pub fn retune(&mut self, config: &Config) {
         self.upkeep_scale = f64::from(config.metabolism.upkeep_scale);
         self.gene_cost = f64::from(config.metabolism.gene_cost);
+        // ⭐ Rebuilt rather than adjusted, because the table *is* the setting: sixty-four
+        // numbers worked out from one, and there is no version of them that is half retuned.
+        // The allocation is a slider being moved, which happens at human speed.
+        self.scaling = scaling_table(config);
     }
 
     /// Charge everything alive for the tick it has just had, and take away whatever did not
@@ -359,10 +415,31 @@ impl Metabolism {
 
     /// What one organism pays this tick simply for being in the world.
     ///
-    /// SPEC section 10: *"Each tick, every cell pays `upkeep × upkeep_scale`."* The upkeep of
-    /// a cell is SPEC section 6's table, which lives on [`crate::cell::CellKind`] beside the
-    /// radius and the toughness, because a kind is a trade-off and a trade-off split across
-    /// three files is one nobody can see.
+    /// SPEC section 10: *"Each tick, every organism pays
+    /// `(Σ its cells' upkeep) × n^(scaling_exponent − 1) × upkeep_scale`."* The upkeep of a cell
+    /// is SPEC section 6's table, which lives on [`crate::cell::CellKind`] beside the radius and
+    /// the toughness, because a kind is a trade-off and a trade-off split across three files is
+    /// one nobody can see.
+    ///
+    /// # The exponent bends the sum, and only the sum
+    ///
+    /// ⭐⭐⭐ Kleiber's law: a larger organism spends less energy per unit of itself. The whole
+    /// argument is on [`crate::config::MetabolismConfig::scaling_exponent`], and the decision
+    /// *here* is narrower and is the one most easily got wrong — **the multiplier is applied to
+    /// the body's total and not to each cell.** Applied per cell it would be the same number,
+    /// and it would also be a flat rate: SPEC section 6's whole table of trade-offs would
+    /// collapse into "a cell costs what a cell costs", and specialising would stop being a
+    /// trade. Bending the sum leaves a sclerocyte at a fifth of a devorocyte inside the same
+    /// body and changes only what the body pays altogether.
+    ///
+    /// ⚠️ **The per-gene cost below is outside the multiplier**, deliberately. It is a fixed
+    /// overhead for carrying the program rather than a property of the tissue, so there is no
+    /// distribution network for it to be carried through — and bending it would make a long
+    /// genome cheaper on a large body, which is a second selective pressure nobody asked for
+    /// riding on one number.
+    ///
+    /// At the shipped exponent the multiplier is exactly 1.0 and this whole section is the
+    /// identity. See [`Self::scaling`].
     ///
     /// # And every gene, once for the organism rather than once per cell
     ///
@@ -387,13 +464,19 @@ impl Metabolism {
         let first = cell_slot(slot, &self.limits).start;
         let body = &cells[first..first + organism.cells()];
 
+        // ⭐⭐⭐ SPEC section 10's `(sum of its cells' upkeeps) × n^(scaling_exponent − 1)`.
+        // **The multiplier is applied to the sum and not to each cell**, which is what keeps
+        // SPEC section 6's table meaning what it says: a sclerocyte still costs a fifth of what
+        // a devorocyte costs inside the same body, and only the total is bent. See
+        // [`Self::scaling`] and [`crate::config::MetabolismConfig::scaling_exponent`].
         let tissue: f64 = body.iter().map(|cell| f64::from(cell.kind.upkeep())).sum();
+        let bent = tissue * self.scaling[body.len()];
 
         let genes = f64::from(
             u32::try_from(organism.genome().genes().len()).expect("a genome cap fits in a word"),
         );
 
-        self.upkeep_scale * self.gene_cost.mul_add(genes, tissue)
+        self.upkeep_scale * self.gene_cost.mul_add(genes, bent)
     }
 
     /// How many ticks an organism of this shape is allowed, given what it costs to run.
@@ -927,6 +1010,123 @@ mod tests {
              its own upkeep comes to",
             soft * 10.0
         );
+    }
+
+    /// ⭐⭐⭐ **A body is charged for its tissue bent by `n^(k − 1)`, and nothing else about
+    /// the charge moves.**
+    ///
+    /// SPEC section 6's `metabolism.scaling_exponent`: real metabolic rate goes as mass to the
+    /// power of about three quarters rather than linearly - Kleiber's law - so a larger
+    /// organism spends **less energy per unit of itself**. See
+    /// [`crate::config::MetabolismConfig::scaling_exponent`] for the derivation and for why
+    /// this is the one lever in the project that is not a price.
+    ///
+    /// # Four claims, and the second and third are the ones with teeth
+    ///
+    /// **A single cell is untouched at every exponent**, because `1^(k − 1)` is one whatever
+    /// `k` is. That is what makes the setting a *scaling* law rather than a discount: it bends
+    /// what a body is charged for being more than one cell, and there is nothing to bend when
+    /// it is not.
+    ///
+    /// **⚠️ Per-kind upkeep survives, and this is the claim most easily lost.** The multiplier
+    /// applies to the body's *summed* upkeep, so a body of sclerocytes still costs exactly two
+    /// and a half times less than the same body of myocytes. An implementation that charged a
+    /// flat rate per cell and bent that would pass a test with one body in it, and would
+    /// quietly delete the whole of SPEC section 6's design intent - which is that specialising
+    /// is a **trade**.
+    ///
+    /// **The bend is the exponent's and not some other number's.** Four cells at `k = 0.75` pay
+    /// `4^-0.25`, which is 0.7071 of what they pay at one - written out from the specification
+    /// here rather than asked of the code.
+    ///
+    /// **And at `k = 1.0` the charge is bit-for-bit what it was**, which is what
+    /// `run.rs`'s `sub_linear_upkeep_ships_inert_and_is_a_law_the_world_can_feel` says about a
+    /// whole world and this says about one tick.
+    #[test]
+    fn a_body_pays_for_its_tissue_bent_by_its_own_size() {
+        let charged = |exponent: f64, body: &[(CellKind, Vec2)]| {
+            let mut scene = Scene::new(&config(|raw| {
+                raw.world.width = 256.0;
+                raw.world.height = 144.0;
+                raw.world.grid_cols = 32;
+                raw.world.grid_rows = 18;
+                raw.limits.max_organisms = 4;
+                raw.limits.max_cells_per_organism = 4;
+                raw.metabolism.scaling_exponent = exponent;
+            }));
+            scene.fill_with_light();
+
+            let slot = scene.add(20.0, body);
+            scene.run();
+
+            20.0 - scene.energy(slot).expect("nothing has died here")
+        };
+
+        // SPEC section 6's cheapest tissue and its most expensive, one cell of each and four.
+        let lone_hard = [(CellKind::Sclerocyte, Vec2::new(40.0, 40.0))];
+        let four_hard: Vec<(CellKind, Vec2)> = (0..4u8)
+            .map(|along| {
+                (
+                    CellKind::Sclerocyte,
+                    Vec2::new(40.0 + f32::from(along) * 8.0, 40.0),
+                )
+            })
+            .collect();
+        let four_soft: Vec<(CellKind, Vec2)> = (0..4u8)
+            .map(|along| {
+                (
+                    CellKind::Myocyte,
+                    Vec2::new(40.0 + f32::from(along) * 8.0, 40.0),
+                )
+            })
+            .collect();
+
+        // 1. One cell pays what SPEC section 6's table says, at both exponents and to the bit.
+        let alone = f64::from(0.002f32);
+        for exponent in [1.0, 0.75] {
+            let paid = charged(exponent, &lone_hard);
+            assert!(
+                (paid - alone).abs() < 1e-12,
+                "a single sclerocyte paid {paid} at an exponent of {exponent}, against the \
+                 {alone} SPEC section 6's table asks for. A scaling law has nothing to bend on \
+                 a body of one cell"
+            );
+        }
+
+        // 2. Four cells at one are four cells' worth, which is the world as it shipped.
+        let linear = 4.0 * f64::from(0.002f32);
+        let flat = charged(1.0, &four_hard);
+        assert!(
+            (flat - linear).abs() < 1e-12,
+            "a body of four sclerocytes paid {flat} at an exponent of 1.0, against the {linear} \
+             SPEC section 6's table asks for - so the shipped world is no longer the world every \
+             figure in this project was measured on"
+        );
+
+        // 3. ⭐ And at three quarters it pays `4^-0.25` of that, which is the whole mechanism.
+        let bent = charged(0.75, &four_hard);
+        let expected = linear * 4.0f64.powf(-0.25);
+        assert!(
+            (bent - expected).abs() < 1e-12,
+            "a body of four sclerocytes paid {bent} at an exponent of 0.75, against the \
+             {expected} that `(sum of its cells' upkeeps) x n^(k - 1)` comes to"
+        );
+
+        // 4. ⚠️ Per-kind upkeep is intact: the same bend, and the trade between the two kinds
+        //    is exactly SPEC section 6's ratio at both exponents.
+        for exponent in [1.0, 0.75] {
+            let hard = charged(exponent, &four_hard);
+            let soft = charged(exponent, &four_soft);
+            let ratio = f64::from(0.005f32) / f64::from(0.002f32);
+            assert!(
+                (soft / hard - ratio).abs() < 1e-9,
+                "four myocytes cost {soft} a tick against four sclerocytes' {hard} at an \
+                 exponent of {exponent}, a ratio of {} against SPEC section 6's {ratio} - so the \
+                 multiplier is being charged per cell rather than against the body's own \
+                 summed upkeep, and specialising is no longer the trade section 6 describes",
+                soft / hard
+            );
+        }
     }
 
     /// ⭐ **B2.** An organism whose energy runs out dies, and what it was holding becomes

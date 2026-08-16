@@ -671,6 +671,7 @@ mod tests {
         assert_eq!(raw.behaviour.stroke, 1.0);
 
         assert_eq!(raw.metabolism.upkeep_scale, 1.0);
+        assert_eq!(raw.metabolism.scaling_exponent, 1.0);
         assert_eq!(raw.metabolism.gene_cost, 0.0001);
         assert_eq!(raw.metabolism.movement_cost, 0.0001);
         assert_eq!(raw.metabolism.reproduction_threshold, 2.2);
@@ -1019,6 +1020,63 @@ mod tests {
             restored, shipped,
             "the dense profile changes something besides how much water there is and how bright \
              it is, so a run of it is an experiment with more than one variable in it"
+        );
+    }
+
+    /// ⭐⭐⭐ The shipped documents carry a metabolic scaling exponent, the key is required, and
+    /// **it ships inert**.
+    ///
+    /// The same three claims `the_shipped_documents_carry_a_season_and_it_ships_inert` makes, one
+    /// table along, and the third is again the one that took the discipline.
+    ///
+    /// **The key is required**, with no `serde(default)`: a configuration that leaves something
+    /// out is a configuration whose author did not decide that value, and SPEC section 13 wants a
+    /// recording to carry the settings that produced it.
+    ///
+    /// **`config/kleiber.toml` is `config/default.toml` with one number changed.** Written as an
+    /// equality between the two documents rather than as a list, so a profile that quietly also
+    /// moved the mutation rates would be an experiment with two variables in it.
+    ///
+    /// **And the shipped default is one, which is exactly linear.** The multiplier is `n^0` —
+    /// 1.0 for every body at every size, to the bit — so `config/default.toml` is still the world
+    /// every coefficient in `SPEC.md` and every figure in `docs/PHASE7.md` was measured on, and
+    /// no golden vector moves. `run.rs`'s
+    /// `sub_linear_upkeep_ships_inert_and_is_a_law_the_world_can_feel` is the other half of that,
+    /// taken on the world rather than on the document.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the two documents' numbers are pinned against each other; an approximate \
+                  match would let a profile drift away from the one it is a variation on"
+    )]
+    fn the_shipped_documents_carry_a_scaling_exponent_and_it_ships_inert() {
+        let kleiber: RawConfig = toml::from_str(include_str!("../../../config/kleiber.toml"))
+            .expect("the kleiber profile parses");
+        let shipped: RawConfig = toml::from_str(DEFAULT_CONFIG).expect("the shipped config parses");
+
+        kleiber
+            .clone()
+            .validate()
+            .expect("the kleiber profile is a world the program will accept");
+
+        assert_eq!(
+            shipped.metabolism.scaling_exponent, 1.0,
+            "the shipped world charges a body something other than the sum of its cells' \
+             upkeeps, so it is no longer the world every figure in SPEC and docs/PHASE7.md was \
+             measured on and every golden vector in the project has to be re-recorded"
+        );
+        assert_eq!(
+            kleiber.metabolism.scaling_exponent, 0.75,
+            "the kleiber profile does not carry the exponent the measurements were taken at"
+        );
+
+        // One number changed, and nothing else whatever.
+        let mut restored = kleiber;
+        restored.metabolism.scaling_exponent = shipped.metabolism.scaling_exponent;
+        assert_eq!(
+            restored, shipped,
+            "the kleiber profile changes something besides how a body's upkeep scales with its \
+             size, so a run of it is an experiment with more than one variable in it"
         );
     }
 

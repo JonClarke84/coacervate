@@ -90,6 +90,7 @@ stroke = 1.0
 
 [metabolism]
 upkeep_scale = 1.0
+scaling_exponent = 1.0
 gene_cost = 0.0001
 movement_cost = 0.0001
 reproduction_threshold = 2.2

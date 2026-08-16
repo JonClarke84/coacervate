@@ -547,6 +547,26 @@ mod tests {
         run
     }
 
+    /// The two exponents `sub_linear_scaling_raises_total_living_tissue` runs: linear, which is
+    /// what ships, and Kleiber's three quarters, which is `config/kleiber.toml`.
+    ///
+    /// ⚠️ **The sweep in that test's doc comment has four rows and this has two**, for the
+    /// reason `assay.rs`'s `a_current_buys_strangers_by_spending_contact` runs two of its
+    /// eleven: the table is a measurement taken once, and the committed pair is what a check
+    /// suite can afford to prove on every run.
+    const EXPONENTS: [f64; 2] = [1.0, 0.75];
+
+    /// How many ticks after the dawn the two arms are given before they are read.
+    ///
+    /// ⚠️ **Not 300,000, which is what the table in the doc comment was taken at.** Four runs
+    /// of that length are an hour of arithmetic, and a suite that takes an hour is a suite
+    /// somebody stops running — `metabolism.rs`'s own note about why the long tests are
+    /// `#[ignore]`d, one order of magnitude up. Fifty thousand is where the *totals* have
+    /// already separated by a third while the two worlds' mean body size is still identical to
+    /// two decimal places, which makes it the cheapest tick count at which this test can fail
+    /// for the right reason.
+    const SETTLED: u64 = 50_000;
+
     /// How far the two sides of SPEC section 5's invariant have drifted apart, as a fraction
     /// of everything the world has ever contained.
     ///
@@ -1271,6 +1291,197 @@ mod tests {
             "the same world run with the shadow opened out into a cone left every cell in \
              exactly the same place, so `light.shadow_spread` is a setting a person can turn \
              and a world that cannot feel it"
+        );
+    }
+
+    /// ⭐⭐⭐ **A world at `metabolism.scaling_exponent = 1.0` is the world that was there
+    /// before sub-linear metabolism existed** — the same population, the same cells, and every
+    /// one of them in exactly the same place.
+    ///
+    /// **This is what keeps the blast radius of the exponent at zero.** SPEC section 10 now
+    /// charges a body `(sum of its cells' upkeeps) × n^(k − 1)`, and at `k = 1.0` that
+    /// multiplier is `n^0` — exactly 1.0 for every body at every size, in this arithmetic and
+    /// not merely to a tolerance. So `config/default.toml` still describes the world every
+    /// coefficient in `SPEC.md` and every figure in `docs/PHASE7.md` was measured on, and the
+    /// digest below is the one
+    /// `a_world_with_no_current_is_the_world_that_was_there_before` and
+    /// `the_shipped_shadow_is_the_shadow_that_was_there_before` already carry, unchanged. It is
+    /// the same trade `light.season_amplitude`, `physics.current` and `light.shadow_spread` all
+    /// made before it.
+    ///
+    /// ⚠️ **The second half is what makes the first half mean anything.** A test that only
+    /// pinned a digest would pass just as happily against a program in which the setting is
+    /// inert at *every* value — a configuration key nobody reads, which is the failure Group H
+    /// spent a whole round hiding behind. So the same world is run again at three quarters, and
+    /// it has to come back somewhere else.
+    #[test]
+    #[ignore = "two shipped-world dawns and ten thousand ticks; check.ps1 runs it in release"]
+    fn sub_linear_upkeep_ships_inert_and_is_a_law_the_world_can_feel() {
+        let ran = |exponent: f64| {
+            let mut world = World::new(&config(|raw| raw.metabolism.scaling_exponent = exponent));
+            genesis(&mut world, 8);
+            for _ in 0..5_000 {
+                world.tick();
+            }
+
+            (
+                world.organisms().iter().flatten().count(),
+                world.living_cells().len(),
+                where_everybody_is(&world),
+            )
+        };
+
+        assert_eq!(
+            ran(1.0),
+            // The same three numbers the two golden vectors above record, and they were
+            // recorded before a body's size had any say in what its tissue cost.
+            (318, 631, 0x35fe_af96_9d17_98e0),
+            "a shipped world with `metabolism.scaling_exponent = 1.0` is no longer the world \
+             this project has been measuring all along. **Investigate; do not paste in the new \
+             numbers.** One is exactly linear, so the only thing that can have moved this is the \
+             multiplication itself - which means the arithmetic went around SPEC section 10's \
+             upkeep rather than through it"
+        );
+
+        // ⭐ And the exponent is a real law rather than a key nobody reads.
+        assert_ne!(
+            ran(0.75).2,
+            ran(1.0).2,
+            "the same world run at Kleiber's three quarters and at one left every cell in \
+             exactly the same place, so `metabolism.scaling_exponent` is a setting a person can \
+             turn and a world that cannot feel it"
+        );
+    }
+
+    /// ⭐⭐⭐ **Sub-linear metabolism raises the total amount of living tissue in the world.**
+    ///
+    /// **This is the claim ten rounds of measurement have been unable to make, and it is the
+    /// reason the mechanism exists.** Every "bodies got bigger" result this project has recorded
+    /// was the same tissue divided among fewer bodies — four worlds measured in one week held
+    /// 5,429 / 5,153 / 4,826 / 4,056 living cells while biomass went from 34,000 to 25,000 — and
+    /// the arithmetic said it could not be otherwise. Biomass settles where income equals
+    /// expenditure, income is fixed at `light.influx`, and upkeep was charged **linearly in cell
+    /// count**, so total cells is `influx ÷ upkeep per cell` and nothing about body shape can
+    /// move it. Bending upkeep to `n^(k − 1)` makes upkeep per cell a function of body size,
+    /// which is the one thing that removes that constant from the denominator.
+    ///
+    /// ⚠️ **The total is the reading. Every quotient is reported beside it and none of them is
+    /// the claim**, because a body size is `cells ÷ bodies` and has moved before without
+    /// meaning anything.
+    ///
+    /// # The measurement: 300,000 ticks after the dawn, eight founders, seed 42
+    ///
+    /// ⚠️ **Taken once, as recorded.** The committed run above is [`EXPONENTS`] at
+    /// [`SETTLED`] — see those two for why. The four rows below are the shipped configuration
+    /// with one number changed:
+    ///
+    /// | `scaling_exponent` | **total living cells** | mean cells/body | biggest | at the cap | alive | biomass | field drawdown | genome | peak alive |
+    /// | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+    /// | **1.00** — ships | **5,282** | 9.60 ± 3.02 | 17 | 0.00% | 550 | 33,293 | 64.7% | 5.95 | 2,164 |
+    /// | 0.90 | **6,646** | 7.62 ± 4.35 | 64 | 0.11% | 872 | 40,874 | 66.3% | 4.47 | 2,426 |
+    /// | **0.75** — `config/kleiber.toml` | **10,444** | 12.01 ± 11.33 | 64 | **3.34%** | 869 | 65,714 | 77.6% | 4.90 | 2,764 |
+    /// | 0.60 | **25,551** | 41.01 ± 22.17 | 64 | **28.41%** | 623 | 152,641 | 88.0% | 4.21 | 2,987 |
+    ///
+    /// ⭐⭐ **Total living tissue rises, monotonically, by a factor of 4.8 across the range** —
+    /// and it rises while the population also rises, so it is not concentration. Biomass follows
+    /// it exactly (×4.6) and the field is drawn down from 64.7% to 88.0%, which is the same fact
+    /// seen from the water: a world of larger bodies extracts more of the light before it spills.
+    ///
+    /// ⚠️⚠️ **And the runaway is real below three quarters.** At 0.60 more than a quarter of
+    /// every body in the world is pressed against `limits.max_cells_per_organism`, mean body size
+    /// is 41 cells of an allowed 64, and the reading is a world running into its own arena rather
+    /// than one finding a size. Three quarters is where the mechanism gives most of its effect
+    /// with the cap still a rarity — and it is not a number chosen to make that true, it is
+    /// Kleiber's own exponent, which is why `config/kleiber.toml` carries it.
+    ///
+    /// The world survives all four: nothing goes extinct, the peak population never reaches
+    /// `limits.max_organisms` — 2,164 to 2,987 against 4,000, so the energy budget is still what
+    /// binds — and the energy ledger closes to better than 1.4 parts in a thousand million
+    /// throughout.
+    #[test]
+    #[ignore = "two 50,000-tick runs of the shipped world; check.ps1 runs it in release"]
+    fn sub_linear_scaling_raises_total_living_tissue() {
+        let mut tissue = Vec::new();
+
+        for exponent in EXPONENTS {
+            let mut world = World::new(&config(|raw| raw.metabolism.scaling_exponent = exponent));
+            genesis(&mut world, 8);
+            let lit = world.grid().total_energy();
+            let cap = usize::try_from(world.config().limits.max_cells_per_organism.get())
+                .expect("a body cap fits in a machine word");
+            let room = usize::try_from(world.config().limits.max_organisms.get())
+                .expect("a population cap fits in a machine word");
+
+            let mut peak = 0usize;
+            for _ in 0..SETTLED {
+                world.tick();
+                peak = peak.max(world.organisms().iter().flatten().count());
+            }
+
+            let census = Census::of(&world);
+            let sizes: Vec<usize> = world
+                .organisms()
+                .iter()
+                .flatten()
+                .map(coacervate_sim::organism::Organism::cells)
+                .collect();
+            let biggest = sizes.iter().copied().max().unwrap_or(0);
+            let at_cap = sizes.iter().filter(|&&size| size >= cap).count();
+            let field = world.grid().total_energy();
+            let cells = world.living_cells().len();
+
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a count of bodies in a population of at most four thousand, turned \
+                          into a fraction for a person to read"
+            )]
+            let crowded = at_cap as f64 / sizes.len().max(1) as f64;
+
+            println!(
+                "SCALING k={exponent:.2}: cells {cells}, body {:.3}+-{:.3}, biggest {biggest}, \
+                 at cap {crowded:.4}, alive {}, biomass {:.0}, field {field:.0} \
+                 (drawdown {:.1}%), genome {:.3}, peak {peak}/{room}, ledger {:.2e}",
+                census.mean_cells,
+                census.cell_spread,
+                census.population,
+                world.ledger().biomass(),
+                100.0 * (1.0 - field / lit),
+                census.mean_genes,
+                relative_error(&world)
+            );
+
+            // The world has to still be a world for the reading to mean anything.
+            assert!(
+                census.population > 0,
+                "the world at an exponent of {exponent} is empty"
+            );
+            assert!(
+                peak < room,
+                "the population reached {peak} against a `limits.max_organisms` of {room} at an \
+                 exponent of {exponent}, so the arena is what limits this world rather than the \
+                 energy budget - and every birth that failed did so for a reason unconnected \
+                 with how well its parent was doing"
+            );
+            assert!(
+                relative_error(&world) < 1e-8,
+                "the run at an exponent of {exponent} finished {} out in relative terms",
+                relative_error(&world)
+            );
+
+            tissue.push(cells);
+        }
+
+        // ⭐⭐⭐ The whole question. Measured at 3,865 living cells against 5,159 - a third
+        // more - so a fifth is a wide margin around a large effect rather than a threshold
+        // anything sits near.
+        let (linear, bent) = (tissue[0], tissue[1]);
+        assert!(
+            bent > linear * 6 / 5,
+            "the linear world holds {linear} living cells and the world at three quarters holds \
+             {bent}, which is not the fifth more the mechanism was built to produce. **Total \
+             living tissue is the reading**: a mean body size that rose while this did not is \
+             the same tissue in fewer bodies, which is what every round before this one \
+             measured"
         );
     }
 

@@ -1244,6 +1244,121 @@ mod tests {
         );
     }
 
+    /// ⭐⭐⭐ **What a third cell is worth once a body pays sub-linearly for its tissue.**
+    ///
+    /// The three arms every world in this project has priced — an earning third cell, a silent
+    /// one and a mouth — run at the shipped linear exponent and again at
+    /// `metabolism.scaling_exponent = 0.75`. The two linear readings are the control, taken on
+    /// the same seed in the same run, so nothing here depends on a figure recorded elsewhere.
+    ///
+    /// The arithmetic that says the coefficients must move: a founder is two cells and an arm is
+    /// three, so at three quarters the founder's tissue bill is multiplied by `2^-0.25` = 0.841
+    /// and the arm's by `3^-0.25` = 0.760. **The larger body gets the larger discount**, so what
+    /// a third cell adds to a bill falls — a third photocyte from +44% of the founder's tissue
+    /// cost to +31%, a third myocyte from +56% to +40%, a third devorocyte from +100% to +76%.
+    /// A cell that was priced at about −0.35 %/generation for every 0.001/tick it added should
+    /// therefore come back nearer to zero.
+    ///
+    /// ⚠️ **It is a repricing and not a payoff.** Nothing here makes a muscle or a mouth *earn*
+    /// anything; SPEC section 9's arithmetic on locomotion and section 10's on predation are
+    /// untouched. What moves is only what carrying one costs.
+    ///
+    /// # What came back, seed 42, 42,000 ticks
+    ///
+    /// | arm B, against an identical arm A | linear | at 0.75 | move | cells a body, at 0.75 |
+    /// | --- | --- | --- | --- | --- |
+    /// | a third **photocyte** | +1.24 %/gen | **+2.57** | **+1.32** | 5.36, from 3.41 |
+    /// | a third **myocyte** | −1.96 | **−1.67** | +0.29 | 2.41, from 2.14 |
+    /// | a third **devorocyte** | −5.05 | **−3.38** | **+1.67** | 2.00, from 2.02 |
+    ///
+    /// ⭐ **The linear column reproduces
+    /// [`a_third_photocyte_is_kept_and_a_third_myocyte_is_lost`] to four decimal places** —
+    /// descendant ratios of 1.5314 and 0.5109 against that test's committed 1.531 and 0.511 —
+    /// which is the control that makes the other column mean anything.
+    ///
+    /// ⚠️⚠️ **Neither negative crosses zero, and that is the honest headline.** A mouth is a
+    /// third cheaper to carry and is still priced at −3.4 %/generation, thirty times the noise
+    /// floor. What sub-linear scaling buys is not a specialised cell that pays; it is a body
+    /// that can afford to be bigger, and the arm that grows fastest is the one made of the cell
+    /// that earns.
+    #[test]
+    #[ignore = "six 42,000-tick runs; check.ps1 runs it via --include-ignored in release"]
+    fn sub_linear_scaling_reprices_a_third_cell() {
+        let kinds = [
+            ("photocyte", CellKind::Photocyte),
+            ("myocyte", CellKind::Myocyte),
+            ("devorocyte", CellKind::Devorocyte),
+        ];
+
+        // Printed before anything is asserted, for the reason
+        // `a_third_photocyte_is_kept_and_a_third_myocyte_is_lost` gives about its own: a run
+        // that panicked on its first claim would throw the other five measurements away.
+        let mut priced = Vec::new();
+        for exponent in [1.0, 0.75] {
+            let config = seeded_world(42, |raw| raw.metabolism.scaling_exponent = exponent);
+            let plain = founder_genome(&config.limits);
+
+            for (name, kind) in kinds {
+                let arm = founder_with_a_third_cell(&config.limits, kind);
+                let outcome = assay(&config, [&plain, &arm], WINDOW);
+                report(&format!("a third {name} at k={exponent:.2}"), &outcome);
+                priced.push((exponent, name, outcome.per_generation() * 100.0));
+            }
+        }
+
+        for (name, _) in kinds {
+            let at = |wanted: f64| {
+                priced
+                    .iter()
+                    .find(|(exponent, kind, _)| {
+                        (exponent - wanted).abs() < f64::EPSILON && *kind == name
+                    })
+                    .map(|(_, _, coefficient)| *coefficient)
+                    .expect("both exponents were run for every kind")
+            };
+
+            let (linear, bent) = (at(1.0), at(0.75));
+
+            println!(
+                "REPRICED a third {name}: {linear:+.3} %/gen linear -> {bent:+.3} %/gen at 0.75, \
+                 a move of {:+.3}",
+                bent - linear
+            );
+
+            // ⭐ Every arm is worth more than it was, by more than the ±0.11 %/generation noise
+            // floor this module's header records. Written as one loop rather than three
+            // assertions because the claim is about the *shape* of the change - a discount that
+            // rose with body size - and an arm that had moved the other way would mean the
+            // multiplier was being applied to the wrong thing.
+            assert!(
+                bent > linear + 0.11,
+                "a third {name} is priced at {bent:+.3} %/generation at an exponent of 0.75 \
+                 against {linear:+.3} linear, which is inside the noise floor. The larger body \
+                 gets the larger discount - `3^-0.25` against `2^-0.25` - so what a third cell \
+                 adds to a bill has to fall"
+            );
+        }
+
+        // ⚠️ And the honest half, asserted so that nobody reads the moves above as a payoff: a
+        // silent cell and a mouth are cheaper and are still a loss. If either of these ever
+        // fails it is a genuine finding and not a broken test - see SPEC sections 9 and 10.
+        for name in ["myocyte", "devorocyte"] {
+            let bent = priced
+                .iter()
+                .find(|(exponent, kind, _)| (exponent - 0.75).abs() < f64::EPSILON && *kind == name)
+                .map(|(_, _, coefficient)| *coefficient)
+                .expect("both exponents were run for every kind");
+
+            assert!(
+                bent < 0.0,
+                "a third {name} came back at {bent:+.3} %/generation at an exponent of 0.75, \
+                 which is above break-even. Nothing in this change makes a muscle or a mouth \
+                 earn anything, so a positive coefficient here is a claim about the whole \
+                 economy and belongs in SPEC sections 9 and 10 rather than in a passing test"
+            );
+        }
+    }
+
     // ---------------------------------------------------------------------------------
     // ⭐⭐⭐ Does a body that genuinely swims beat one that does not?
     //

@@ -135,6 +135,29 @@ stroke = 1.0             # how much of its rest length a myocyte at full amplitu
 
 [metabolism]
 upkeep_scale = 1.0       # global multiplier on all cell upkeep ("temperature")
+scaling_exponent = 1.0   # the power a body's *summed* upkeep is raised to as it grows: a body of
+                         # n cells pays `(sum of its cells' upkeeps) × n^(exponent - 1)`. Real
+                         # metabolic rate goes as mass^0.75 — Kleiber's law — rather than
+                         # linearly, so a larger organism spends less energy per unit of itself;
+                         # West, Brown and Enquist derive the exponent from a distribution network
+                         # that is a space-filling fractal, `d / (d + 1)`, and cells joined by
+                         # springs sharing one energy store are such a network.
+                         #
+                         # ⚠️ **SHIPS INERT, and 1.0 is bit-for-bit the world every figure in this
+                         # project was measured on** — the multiplier is `n^0`, which is exactly
+                         # 1.0 at every body size. It exists to ask the one question ten rounds of
+                         # measurement have circled: **total living tissue in this world is
+                         # `light.influx ÷ upkeep per cell`, so nothing about body shape can move
+                         # it while upkeep is linear in cell count.** This is the only setting in
+                         # the file that changes an exponent rather than a price, and every price
+                         # ever tried here was absorbed by the water re-forming around it.
+                         #
+                         # ⚠️ The per-kind table is untouched: the multiplier applies to the body's
+                         # *sum*, so a sclerocyte still costs a fifth of a devorocyte inside the
+                         # same body. Bounded at 0.5..=1.0 — one is linear and there is nothing
+                         # past it, and a half is `d / (d + 1)` in one dimension, the flattest
+                         # exponent any network geometry gives. `config/kleiber.toml` is this world
+                         # at 0.75. SPEC 3, 6 and 10.
 gene_cost = 0.0001       # per gene, per tick — keeps genomes off the max_genes ceiling so
                          # duplication stays available. Not a brake on bloat; see SPEC 7.
 movement_cost = 0.0001   # energy per unit of work done by contraction. Measured in Phase 7,

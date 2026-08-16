@@ -159,6 +159,11 @@ stroke = 1.0             # how much of its rest length a myocyte at full amplitu
 
 [metabolism]
 upkeep_scale = 1.0       # global multiplier on all cell upkeep ("temperature")
+scaling_exponent = 1.0   # the power a body's *summed* upkeep is raised to as it grows: an
+                         # n-celled body pays `(sum of its cells' upkeeps) × n^(exponent - 1)`.
+                         # Kleiber's law — see sections 6 and 10. ⚠️ Ships at one, which is
+                         # exactly linear and is the world every figure in this document was
+                         # measured on; `config/kleiber.toml` is the same world at 0.75
 gene_cost = 0.0001       # per gene, per tick — see section 7
 movement_cost = 0.0001   # energy per unit of work done by contraction — measured, see below
 reproduction_threshold = 2.2   # × body construction cost
@@ -334,6 +339,7 @@ the other direction.
 | `slow` | `max_ticks_per_second` reduced so meaningful change happens over hours rather than minutes. For leaving it up on a second screen and noticing it rather than watching it. |
 | `bloom` | High light influx — the old `0.012` is exactly this. **The population fills `max_organisms` and stops, with the water still full**, which is stagnation by way of the arena rather than by way of abundance. Worth shipping precisely because it is what a too-bright world actually looks like from the outside: a healthy-looking constant population with no selection acting on it. |
 | `seasonal` | ⭐⭐ **The shipped world with the light rising and falling** — `light.season_amplitude` 0.0 → 0.25 and nothing else changed. It exists because every other profile in this project is a *constant* environment, in which being adapted is a fixed fact about a lineage. ⚠️ **Do not expect a muscle from it**, and that is measured rather than hoped: the competition assay run flat and seasoned, three seeds, two whole periods, moved the coefficient on the largest free shape change from **+0.50 to +0.61 %/generation** against a seed-to-seed spread of ±0.35 — no detectable difference. (Recorded as +0.71 → +0.88 against ±0.5 before section 6's generation-time correction, which scales all three together and leaves the comparison exactly as it was.) The fastest the standing field can change is its own 8,000-tick filling time, which is 4.6 lifetimes, so **no body ever lives through a change in its own conditions.** What it is for is ecology and chronicle: a population that rises and falls on a known clock is the first thing in this project that makes section 15's Q32 — does body size track the light or the population? — testable at all. |
+| `kleiber` | ⭐⭐⭐ **The shipped world with a body paying sub-linearly for its own tissue** — `metabolism.scaling_exponent` 1.0 → 0.75 and nothing else changed. It is the only profile in this project that changes an *exponent* rather than a price, and it is the only change that has ever moved the total amount of living tissue in the world: **5,282 → 10,444 living cells** at 300,000 ticks, with the population rising too (550 → 869), so it is not the concentration every earlier round measured. Biomass ×2.0, field drawdown 64.7% → 77.6%. ⚠️⚠️ **0.75 rather than lower because 0.60 overshoots** — more than a quarter of every body pressed against `max_cells_per_organism`, which is a world running into its arena rather than one that has found a size; at 0.75 the cap is a rarity at 3.3%. ⚠️ **It is a repricing and not a payoff**: a third devorocyte goes from −5.05 to −3.38 %/generation and a third myocyte from −1.96 to −1.67, and **neither crosses zero**. Sections 6 and 10 carry both halves. ⚠️ No coefficient recorded anywhere in this document was taken in this world. |
 | `famine` | Low influx — a world of a few hundred bodies rather than a few thousand. ⚠️ **It does not produce extinction, and that is a measured finding rather than an oversight.** At a tenth of the shipped light the population settles at about 210 and goes on turning over indefinitely, because how hard a body has to work to replace itself does not depend on how much light there is — only how many bodies the world can carry does. What *does* end a run is `upkeep_scale`: at 3 or above, a founder dies of old age before it has earned the reproduction threshold, and nothing is ever born. If a preset is wanted that demonstrates extinction, that is the slider it has to move. |
 
 ---
@@ -934,12 +940,20 @@ The world keeps extra photocytes — 3.28 cells a body after 24 generations agai
 1.98 — and **sheds every other kind of cell inside two dozen generations**: 2.22 for a sclerocyte,
 2.03 for a myocyte, 2.04 for a devorocyte, 2.04 for the muscle-and-sensor pair.
 
-> ⚠️⚠️ **Nothing in this world has an increasing return to being more than one thing.** A
-> photocyte's income scales linearly with photocyte count, upkeep scales linearly with cells,
-> section 10's reproduction threshold is linear in cells and section 10's lifespan is linear in
-> cells. Occlusion is actively *sub*linear, because a bigger body self-shades more. So growth is
-> a random walk and specialisation is a pure loss, at about **−0.35 %/generation for every
-> 0.001/tick of upkeep, whatever the cell does** (−0.5 at the old divisor).
+> ⚠️⚠️ **Nothing in this world has an increasing return to being more than one thing** — at
+> `metabolism.scaling_exponent = 1.0`, which is what ships and what every coefficient in this
+> table was measured at. A photocyte's income scales linearly with photocyte count, upkeep
+> scales linearly with cells, section 10's reproduction threshold is linear in cells and section
+> 10's lifespan is linear in cells. Occlusion is actively *sub*linear, because a bigger body
+> self-shades more. So growth is a random walk and specialisation is a pure loss, at about
+> **−0.35 %/generation for every 0.001/tick of upkeep, whatever the cell does** (−0.5 at the old
+> divisor).
+>
+> ⭐⭐⭐ **This is the sentence `metabolism.scaling_exponent` was built to be able to falsify**,
+> and below one it is false: upkeep stops being linear in cells, so a body of `n` cells pays
+> `n^(k−1)` of what it used to and being more than one thing is cheaper than being one thing
+> twice. Section 10 has the mechanism and the 300,000-tick sweep; what it does to the prices in
+> this table is immediately below.
 
 **The arithmetic that closes the muscle question.** A muscle must earn **+1.75 %/generation** to
 break even (+2.5 at the old divisor). The entire measured value of shape in this world — the
@@ -969,6 +983,44 @@ survives, and it is the load-bearing half, is the **pair**: the same three-celle
 in one `child_kind` keeps the earning cell over the silent one at three to one, and the arm that
 was given a muscle is back to 2.14 cells a body having been born with three. `docs/PHASE7.md`'s
 Group L has both readings.
+
+### ⭐⭐⭐ What the same three cells are worth once a body scales sub-linearly
+
+Section 10's `metabolism.scaling_exponent` is the one change in this project that moved the total
+amount of living tissue in the world. What it does to the prices above is a smaller claim, and
+it is worth having exactly, because the table above is the thing a future round will reach for.
+
+The arithmetic first, so the measurement can be checked against it. A founder is two cells and
+every arm here is three, so at `k = 0.75` the founder's tissue bill is multiplied by `2^-0.25` =
+0.841 and the arm's by `3^-0.25` = 0.760. **The larger body gets the larger discount**, so what a
+third cell *adds* falls: a third photocyte from +44% of the founder's tissue cost to +31%, a
+third myocyte from +56% to +40%, a third devorocyte from +100% to +76%.
+
+`assay.rs`'s `sub_linear_scaling_reprices_a_third_cell`, seed 42, 42,000 ticks, the two exponents
+run side by side in one measurement:
+
+| Arm B, against an identical arm A | linear — **ships** | at **0.75** | move | cells a body, at 0.75 |
+| --- | --- | --- | --- | --- |
+| a third **photocyte** | +1.24 %/gen | **+2.57** | **+1.32** | 5.36, from 3.41 |
+| a third **myocyte** | −1.96 | **−1.67** | +0.29 | 2.41, from 2.14 |
+| a third **devorocyte** | −5.05 | **−3.38** | **+1.67** | 2.00, from 2.02 |
+
+⭐ **The linear column is a control taken in the same run**, and it reproduces the committed
+readings of `a_third_photocyte_is_kept_and_a_third_myocyte_is_lost` to four decimal places —
+descendant ratios of 1.5314 and 0.5109 against that test's 1.531 and 0.511. Nothing in the
+shipped world moved.
+
+**All three arms are worth more than they were**, each by more than the ±0.11 %/generation noise
+floor, and the ordering is the arithmetic's: the mouth, which adds the most upkeep, gains the
+most from a discount on upkeep.
+
+⚠️⚠️ **Neither negative crosses zero, and that is the headline rather than a footnote.** A
+devorocyte is a third cheaper to carry and is still priced at −3.4 %/generation, thirty times the
+noise floor; a myocyte moves by 0.29 and remains a pure loss. **Sub-linear scaling does not make
+a specialised cell pay.** What it makes affordable is *size* — and the arm that grows fastest
+under it is the one made of the cell that already earned, which is the photocyte at 5.36 cells a
+body against 3.41. A round that reads this table as predation or locomotion becoming reachable
+will spend a 300,000-tick run rediscovering that they are not.
 
 ### ⭐⭐ Buoyancy, and why depth is a property of composition
 
@@ -1815,11 +1867,17 @@ phase 1.
 
 ## 10. Life cycle
 
-**Metabolism.** Each tick, every cell pays `upkeep × upkeep_scale`, and every organism pays a
-further `gene_cost × upkeep_scale` for each gene in its genome — a fixed overhead for carrying
-the program rather than a charge per cell, and the reason for it is in section 7.
+**Metabolism.** Each tick, every organism pays
+`(Σ its cells' upkeep) × n^(scaling_exponent − 1) × upkeep_scale`, where `n` is its cell count,
+and a further `gene_cost × upkeep_scale` for each gene in its genome — a fixed overhead for
+carrying the program rather than a charge per cell, and the reason for it is in section 7.
 `upkeep_scale` is the "temperature" slider — raising it is a live environmental pressure.
 Organisms whose energy reaches zero die.
+
+`scaling_exponent` **ships at 1.0, which is exactly linear**: the multiplier is `n^0`, which is
+1.0 for every body at every size, so the shipped world is bit-for-bit the world every figure in
+this document was measured on. Below one it is Kleiber's law — see immediately below, and
+`config/kleiber.toml`.
 
 **Reproduction.** When an organism's stored energy exceeds
 `reproduction_threshold × body_construction_cost` *and* it has at least one gonocyte, it
@@ -1839,6 +1897,86 @@ Detritus sinks slowly and decays into the field tile beneath it.
 soup, so devorocytes contacting foreign cells is simply a better strategy under some
 conditions. Whether a herbivore/predator split appears is one of the genuinely interesting
 outcomes and must never be scripted.
+
+### ⭐⭐⭐ Sub-linear metabolism, and the first change that moved the total amount of living tissue
+
+**Everything else this project has tried moved the *distribution* of a fixed quantity of life.
+This moved the quantity.**
+
+#### The arithmetic that made every previous round a null
+
+Biomass settles where income equals expenditure. Income is fixed at `light.influx` and cannot be
+argued with. Expenditure was `upkeep per cell × cells`. So:
+
+> **total living cells = influx ÷ upkeep per cell**
+
+— a quotient in which nothing about body *shape* appears at all. Every "bodies got bigger"
+result this project has recorded was therefore the same tissue divided among fewer bodies, and
+mean body size was `cells ÷ bodies` with a pinned numerator. Four worlds measured in one week
+held **5,429 / 5,153 / 4,826 / 4,056** living cells while their biomass went from 34,000 to
+25,000. `docs/NEXT.md` names this as the first of three candidates and says why no value of any
+existing setting can reach it: **no number changes the exponent on a linear term.**
+
+#### The mechanism
+
+Real metabolic rate goes as mass to the power of about **three quarters** — Kleiber's law —
+rather than linearly, so a larger organism spends *less energy per unit of itself*. West, Brown
+and Enquist derive the exponent from a distribution network that is a space-filling fractal, and
+what falls out is `d / (d + 1)`: 0.75 in three dimensions, 0.667 in two, 0.5 in one. This
+model's cells are physically joined by springs and share a single energy store, which is such a
+network.
+
+So a body pays `(Σ its cells' upkeep) × n^(k − 1)`. At `k = 1` that multiplier is exactly 1.0
+and nothing changes; at `k = 0.75` a two-celled body pays **0.84** of what it paid, a ten-celled
+one **0.56**, and a body at the 64-cell cap **0.35**.
+
+⚠️ **The per-kind table above is untouched.** The multiplier applies to the body's *summed*
+upkeep, so a sclerocyte still costs a fifth of what a devorocyte costs inside the same body, and
+section 6's whole trade-off survives. Only the total is bent.
+
+**Both sides of the life cycle move the right way, and neither was tuned.** Time to reach the
+reproduction bar is proportional to `1 / (I − n^(k−1)·u)`, whose denominator *grows* with size,
+so larger bodies breed sooner; and lifespan, which is `LIFETIME_UPKEEP × cells ÷ cost`, goes as
+`n^(1−k)`, so they also live longer. The two are consequences of one exponent rather than two
+settings that had to be balanced against each other.
+
+#### The measurement — 300,000 ticks after the dawn, eight founders, seed 42
+
+The shipped configuration with one number changed. `run.rs`'s
+`sub_linear_scaling_raises_total_living_tissue`:
+
+| `scaling_exponent` | **total living cells** | mean cells/body | biggest body | at the cap | alive | biomass | field drawdown | genome | peak alive |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **1.00** — ships | **5,282** | 9.60 ± 3.02 | 17 | 0.00% | 550 | 33,293 | 64.7% | 5.95 | 2,164 |
+| 0.90 | **6,646** | 7.62 ± 4.35 | 64 | 0.11% | 872 | 40,874 | 66.3% | 4.47 | 2,426 |
+| **0.75** — `config/kleiber.toml` | **10,444** | 12.01 ± 11.33 | 64 | **3.34%** | 869 | 65,714 | 77.6% | 4.90 | 2,764 |
+| 0.60 | **25,551** | 41.01 ± 22.17 | 64 | **28.41%** | 623 | 152,641 | 88.0% | 4.21 | 2,987 |
+
+⭐⭐ **Total living tissue rises monotonically, ×4.8 across the range** — and the population
+rises with it, from 550 to 869, so this is not the concentration every earlier round measured.
+Biomass follows the tissue exactly (×4.6), and the field is drawn down from 64.7% to 88.0%,
+which is the same fact read off the water: a world of larger bodies takes more of the light
+before it spills.
+
+The 1.00 row reproduces the world this document has always described — 5,282 living cells and
+550 organisms against the 4,056–5,429 and the 826 of section 6's own sweeps — which is what
+makes the other three comparable to everything else here.
+
+⚠️⚠️ **The runaway is real below three quarters, and it is why 0.60 does not ship.** At 0.60,
+**more than a quarter of every body in the world is pressed against `max_cells_per_organism`**
+and the mean body is 41 cells of an allowed 64. That is a world running into its own arena
+rather than one that has found a size, and the tissue figure should be read as a ceiling effect
+rather than as a larger version of the same result. At 0.75 the cap is a rarity at 3.3%; at 0.90
+it is one body in a thousand.
+
+**The world survives all four.** Nothing goes extinct, the peak population never reaches
+`max_organisms` — 2,164 to 2,987 against 4,000, so the energy budget still binds rather than the
+arena — and section 5's ledger closes to better than 1.4 parts in a thousand million throughout.
+
+⚠️ **Nothing here makes a muscle or a mouth *earn* anything.** Section 9's arithmetic on
+locomotion and the section immediately below on predation are untouched. What has changed is
+what carrying a cell costs, which is a different claim and a smaller one — see section 6 for
+what it does to the price of a third cell.
 
 ### ⭐⭐⭐ It does not appear, and that is now a measurement rather than an absence
 

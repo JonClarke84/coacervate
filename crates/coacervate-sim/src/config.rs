@@ -107,6 +107,7 @@ pub struct RawBehaviour {
 #[serde(deny_unknown_fields)]
 pub struct RawMetabolism {
     pub upkeep_scale: f64,
+    pub scaling_exponent: f64,
     pub gene_cost: f64,
     pub movement_cost: f64,
     pub reproduction_threshold: f64,
@@ -212,6 +213,7 @@ pub fn spec_defaults() -> RawConfig {
         },
         metabolism: RawMetabolism {
             upkeep_scale: 1.0,
+            scaling_exponent: 1.0,
             gene_cost: 0.0001,
             movement_cost: 0.0001,
             reproduction_threshold: 2.2,
@@ -307,6 +309,21 @@ pub enum ConfigError {
     /// — and the whole value of a refusal in this file is the sentence it writes. See
     /// [`SEASON_AMPLITUDE_CEILING`].
     Unmeasured {
+        field: &'static str,
+        value: f32,
+        least: f32,
+        most: f32,
+    },
+
+    /// A metabolic scaling exponent outside the range in which it is a scaling law at all,
+    /// given a value outside it.
+    ///
+    /// The only one of these is `metabolism.scaling_exponent`, and it is a seventh kind of
+    /// refusal rather than a use of [`Self::OutsideRange`] for the reason [`Self::Unmeasured`]
+    /// is a fifth: that variant's sentence is `physics.drag_anisotropy`'s own, and the whole
+    /// value of a refusal in this file is the sentence it writes. Neither end of this one can
+    /// be guessed from the words "scaling exponent". See [`SCALING_EXPONENT_FLOOR`].
+    NotAScalingLaw {
         field: &'static str,
         value: f32,
         least: f32,
@@ -439,6 +456,30 @@ impl std::fmt::Display for ConfigError {
                  ever been measured in this world, and that is the whole of the reason: the \
                  upper end is where the evidence stops. The lower end is no season at all, \
                  which is the control for every claim about one"
+            ),
+            // Long for the reason the three above it are. An exponent reads like an ordinary
+            // fraction and both of its ends are arguable from the outside: one looks like a
+            // tidy default rather than the linear world this project has always run, and a
+            // half looks like a round number rather than the flattest network any geometry
+            // gives. A refusal that named the range and stopped would be a house rule, and a
+            // house rule is a thing somebody widens on the evening an experiment is refused.
+            Self::NotAScalingLaw {
+                field,
+                value,
+                least,
+                most,
+            } => write!(
+                out,
+                "{field}: {value} is outside {least}..={most}. At {most} a body's upkeep is \
+                 exactly the sum of its cells', which is linear, is the world every figure in \
+                 this project was measured on, and is what ships - there is nothing past it, \
+                 because upkeep rising per cell with body size is a different mechanism rather \
+                 than more of this one. The lower end is where a scaling law stops having a \
+                 geometry behind it: the exponent of a space-filling distribution network is \
+                 `d / (d + 1)`, which is 0.75 in three dimensions and {least} in one. Below it \
+                 the cost and the lifespan run away together: at a quarter, a body at \
+                 `limits.max_cells_per_organism` pays what 2.8 of its cells would pay alone and \
+                 lives 22.6 times a single cell's life"
             ),
             // Long for the reason the two above are long. A period is a number of ticks and
             // reads like any other; what makes a short one refused is that the light would be
@@ -729,6 +770,52 @@ pub const SEASON_PERIOD_FLOOR: u64 = 8_000;
 /// running backwards: tiles draining into no account, and SPEC section 5's invariant failing.
 pub const SEASON_AMPLITUDE_CEILING: f32 = 0.5;
 
+/// Linear metabolism: a body's upkeep is exactly the sum of its cells' upkeeps, which is what
+/// this project shipped with and what every figure in it was measured on.
+///
+/// The multiplier is `n^(exponent − 1)`, so at exactly one it is `n^0` — **1.0 for every body
+/// in the world at every size, to the bit** — and `metabolism.scaling_exponent` is a setting
+/// that is present, adjustable and changes nothing. That is the whole point of shipping it
+/// here: `run.rs`'s `sub_linear_upkeep_ships_inert_and_is_a_law_the_world_can_feel` pins the
+/// same digest six other golden vectors already carry.
+///
+/// It is the *ceiling* as well as the default, and the two being the same is deliberate. Past
+/// one, upkeep per cell **rises** with body size — a diseconomy of scale, which is a different
+/// mechanism rather than more of this one, has no story anywhere in this model for why joining
+/// two cells should cost more than keeping them apart, and has never been run.
+pub const LINEAR_SCALING: f32 = 1.0;
+
+/// The flattest metabolic scaling law any geometry gives, and the floor
+/// `metabolism.scaling_exponent` is allowed.
+///
+/// ⭐⭐ West, Brown and Enquist derive Kleiber's exponent from a distribution network that is a
+/// space-filling fractal, and what falls out is `d / (d + 1)`: **0.75** in three dimensions,
+/// 0.667 in two and **0.5 in one**, a body that is a line. There is no dimensionality below it,
+/// so below it the setting is no longer a scaling law with something behind it — it is a
+/// subsidy for size with an exponent chosen to taste.
+///
+/// The arithmetic stops being reasonable at the same place, and it is worth having the figures
+/// where the bound is. At `limits.max_cells_per_organism` — 64 — the multiplier is `64^(k − 1)`
+/// and the lifespan multiplier is `64^(1 − k)`:
+///
+/// | exponent | a 64-celled body pays what … pay alone | and lives … single-cell lifetimes |
+/// | --- | --- | --- |
+/// | 1.00 | 64 cells | 1.0 |
+/// | 0.75 | 22.6 cells | 2.8 |
+/// | **0.50** | **8 cells** | **8** |
+/// | 0.25 | 2.8 cells | 22.6 |
+///
+/// A half is the last row where both halves are still recognisable as a *cost*: sixty-four
+/// cells for eight cells' money, and a life of 16,000 ticks against a photocyte's 2,000 — which
+/// is already thirteen generations inside one body. A quarter is a body that pays for three
+/// cells, lives longer than the median species in this world, and would fill
+/// `limits.max_organisms` with one clone.
+///
+/// The floor itself is allowed, for the reason [`DIFFUSION_STABILITY_LIMIT`] gives about its
+/// own end: a limit that cannot be reached is a limit one step lower with nobody able to tell
+/// which.
+pub const SCALING_EXPONENT_FLOOR: f32 = 0.5;
+
 /// Isotropic water: the drag a cell feels across its own body axis is the drag it feels
 /// along it, which is what this project shipped with until Phase 7.
 ///
@@ -869,6 +956,27 @@ fn measured(field: &'static str, value: f64, least: f32, most: f32) -> Result<f3
         Ok(narrowed)
     } else {
         Err(ConfigError::Unmeasured {
+            field,
+            value: narrowed,
+            least,
+            most,
+        })
+    }
+}
+
+/// An exponent bounded at both ends by what makes it a scaling law rather than a discount.
+///
+/// A seventh gate rather than [`within`] with different constants, for the reason [`measured`]
+/// is not [`within`]: the sentence a refusal writes is the whole of its value, and this one has
+/// two ends neither of which can be guessed from the setting's name. See
+/// [`SCALING_EXPONENT_FLOOR`] and [`LINEAR_SCALING`].
+fn scaling_law(field: &'static str, value: f64, least: f32, most: f32) -> Result<f32, ConfigError> {
+    let narrowed = narrow(field, value)?;
+
+    if (least..=most).contains(&narrowed) {
+        Ok(narrowed)
+    } else {
+        Err(ConfigError::NotAScalingLaw {
             field,
             value: narrowed,
             least,
@@ -1232,6 +1340,56 @@ pub struct BehaviourConfig {
 pub struct MetabolismConfig {
     pub upkeep_scale: f32,
 
+    /// The power a body's own cell count raises its summed upkeep to: SPEC section 10's
+    /// `(sum of its cells' upkeeps) × n^(scaling_exponent − 1)`.
+    ///
+    /// ⭐⭐⭐ **The only setting in this project that moves an *exponent* rather than a price.**
+    /// `docs/NEXT.md`'s first candidate says why that matters: income in this world is
+    /// endogenous, so every cost-side lever ever tried here has been absorbed by the water
+    /// re-forming around it — `upkeep_scale`, a myocyte's upkeep and `LIFETIME_UPKEEP` have all
+    /// failed the same way from three directions. A price moves the *height* of the cost curve
+    /// and the equilibrium moves back. This moves its **shape**, and total living tissue is
+    /// `light.influx ÷ upkeep per cell`, which is a quantity that has no way to move while
+    /// upkeep per cell is a constant.
+    ///
+    /// # Where the number comes from
+    ///
+    /// Real metabolic rate goes as mass to the power of about **three quarters** — Kleiber's
+    /// law — rather than linearly, so a larger organism spends less energy per unit of itself.
+    /// West, Brown and Enquist derive the exponent from a distribution network that is a
+    /// space-filling fractal: in `d` dimensions it is `d / (d + 1)`, which is three quarters in
+    /// three, two thirds in two, and a half in one. Coacervate's cells are physically joined by
+    /// springs and share a single energy store, which is such a network.
+    ///
+    /// **One is exactly linear and is what ships**, so the multiplier is `n^0` — exactly 1.0 for
+    /// every body in the world, at every size — and the default world is bit-for-bit the world
+    /// every figure in this project was measured on. `config/kleiber.toml` is the same world at
+    /// three quarters. It is the trade [`LightConfig::season_amplitude`] and
+    /// [`PhysicsConfig::current`] both made before it.
+    ///
+    /// # Why the floor is a half, which is not a taste
+    ///
+    /// A half is the smallest exponent any distribution network can have — `d / (d + 1)` at
+    /// `d = 1`, a body that is a line — so below it the setting has stopped being a scaling law
+    /// with a geometry behind it and become a subsidy for size.
+    ///
+    /// The arithmetic bites in the same place, and it is worth writing out at
+    /// `limits.max_cells_per_organism`, which is 64. The multiplier there is `64^(k − 1)`:
+    /// **0.354** at three quarters and **0.125** at a half. So a body at the cap pays what
+    /// **eight** of its cells would pay standing alone, while each of its sixty-four cells pays
+    /// an eighth of what it would pay alone — and since SPEC section 10's lifespan is
+    /// `LIFETIME_UPKEEP × cells ÷ cost`, that same body lives `64^(1 − k)` times as long as a
+    /// single cell, which is **eight** lifetimes: 16,000 ticks against a photocyte's 2,000, or
+    /// thirteen generations inside one body's life. Below the floor both run away together —
+    /// at a quarter, sixty-four cells cost what 2.8 do and live 22.6 lifetimes, which is a body
+    /// that outlasts most species in this world.
+    ///
+    /// ⚠️ **And there is no upper end past one**, because past one is a different mechanism
+    /// rather than more of this one: upkeep per cell would *rise* with body size, nothing in
+    /// this model provides a story for why joining two cells should cost more than keeping them
+    /// apart, and nothing has ever been run there.
+    pub scaling_exponent: f32,
+
     /// What one gene costs its organism per tick, on top of what its cells cost.
     ///
     /// ⭐ **This is not here to stop genome bloat, and reading it that way gets the sign of
@@ -1484,6 +1642,17 @@ impl RawConfig {
                 // The document calls it a "temperature": scale it to zero and nothing
                 // costs anything to be alive.
                 upkeep_scale: positive("metabolism.upkeep_scale", self.metabolism.upkeep_scale)?,
+                // ⭐ The power a body's summed upkeep is raised to as it grows. One is linear
+                // and is what ships, so the multiplier is exactly 1.0 at every size and the
+                // default world is the world every figure in this project was measured on; a
+                // half is the flattest exponent a distribution network can have. See
+                // `LINEAR_SCALING`, `SCALING_EXPONENT_FLOOR` and `MetabolismConfig`.
+                scaling_exponent: scaling_law(
+                    "metabolism.scaling_exponent",
+                    self.metabolism.scaling_exponent,
+                    SCALING_EXPONENT_FLOOR,
+                    LINEAR_SCALING,
+                )?,
                 // May be nothing, which is the world every run before Phase 4 Group B was
                 // in - genomes cost their organism nothing to carry - and is a legitimate
                 // experiment to set up deliberately, since it is the control case for
@@ -1603,6 +1772,10 @@ mod tests {
             ),
             ("behaviour.stroke", raw.behaviour.stroke),
             ("metabolism.upkeep_scale", raw.metabolism.upkeep_scale),
+            (
+                "metabolism.scaling_exponent",
+                raw.metabolism.scaling_exponent,
+            ),
             ("metabolism.gene_cost", raw.metabolism.gene_cost),
             ("metabolism.movement_cost", raw.metabolism.movement_cost),
             (
@@ -1645,8 +1818,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            32,
-            "SPEC section 3 has thirty-two decimal settings; this list has {}, so one has \
+            33,
+            "SPEC section 3 has thirty-three decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );
@@ -2413,6 +2586,87 @@ mod tests {
         }
     }
 
+    /// ⭐⭐ A metabolic scaling exponent outside `0.5..=1.0` is refused, and both ends are
+    /// usable.
+    ///
+    /// [`SCALING_EXPONENT_FLOOR`] and [`LINEAR_SCALING`] carry the derivation. What this pins is
+    /// the shape of the gate, and each of the three claims is a way it could be quietly wrong:
+    ///
+    /// - **One is usable, and that is the load-bearing end.** It is exactly linear — the world
+    ///   every figure in this project was measured on and the control for every claim about a
+    ///   sub-linear one — and it is what the shipped documents carry. A gate that quietly
+    ///   required a sub-linear exponent would take the control away.
+    /// - **A half is usable**, for the reason [`DIFFUSION_STABILITY_LIMIT`] gives about its own
+    ///   end: a limit that cannot be reached is a limit one step lower with nobody able to tell
+    ///   which.
+    /// - **The sentence explains itself.** Neither end can be guessed from the words "scaling
+    ///   exponent" — one looks like a tidy default rather than the linear world, and a half
+    ///   looks like a round number rather than `d / (d + 1)` at `d = 1` — so a refusal that
+    ///   named the range and stopped would read as a house rule, and a house rule is a thing
+    ///   somebody deletes on the evening an experiment is refused.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "an exponent at either end must arrive as exactly the exponent that was \
+                  written; near enough would let a scaling law be quietly adjusted on its way \
+                  through, and one that is not exactly one is not the shipped world"
+    )]
+    fn a_scaling_exponent_outside_the_law_is_refused() {
+        let base = spec_defaults();
+
+        for allowed in [
+            f64::from(SCALING_EXPONENT_FLOOR),
+            0.6,
+            0.75,
+            0.9,
+            f64::from(LINEAR_SCALING),
+        ] {
+            let mut fine = base.clone();
+            fine.metabolism.scaling_exponent = allowed;
+            assert_eq!(
+                fine.validate()
+                    .expect("an exponent inside the law has to be usable")
+                    .metabolism
+                    .scaling_exponent,
+                narrow("metabolism.scaling_exponent", allowed).expect("these all narrow"),
+                "an exponent of {allowed} did not survive being checked"
+            );
+        }
+
+        for exponent in [1.0001, 1.25, 2.0, 0.4999, 0.25, 0.0, -0.75] {
+            let mut outside = base.clone();
+            outside.metabolism.scaling_exponent = exponent;
+
+            let complaint = outside
+                .validate()
+                .expect_err("an exponent outside the law must stop the run")
+                .to_string();
+
+            assert!(
+                complaint.starts_with("metabolism.scaling_exponent: "),
+                "an exponent of {exponent} was refused and the complaint was about something \
+                 else: {complaint}"
+            );
+            assert!(
+                complaint.contains("0.5..=1"),
+                "the complaint about an exponent of {exponent} does not say what the range is: \
+                 {complaint}"
+            );
+            assert!(
+                complaint.contains("linear"),
+                "the complaint about an exponent of {exponent} does not say what the upper end \
+                 is, which is the world every figure in this project was measured on: \
+                 {complaint}"
+            );
+            assert!(
+                complaint.contains("d / (d + 1)"),
+                "the complaint about an exponent of {exponent} does not say where the lower end \
+                 comes from, and a bound with no reason attached is a bound somebody deletes: \
+                 {complaint}"
+            );
+        }
+    }
+
     /// ⭐⭐ A season deeper than anything measured is refused, and the refusal says only that.
     ///
     /// 0.25 and 0.5 are the only amplitudes ever run. The bound is where the **evidence** stops
@@ -2563,7 +2817,7 @@ mod tests {
     /// puts in — and, like `diffusion`, it is a failure the energy ledger cannot see.
     #[test]
     fn errors_name_the_field_in_plain_english() {
-        let sentences: [(&str, Corruption); 8] = [
+        let sentences: [(&str, Corruption); 9] = [
             ("light.gradient: 1.5 is outside 0..=1", |raw| {
                 raw.light.gradient = 1.5;
             }),
@@ -2600,6 +2854,19 @@ mod tests {
                 "light.influx: 1e-40 cannot be represented as a 32-bit float \
                  without losing its magnitude",
                 |raw| raw.light.influx = 1e-40,
+            ),
+            (
+                "metabolism.scaling_exponent: 0.25 is outside 0.5..=1. At 1 a body's upkeep is \
+                 exactly the sum of its cells', which is linear, is the world every figure in \
+                 this project was measured on, and is what ships - there is nothing past it, \
+                 because upkeep rising per cell with body size is a different mechanism rather \
+                 than more of this one. The lower end is where a scaling law stops having a \
+                 geometry behind it: the exponent of a space-filling distribution network is \
+                 `d / (d + 1)`, which is 0.75 in three dimensions and 0.5 in one. Below it the \
+                 cost and the lifespan run away together: at a quarter, a body at \
+                 `limits.max_cells_per_organism` pays what 2.8 of its cells would pay alone and \
+                 lives 22.6 times a single cell's life",
+                |raw| raw.metabolism.scaling_exponent = 0.25,
             ),
         ];
 

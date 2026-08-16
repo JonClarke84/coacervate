@@ -9,7 +9,7 @@ here; this is the standing summary and the plan.
 | **The finding** | [SPEC.md](../SPEC.md) section 1, with the mechanism in section 10 |
 | **The instruments** | `crates/coacervate-app/src/assay.rs` — competition, invasion, contact |
 | **The price list** | SPEC section 6, *What each of these cells is actually worth* |
-| **This document** | the three things worth trying next, in order, and why |
+| **This document** | the three candidates — the first is **built and measured**; the other two are open |
 
 ---
 
@@ -34,34 +34,54 @@ threshold anywhere between them. **This is the strongest unexplained signal in t
 world in which a third photocyte is worth nine times more should not exist if income is strictly
 linear in photocytes, which section 6 says it is. Something about density is changing what a cell
 earns, and whatever it is, it is the only place this project has yet found where being bigger pays
-more than proportionally. Candidate 1 below is the same question asked from the design side, and
-this is the measurement that says the question has an answer.
+more than proportionally. Candidate 1 below is the same question asked from the design side; it
+has now been built and it works, and **nobody has yet checked whether this signal survives it**,
+which is the first thing worth doing with the new profile.
 
 ---
 
 ## 2. The three candidates, in priority order
 
-### ⭐⭐⭐ 1. Increasing returns to size — the deepest, and the real answer
+### ✅ 1. Increasing returns to size — **built, measured, and it works**
 
-**Nothing in this model makes two cells worth more together than apart.** Income is linear in
-photocytes, upkeep is linear in cells, the reproduction bar is linear in cells, lifespan is linear
-in cells, and occlusion is actively *sub*-linear because a bigger body self-shades more. That is
-why a third photocyte is worth precisely its own cost and every other third cell is a pure loss at
-about **−0.35 %/generation for every 0.001/tick of upkeep, whatever the cell does**. Growth is
-therefore a random walk, and a specialised cell is a bet nothing can pay off.
+**This candidate is done.** It is `metabolism.scaling_exponent`, it ships inert at 1.0, and
+`config/kleiber.toml` is the same world at Kleiber's 0.75. SPEC section 10 carries the mechanism
+and the sweep; SPEC section 6 carries what it does to the price of a third cell. What follows is
+the short version.
 
-**This is a missing mechanism, not a wrong constant.** No value of any number in `config/` changes
-the exponent on a linear term. So this is the one candidate that needs a design round rather than
-an afternoon, and it is the one that would actually change the world.
+The question this section used to ask was *what would have to be true for a five-celled body to
+out-earn five one-celled ones?* The answer was on the **cost** side rather than the income side: a
+body of `n` cells now pays `(Σ its cells' upkeep) × n^(k − 1)`, which is Kleiber's law — real
+metabolic rate goes as mass^0.75 rather than linearly, and West, Brown and Enquist derive the
+exponent from a space-filling distribution network, `d / (d + 1)`. Cells joined by springs sharing
+one energy store are such a network.
 
-The question to design against, stated so that any proposal can be checked against it in one line:
+⭐⭐ **Total living cells, 300,000 ticks, eight founders, seed 42:**
 
-> **What would have to be true for a five-celled body to out-earn five one-celled ones?**
+| `scaling_exponent` | **total living cells** | cells/body | at the cap | alive | biomass |
+| --- | --- | --- | --- | --- | --- |
+| **1.00** — ships | **5,282** | 9.60 | 0.00% | 550 | 33,293 |
+| 0.90 | **6,646** | 7.62 | 0.11% | 872 | 40,874 |
+| **0.75** — `kleiber` | **10,444** | 12.01 | 3.34% | 869 | 65,714 |
+| 0.60 | **25,551** | 41.01 | **28.41%** | 623 | 152,641 |
 
-Two footholds already exist. The density signal above says the world already contains *some*
-super-linearity nobody has accounted for — find it before inventing one. And the assay prices any
-answer in about four minutes a run, which is the whole reason it was built: a proposal can be
-refuted before a line of it is written, exactly as the self-shading muscle payoff was.
+**The total rises ×4.8, and the population rises with it** — so it is not the concentration every
+earlier round measured. The 1.00 row reproduces the world this project has always run.
+
+⚠️⚠️ **0.60 overshoots**: more than a quarter of every body is pressed against
+`max_cells_per_organism`, which is a world running into its arena rather than one finding a size.
+Three quarters is where most of the effect arrives with the cap still a rarity.
+
+⚠️ **And it is a repricing rather than a payoff.** A third devorocyte goes from −5.05 to −3.38
+%/generation and a third myocyte from −1.96 to −1.67; **neither crosses zero.** Nothing here makes
+a mouth or a muscle *earn* anything — §6 below is untouched. What is now affordable is size, and
+the arm that grows fastest under it is the one made of the cell that already earned.
+
+**What is open, in the order it is worth asking.** Does the mature world at 0.75 grow anything the
+linear one did not — the cell census at 300,000 ticks is the cheapest place to look. Does the
+density signal below (a third photocyte at ×9 in a dense world) survive the change, since both are
+claims about a return to being bigger. And whether the exponent belongs at 0.75 or 0.90 is a
+judgement about the cap, not a measurement anybody still needs to take.
 
 ### ⭐⭐ 2. Travel per lifetime via `dt` rather than lifespan — the cheapest test
 
@@ -141,9 +161,25 @@ equilibrium condition is *the marginal body breaks even*, and a cost-side lever 
 rather than the outcome. SPEC section 3 records `upkeep_scale` failing the same way from the
 opposite direction, and section 6's myocyte-price sweep is a third instance.
 
-⭐ **That is exactly why candidate 2 is `dt` and not lifespan**, and why candidate 1 is about the
-income *exponent* rather than about any price. **The only levers left are ones the economy cannot
-see, and ones that change the shape of the income curve rather than its height.**
+⭐ **That is exactly why candidate 2 is `dt` and not lifespan**, and why candidate 1 is about an
+*exponent* rather than about any price. **The only levers left are ones the economy cannot see,
+and ones that change the shape of a curve rather than its height.**
+
+### ⚠️⚠️ Amended by candidate 1, and the amendment is the useful part
+
+`metabolism.scaling_exponent` **is** a cost-side lever and it did not self-cancel, so the rule
+above is too strong as written. What actually happened is the rule working exactly as stated and
+producing a different outcome anyway:
+
+- The equilibrium *did* re-form in poorer water — the field drawdown goes from **64.7% to 88.0%**
+  at 0.75, which is the same absorption `LIFETIME_UPKEEP` produced.
+- But the break-even condition is *the marginal body breaks even*, and that body now has a
+  **size**. Total tissue is `influx ÷ upkeep per cell`, and upkeep per cell stopped being a
+  constant.
+
+> **The corrected rule: a cost-side lever that moves every body's bill by the same factor is
+> absorbed. One that changes how the bill varies with body size is not.** `upkeep_scale`, myocyte
+> upkeep and `LIFETIME_UPKEEP` are all the first kind, which is why all three failed the same way.
 
 ---
 
@@ -263,5 +299,12 @@ are all one-sided in the direction the rescaling makes safer, and all still pass
   Supply, not price.
 - **A self-shading payoff for a muscle.** Refuted on the measured coefficient of the exact
   configuration it proposed to seed, before a line of it was written.
-- **Any cost-side lever.** §3 above. `upkeep_scale`, myocyte upkeep and `LIFETIME_UPKEEP` have all
-  now failed the same way, from three different directions.
+- **Any cost-side lever that moves every body's bill by the same factor.** §3 above.
+  `upkeep_scale`, myocyte upkeep and `LIFETIME_UPKEEP` have all now failed the same way, from
+  three different directions. ⚠️ The qualifier is new and is doing work:
+  `metabolism.scaling_exponent` is a cost-side lever that changes how the bill varies with *size*,
+  and it is the one that moved total living tissue — see §3's amendment.
+- **A specialised cell paying for itself under sub-linear scaling.** A third devorocyte at 0.75 is
+  −3.38 %/generation and a third myocyte −1.67; both are cheaper than they were and both are still
+  a loss by thirty and fifteen times the noise floor. Sub-linear metabolism makes *size*
+  affordable, not specialisation.

@@ -1,0 +1,117 @@
+# The `kleiber` profile: the shipped world, with a body paying sub-linearly for its own tissue.
+#
+# ⭐⭐⭐ **This exists because the total amount of living tissue in this world had never once
+# moved.** Ten rounds of measurement reported bigger bodies; every one of them was the same
+# tissue divided among fewer bodies — four worlds measured in a week held 5,429 / 5,153 / 4,826 /
+# 4,056 living cells while biomass fell from 34,000 to 25,000. The arithmetic said it could not be
+# otherwise: biomass settles where income equals expenditure, income is fixed at `light.influx`,
+# and upkeep was charged **linearly in cell count** — so total cells is `influx ÷ upkeep per cell`
+# and no fact about body shape can reach it.
+#
+# `metabolism.scaling_exponent` is the one setting in this project that changes an *exponent*
+# rather than a price. A body of n cells pays `(sum of its cells' upkeeps) × n^(k - 1)`, so upkeep
+# per cell stops being a constant and the denominator above stops being fixed. Real metabolic rate
+# goes as mass^0.75 — Kleiber's law — and West, Brown and Enquist derive the exponent from a
+# distribution network that is a space-filling fractal, `d / (d + 1)`; cells joined by springs and
+# sharing one energy store are such a network.
+#
+# Everything below is `default.toml` with **one number changed**: `metabolism.scaling_exponent`,
+# from 1.0 to 0.75. Read `default.toml` for what the rest of them mean; the comments there are the
+# document and are deliberately not copied.
+#
+# ⭐⭐ **The measurement, and it is a positive one.** Seed 42, eight founders, 300,000 ticks after
+# the dawn, the shipped configuration with one number changed — `run.rs`'s
+# `sub_linear_scaling_raises_total_living_tissue`:
+#
+#      k | total cells | cells/body |  biggest | at cap | alive | biomass | drawdown | peak alive
+#   -----+-------------+------------+----------+--------+-------+---------+----------+-----------
+#   1.00 |       5,282 |       9.60 |       17 |  0.00% |   550 |  33,293 |    64.7% |     2,164
+#   0.90 |       6,646 |       7.62 |       64 |  0.11% |   872 |  40,874 |    66.3% |     2,426
+#   0.75 |      10,444 |      12.01 |       64 |  3.34% |   869 |  65,714 |    77.6% |     2,764
+#   0.60 |      25,551 |      41.01 |       64 | 28.41% |   623 | 152,641 |    88.0% |     2,987
+#
+# **Total living tissue rises monotonically, by 4.8x across the range, while the population rises
+# too** — so it is not concentration. Biomass follows it (x4.6) and the field is drawn down from
+# 64.7% to 88.0%, which is the same fact read off the water: larger bodies take more of the light
+# before it spills. Nothing goes extinct, and the peak population never reaches
+# `limits.max_organisms` at any exponent, so the energy budget still binds rather than the arena.
+#
+# ⚠️⚠️ **Three quarters is chosen because 0.60 overshoots.** At 0.60 more than a quarter of every
+# body in the world is pressed against `limits.max_cells_per_organism` and the mean body is 41
+# cells of an allowed 64 — a world running into its own arena rather than one that has found a
+# size. At 0.75 the cap is a rarity at 3.3%, and 0.90 is the conservative setting if even that is
+# too much: a quarter more tissue with one body in a thousand at the cap.
+#
+# ⚠️ **No coefficient recorded in SPEC or docs/PHASE7.md was taken in this world.** They were all
+# measured at 1.0, which is what `config/default.toml` still ships and what every golden vector
+# pins. A run of this profile is a run of a world whose carrying capacity is not the shipped one.
+
+[world]
+seed = 42
+width = 2048.0
+height = 1152.0
+grid_cols = 256
+grid_rows = 144
+years_per_tick = 1000.0
+
+[light]
+influx = 0.001
+cap = 8.0
+gradient = 0.75
+patchiness = 0.5
+patch_drift = 0.0006
+diffusion = 0.04
+season_period = 21000
+season_amplitude = 0.0
+shadow_depth = 27.2
+shadow_spread = 0.0
+
+[physics]
+drag = 0.92
+drag_anisotropy = 2.0
+collision_stiffness = 40.0
+spring_damping = 0.35
+current = 0.0
+
+[behaviour]
+resting_amplitude = 0.8
+stroke = 1.0
+
+[metabolism]
+upkeep_scale = 1.0
+scaling_exponent = 0.75  # ⭐ **The one number this profile changes.** A body of n cells pays
+                         # `(sum of its cells' upkeeps) × n^-0.25`, so a two-celled body pays 0.84
+                         # of what it pays in the shipped world, a ten-celled one 0.56 and a body
+                         # at the 64-cell cap 0.35. Both sides of the life cycle move the right
+                         # way and neither was tuned: time to the reproduction bar goes as
+                         # `1 / (I - n^(k-1)·u)`, whose denominator *grows* with size, so larger
+                         # bodies breed sooner; and SPEC section 10's lifespan,
+                         # `LIFETIME_UPKEEP × cells ÷ cost`, goes as `n^(1-k)`, so they also live
+                         # longer. The per-kind table is untouched — the multiplier applies to the
+                         # body's *summed* upkeep, so a sclerocyte still costs a fifth of a
+                         # devorocyte inside the same body. SPEC 6 and 10.
+gene_cost = 0.0001
+movement_cost = 0.0001
+reproduction_threshold = 2.2
+offspring_share = 0.45
+
+[mutation]
+point_rate = 0.06
+point_sigma = 0.12
+duplication_rate = 0.02
+deletion_rate = 0.02
+insertion_rate = 0.01
+reorder_rate = 0.02
+genome_duplication_rate = 0.0008
+
+[limits]
+max_organisms = 4000
+max_cells_per_organism = 64
+max_genes = 128
+max_dev_steps = 16
+
+[run]
+max_wall_clock_hours = 12.0
+max_ticks = 0
+max_ticks_per_second = 0
+reseed_on_extinction = false
