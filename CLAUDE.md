@@ -87,7 +87,7 @@ It lives outside work. Nothing here ever touches Jira, Slack, or any work system
 coacervate/
 ├── crates/
 │   ├── coacervate-sim/     Pure simulation. No I/O, no rendering, no dependencies
-│   │                       beyond std + rand + serde. This is where TDD lives.
+│   │                       beyond std + rand + serde + rayon. This is where TDD lives.
 │   ├── coacervate-render/  wgpu rendering + egui panels. Reads sim state, draws it.
 │   └── coacervate-app/     Binary. winit window, main loop, config, replay log I/O.
 └── docs/
@@ -97,6 +97,15 @@ coacervate/
 
 **Stack:** `winit` (window), `wgpu` (GPU compute *and* rendering), `egui` (control panels
 and charts), `rayon` (CPU parallelism), `serde` + `postcard` + `zstd` (replay log).
+
+⭐⭐ **`rayon` reached the simulation crate in the throughput round** — see `docs/NEXT.md`
+section 7 — and it is used on exactly one pass, `behaviour.rs`'s `look`, which is 22% of a
+tick and writes only to the index it is given. **Determinism is not weakened by it and cannot
+be.** A pass that accumulated into a shared total would change the order of its additions and
+therefore the world; this one accumulates nothing, so the array that comes out is the same
+array however many threads filled it. All six golden vectors are unchanged. Anything proposing
+to parallelise the collision forces, the harvest or the free list has to answer that argument
+first — `docs/NEXT.md` section 7 sets out the one design that does.
 
 **Target:** A single Windows `.exe`. Windows 11, x86-64, MSVC toolchain.
 
@@ -497,7 +506,7 @@ Recorded so they are not silently relitigated. Each was argued through.
 | **No Tauri / Dioxus** | Would allow a prettier UI in HTML and CSS, but reintroduces the entire JavaScript toolchain for the chrome alone, while the world view still needs a native GPU surface underneath. |
 | **CPU reference implementation before GPU** | GPU compute fails by producing silently wrong numbers. A tested CPU implementation turns "is my shader correct?" from a debugging exercise into a differential test: same seed, same results. Without it the GPU port is guesswork. |
 | **Energy strictly conserved and asserted** | Unbalanced energy is how these simulations quietly become either runaway blooms or instant extinctions. Light influx is the *only* source; it sets a hard carrying capacity, and that carrying capacity is the pressure that drives everything else. |
-| **Predation emergent, not scripted** | A body is a denser package of energy than the surrounding soup, so eating one is simply a better strategy. Whether a herbivore/predator split appears is one of the genuinely interesting outcomes — coding it in would be answering the question in advance. |
+| **Predation emergent, not scripted** | A body is a denser package of energy than the surrounding soup, so eating one is simply a better strategy. Whether a herbivore/predator split appears is one of the genuinely interesting outcomes — coding it in would be answering the question in advance. ⚠️ **Amended 17 Aug 2026, on evidence — this bars strategies, not organs.** A photocyte that turns light into energy is given, and nobody calls that scripting photosynthesis; a cell kind that produces thrust is the same kind of gift. What must stay emergent is whether a lineage grows one, how many, where on the body, at what angle, wired to which sensor, and what it does with them. The line is: **a motor is permitted, a tactic is not.** Thrust along the cell's own axis is an organ. Thrust that automatically points up a gradient, at prey, or away from a competitor is the answer written in advance, and stays forbidden. The reason for the amendment is biological rather than convenient: **nothing in life ever paid for a half-built engine.** The bacterial flagellum's export apparatus is homologous to the Type III secretion system — machinery for secretion, co-opted to swim. Twitching motility runs on pili that evolved for DNA uptake. The eukaryotic cilium sits on microtubule transport that was already there. Every motor in biology is an exaptation of something that already worked, which is precisely the valley this world had been asking evolution to cross unaided, and ten measured rounds say it cannot. |
 | **Reactive behaviour first, neural networks later** | Evolved parameters on a fixed reactive controller get organisms moving and taxis evolving cheaply. Networks whose inputs and outputs wire to whatever sensory and contractile cells the body actually grew are far more interesting and far more expensive. The architecture leaves room; phase 1 does not build it. |
 | **Asexual reproduction only, for now** | Sexual recombination changes evolutionary dynamics dramatically and adds a great deal of machinery (mate finding, compatibility, genome alignment). Worth revisiting once the asexual case is stable. |
 | **Deterministic from seed + config** | When something interesting happens you will want to see it again. Everything derives from one seeded PRNG; no wall-clock time, no thread-scheduling dependence, no unordered iteration. |

@@ -544,3 +544,74 @@ body-size result must not be read off it.
 3. **Coarser buckets.** Occupancy is 0.08 cells per bucket, which is a world running mostly empty.
    Wider buckets would trade cache misses for candidate tests. ⚠️ It changes the order neighbours
    come back in, so it **moves every golden vector**, and it is the only item here that does.
+
+---
+
+## 8. ⭐⭐⭐ The propulsion organelle — predictions, written down before the measurement
+
+**Recorded 17 August 2026, before a line of it was built.** The rule this project has been
+running on all week is that a predicted sign goes on paper first, because four of the last
+eleven rounds refuted a prediction of mine and that is only worth something if the prediction
+was not written afterwards.
+
+The design, so the predictions can be read against something concrete:
+
+- **A seventh `CellKind`, the flagellocyte.** Its function is thrust, **computed rather than
+  simulated** — no stroke, no beat to resolve. This is what resistive-force theory does for
+  real microswimmers and it is the only tractable choice here: a real flagellum beats at
+  ~100 Hz and `dt = 1/60 s` cannot resolve anything above about 3 Hz. Simulating the stroke
+  is the Nyquist trap; computing the thrust is not.
+- **Direction: outward along the cell's own geometry** — the unit vector from the mean
+  position of the cell's adhered partners to the cell itself. A direction development already
+  chose, that rotates as the body flexes, and that **sums to nothing on a symmetric body**.
+  That last property is the whole point: a rosette with flagellocytes all round goes nowhere,
+  and only a lineage that puts them on one side moves. Placement stays the evolved part.
+  A cell with no adhesions has no direction and produces no thrust, so a single cell cannot
+  swim and the founder gains nothing by accident.
+- **Magnitude from `osc_freq`**, the gene field a myocyte already uses as a beat frequency.
+  Not a hack: in resistive-force theory thrust is linear in beat frequency at a fixed
+  waveform, so this is the actual relation. It also costs the genome nothing — no new field,
+  no change to the mutation table's shape — and it puts a flagellocyte exactly one
+  `child_kind` mutation from a myocyte **with its frequency parameter already tuned**, which
+  is an exaptation and is how every motor in biology actually arrived.
+- **Modulated by `sensor_gain`**, again the myocyte's own field, applied to *magnitude only*.
+  Magnitude modulation on a body with flagellocytes on two sides is a turn, so taxis can
+  evolve — but the gain's size, its sign and whether it is zero at all stay evolved. Nothing
+  points thrust at anything; see CLAUDE.md's amended decision-log row for the line between a
+  motor and a tactic.
+- **Charged through `movement_cost`, the myocyte's own coefficient**, as force × distance
+  moved. In a drag-dominated world that is `∝ F²`, which is the right power law for Stokes
+  drag, and sharing the coefficient makes "is a flagellum better than a muscle" an
+  apples-to-apples question rather than a comparison of two invented prices.
+
+### The predictions
+
+1. **Travel per lifetime rises from ~0.65 body lengths to more than 5**, at a thrust costing
+   under a tenth of income. **High confidence, and it deserves none** — a steady external
+   force against linear drag gives a terminal velocity and displacement linear in time, and
+   nothing cancels it. That is arithmetic, not biology, and it is the one prediction here that
+   would be embarrassing to get wrong.
+2. **The flagellocyte prices *negative* in the competition assay, around −1 to −3 %/gen.**
+   The assay measures the filling regime — two-celled bodies growing into empty water — and in
+   empty water there is nowhere worth going, so a motor is pure cost. ⚠️ **A negative here is
+   not a failure of the organelle**, and this is written down now precisely so it cannot be
+   read as one later.
+3. **It prices materially less negative, and plausibly positive, when seeded into a mature
+   drawn-down world** — where the field is 65% eaten and un-grazed water is a real prize.
+   **This is the interesting measurement and the one I am least sure of.** If 2 and 3 come out
+   the same, the motor is simply too expensive and the price is wrong. If they differ, then
+   locomotion pays exactly where theory says it should, which would be the first time in this
+   project that a specialisation's value depended on the state of the world rather than on its
+   own coefficient.
+4. **Predation still does not establish**, unless thrust closes 60–88 units within a lifetime.
+   The reach gap is four to five orders of magnitude against real bacteria and one organelle
+   does not obviously close it. **Measure the travel first and predict predation from it**,
+   rather than hoping.
+
+### ⚠️ The cost of building it, stated in advance
+
+A seventh kind changes `CellKind::ALL.len()` from 6 to 7, and `mutation.rs` draws `child_kind`
+and `new_kind` uniformly over that list. **Every golden vector moves**, whatever value thrust
+ships at, because the RNG stream itself differs. The old values are to be kept verbatim in the
+tests as history rather than deleted, and the re-record is to be a commit of its own so that it
+is legible in the log as a re-baseline and not as a result.
