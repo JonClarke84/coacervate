@@ -85,6 +85,13 @@ season_period = 21000    # `default.toml`'s, unchanged. ⚠️ The floor is `cap
                          # and a preset that quietly also changed the weather would be an
                          # experiment with two variables in it.
 season_amplitude = 0.0   # `default.toml`'s, unchanged, and inert here for the same reason.
+shadow_depth = 27.2      # ⚠️ `default.toml`'s, unchanged, and **deliberately not scaled with the
+shadow_spread = 0.0      # water**. A shadow's reach is a length in world units, and this profile
+                         # exists to ask what happens when bodies are packed into a quarter of the
+                         # depth *under the occlusion the shipped world already has*. That is what
+                         # makes the density measurements in docs/NEXT.md comparable with the
+                         # shipped ones; a profile that also opened the shadow out would be an
+                         # experiment with two variables in it.
 
 [physics]
 drag = 0.92

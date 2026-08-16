@@ -55,6 +55,8 @@ season_amplitude = 0.25  # ⭐ **The one number this profile changes.** The ligh
                          # at 0.25 the mean population is 1,369 against 1,099 and the mean body is
                          # 4.11 cells against 5.65 — the same energy in more and smaller bodies.
                          # Bounded at 0.5, which is where the measurements stop.
+shadow_depth = 27.2      # `default.toml`'s, unchanged. What a shadow reaches is not a property
+shadow_spread = 0.0      # of what time of year it is.
 
 [physics]
 drag = 0.92

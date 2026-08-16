@@ -79,6 +79,8 @@ pub struct RawLight {
     pub diffusion: f64,
     pub season_period: u64,
     pub season_amplitude: f64,
+    pub shadow_depth: f64,
+    pub shadow_spread: f64,
 }
 
 /// The `[physics]` table as written: how the soup pushes back.
@@ -194,6 +196,8 @@ pub fn spec_defaults() -> RawConfig {
             diffusion: 0.04,
             season_period: 21_000,
             season_amplitude: 0.0,
+            shadow_depth: 27.2,
+            shadow_spread: 0.0,
         },
         physics: RawPhysics {
             drag: 0.92,
@@ -1022,6 +1026,63 @@ pub struct LightConfig {
     /// season existed. It ships at nought. See [`SEASON_AMPLITUDE_CEILING`] for why a half is
     /// the far end and what the trough actually does.
     pub season_amplitude: f32,
+
+    /// How far below a cell its shadow still reaches at all, in world units.
+    ///
+    /// ⭐⭐ **The geometry of occlusion, and until Phase 7's Group N it was a compiled-in
+    /// constant.** SPEC gives no occlusion model at all — the whole of it, including this
+    /// number, was chosen in Phase 4 — so this is not a deviation from the document but the
+    /// first time the document's silence has been made adjustable. The model itself is
+    /// [`crate::behaviour::Behaviour::shade`] and the reasoning for every part of it is there.
+    ///
+    /// **It ships at 27.2, which is `2 × genome::MAX_REST_LENGTH`** — twice the longest limb a
+    /// genome can grow, and the value every figure in this project was measured under.
+    /// `behaviour.rs`'s `the_shipped_shadow_is_two_of_the_longest_limb` pins that equality, so
+    /// the anchor cannot drift away from the length it is anchored to.
+    ///
+    /// The reason it is anchored to a limb is that the thing occlusion has to be able to tell
+    /// apart is a daughter placed *beside* its parent from one placed *beneath* it. Shorter
+    /// than one limb and a daughter directly below its parent is already in clear water, so
+    /// occlusion discriminates between nothing. Very much longer and a photocyte's income is
+    /// decided by whatever happens to be drifting through the water column above it rather than
+    /// by the shape of its own body — which is the trade this setting exists to let somebody
+    /// *measure* rather than assert.
+    ///
+    /// ⚠️ **It has no upper bound and it is the one setting here that costs time.** The search
+    /// is a box `2 × shadow_depth × (1 + shadow_spread)` wide by `shadow_depth` tall around
+    /// every photocyte, so doubling the depth roughly doubles the most expensive question in
+    /// the behaviour pass. Nothing breaks; the run simply gets slower. Refused at nought and
+    /// below, because the depth is a divisor — the shadow's fade is `1 - drop / shadow_depth`.
+    pub shadow_depth: f32,
+
+    /// How much wider a shadow is at the bottom of its reach than at the cell casting it, as a
+    /// multiple of that cell's own width.
+    ///
+    /// ⭐⭐ **The off switch, and the only one.** A blocker's shadow is
+    /// `(my radius + its radius) × (1 + shadow_spread × drop / shadow_depth)` wide, so at
+    /// nought that expression is exactly the sum of the two radii and the shadow is the column
+    /// a disc casts in light falling straight down — **bit-for-bit the occlusion this project
+    /// has always had.** It ships at nought. At one the shadow is twice as wide at the bottom
+    /// of its reach as at the top, at two three times, and so on.
+    ///
+    /// **What it is for is inter-body shading.** A column shades whatever is directly beneath
+    /// it, which in a world where a lineage buds into contact is overwhelmingly *its own
+    /// descendants*: self-shading, which is sub-linear in body size and is the reason nothing
+    /// in this model has ever made two cells worth more together than apart. A cone reaches
+    /// sideways as it falls, so it shades **neighbours** — and shade is the one strictly
+    /// zero-sum resource in this world, since a photon intercepted above a cell never reaches
+    /// it. See `docs/NEXT.md`.
+    ///
+    /// It is a widening rather than a blurring: the shade directly overhead is what it always
+    /// was, and the cone puts more of it on more cells. That is deliberate, and it is not a
+    /// physical claim. What blurs a shadow in real water is scattering, and scattering also
+    /// *dims* it — which is what [`Self::shadow_depth`]'s linear fade already does. This
+    /// setting is the sideways half of the same idea, kept separate so it can be turned on
+    /// alone and measured alone.
+    ///
+    /// May be nothing, which is what ships. Not less than nothing, which would be a shadow that
+    /// narrows to a point and then turns inside out.
+    pub shadow_spread: f32,
 }
 
 /// The checked `[physics]` table: how the soup pushes back.
@@ -1345,6 +1406,18 @@ impl RawConfig {
                     0.0,
                     SEASON_AMPLITUDE_CEILING,
                 )?,
+                // ⭐ How far a shadow reaches, and the divisor in its fade — so nought is
+                // refused for the reason `light.cap` is, rather than as a taste. No upper
+                // bound, deliberately, and for the reason `physics.current` has none: nothing
+                // on the other side of one fails. A very deep shadow is a slow world and a
+                // legitimate experiment, and it is the experiment this setting exists for.
+                shadow_depth: positive("light.shadow_depth", self.light.shadow_depth)?,
+                // ⭐ How much a shadow widens over that reach. May be nothing, and nothing is
+                // what ships: a column is what a disc casts in light falling straight down, and
+                // it is the occlusion every figure in this project was measured under. Not less
+                // than nothing, which is a shadow narrowing past a point and turning inside
+                // out - a second way of writing a world this setting cannot otherwise express.
+                shadow_spread: non_negative("light.shadow_spread", self.light.shadow_spread)?,
             },
             physics: PhysicsConfig {
                 // "velocity retained per tick" - a proportion of what was there before.
@@ -1514,6 +1587,8 @@ mod tests {
             ("light.patch_drift", raw.light.patch_drift),
             ("light.diffusion", raw.light.diffusion),
             ("light.season_amplitude", raw.light.season_amplitude),
+            ("light.shadow_depth", raw.light.shadow_depth),
+            ("light.shadow_spread", raw.light.shadow_spread),
             ("physics.drag", raw.physics.drag),
             ("physics.drag_anisotropy", raw.physics.drag_anisotropy),
             (
@@ -1570,8 +1645,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            30,
-            "SPEC section 3 has thirty decimal settings; this list has {}, so one has \
+            32,
+            "SPEC section 3 has thirty-two decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );

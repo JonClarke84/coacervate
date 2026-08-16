@@ -1159,6 +1159,62 @@ mod tests {
         );
     }
 
+    /// ⭐⭐ **The shadow's geometry is written in the document, and it ships at the geometry
+    /// that was compiled in.**
+    ///
+    /// SPEC gives no occlusion model at all: `shadow_depth` and `shadow_spread` were both
+    /// constants in `behaviour.rs` chosen in Phase 4, so making them settings is the document
+    /// gaining something it never had rather than a deviation from it. What that buys is the
+    /// only lever this project has found on the one strictly zero-sum resource in the world —
+    /// a photon intercepted above a cell never reaches it — without paying the two thirds of
+    /// the population that density costs. See `docs/NEXT.md` and SPEC section 6.
+    ///
+    /// ⚠️ **Both ship at exactly the old constants**, which is what keeps the blast radius at
+    /// zero: `config/default.toml` is bit-for-bit the world every figure in SPEC and
+    /// `docs/PHASE7.md` was measured on, and six golden vectors do not move. The same trade
+    /// `light.season_amplitude` and `physics.current` both made. `run.rs`'s
+    /// `the_shipped_shadow_is_the_shadow_that_was_there_before` is where that is proved against
+    /// a whole population rather than against two literals.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "pinning the shipped geometry against the constants it replaced; an \
+                  approximate match would let the shipped world drift"
+    )]
+    fn the_shipped_document_carries_a_shadow_and_it_ships_inert() {
+        let shipped: RawConfig = toml::from_str(DEFAULT_CONFIG).expect("the shipped config parses");
+
+        assert_eq!(
+            shipped.light.shadow_depth, 27.2,
+            "the shipped shadow no longer reaches 27.2 - `2 x genome::MAX_REST_LENGTH`, the \
+             constant it replaced - so the world every figure in SPEC.md and docs/PHASE7.md was \
+             measured on is not the world this document describes. **Investigate; do not paste \
+             in the new number.**"
+        );
+        assert_eq!(
+            shipped.light.shadow_spread, 0.0,
+            "the shipped shadow is a cone rather than the column a disc casts in light falling \
+             straight down, so occlusion is no longer what it was when every coefficient in this \
+             project was taken"
+        );
+
+        // Both keys are required, for the reason `physics.current` is: a replay that did not
+        // record the shape of the shadow is a replay of a world nobody can rebuild, and
+        // occlusion is the one thing in this model that decides what a body's *shape* is worth.
+        for key in ["shadow_depth", "shadow_spread"] {
+            let without: String = DEFAULT_CONFIG
+                .lines()
+                .filter(|line| !line.trim_start().starts_with(key))
+                .collect::<Vec<&str>>()
+                .join("\n");
+            assert!(
+                toml::from_str::<RawConfig>(&without).is_err(),
+                "a document with no `light.{key}` was accepted, so a run can be recorded \
+                 without the occlusion that produced it"
+            );
+        }
+    }
+
     /// The number written in the configuration document is the number the randomness
     /// actually comes from.
     ///

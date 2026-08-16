@@ -66,6 +66,8 @@ patch_drift = 0.0006
 diffusion = 0.04
 season_period = 21000
 season_amplitude = 0.0
+shadow_depth = 27.2
+shadow_spread = 0.0
 
 [physics]
 drag = 0.92

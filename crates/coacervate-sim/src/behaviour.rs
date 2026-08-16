@@ -104,20 +104,58 @@ const HARVEST_RATE: f64 = 0.01;
 /// as the cell is and no wider.
 const REACH: f32 = 2.0 * CellKind::LARGEST_RADIUS;
 
-/// How far below a cell its shadow still reaches at all.
+/// How far below a cell its shadow still reaches at all, and how much wider it gets on the way
+/// down - the two numbers that are the whole geometry of occlusion.
 ///
-/// **Twice the longest limb a genome can grow.** SPEC gives no number for this - it gives no
-/// occlusion model at all - so it is anchored to the one length in the project that already
-/// means "how far one cell can be from the cell it grew from": `genome.rs`'s
-/// [`MAX_REST_LENGTH`].
+/// ⭐⭐ **Both were compiled-in constants until Phase 7's Group N**, the depth at twice the
+/// longest limb a genome can grow and the width at exactly the cell's own. They are now
+/// `light.shadow_depth` and `light.shadow_spread`, and they **ship at those same two values**,
+/// so `config/default.toml` is bit-for-bit the world every figure in this project was measured
+/// on. See [`crate::config::LightConfig::shadow_depth`] and
+/// [`crate::config::LightConfig::shadow_spread`] for what each of them means and why it moves,
+/// and [`Behaviour::shade`] for the model they are the two dimensions of.
 ///
-/// The reasoning is in [`Behaviour::shade`], and the short version is that the thing occlusion
-/// has to be able to tell apart is a daughter placed *beside* its parent from one placed
-/// *beneath* it. Shorter than one limb and a daughter directly below its parent would already
-/// be in clear water, so occlusion would discriminate between nothing. Very much longer and a
-/// photocyte's income would be decided by whatever happened to be drifting through the water
-/// column above it rather than by the shape of its own body.
-const SHADOW_DEPTH: f32 = 2.0 * MAX_REST_LENGTH;
+/// Kept here as a pair rather than as two loose fields because they are read together in one
+/// place and are meaningless apart: the spread is a multiple of the width *at the depth*.
+#[derive(Debug, Clone, Copy)]
+struct Shadow {
+    /// `light.shadow_depth`: how far down the shadow reaches, and the divisor in its fade.
+    depth: f32,
+
+    /// `light.shadow_spread`: how much wider the shadow is at that depth than at the cell, as
+    /// a multiple of the cell's own width. Nought is a column, which is what ships.
+    spread: f32,
+}
+
+impl Shadow {
+    /// The two numbers a configuration asks for.
+    fn of(config: &Config) -> Self {
+        Self {
+            depth: config.light.shadow_depth,
+            spread: config.light.shadow_spread,
+        }
+    }
+
+    /// How wide, either side, a blocker's shadow is at `drop` below it - given the two cells'
+    /// radii already summed.
+    ///
+    /// ⭐ **At a spread of nought this is `overlap` and not a hair off it.** `spread × anything`
+    /// is exactly zero, `1 + 0` is exactly one, and multiplying a float by exactly one returns
+    /// it unchanged - which is what makes the shipped world bit-for-bit the world that was
+    /// there before this setting existed.
+    fn width(self, overlap: f32, drop: f32) -> f32 {
+        overlap * (1.0 + self.spread * (drop / self.depth))
+    }
+
+    /// How far sideways the search has to look to find every cell whose shadow could reach.
+    ///
+    /// The widest a shadow ever gets is at the bottom of its reach and over the widest pair of
+    /// cells in the world, which is [`REACH`]. At a spread of nought this is `REACH` exactly,
+    /// so the shipped world searches the same fifteen buckets it always did.
+    fn half_width(self) -> f32 {
+        REACH * (1.0 + self.spread)
+    }
+}
 
 /// What a devorocyte drains per tick out of one thing it is touching, before that thing's
 /// toughness is taken off.
@@ -504,6 +542,13 @@ pub struct Behaviour {
     /// How wide the world is, for measuring the short way round it.
     width: f32,
 
+    /// SPEC section 3's `light.shadow_depth` and `light.shadow_spread`: how far a cell's shadow
+    /// reaches and how much it opens out on the way down.
+    ///
+    /// ⭐⭐ Both were constants in this file until Phase 7's Group N, and they are the whole
+    /// geometry of the one strictly zero-sum resource in this world. See [`Shadow`].
+    shadow: Shadow,
+
     /// Which cells are near which.
     hash: Neighbourhood,
 
@@ -580,6 +625,7 @@ impl Behaviour {
             resting_amplitude: config.behaviour.resting_amplitude,
             stroke: config.behaviour.stroke,
             width: config.world.width,
+            shadow: Shadow::of(config),
             hash: Neighbourhood::new(config, cells),
             drift: Neighbourhood::new(config, cells),
             want: vec![0.0; cells],
@@ -595,15 +641,19 @@ impl Behaviour {
         }
     }
 
-    /// Take `metabolism.movement_cost` and the `[behaviour]` table again, on a running world.
+    /// Take `metabolism.movement_cost`, the `[behaviour]` table and the shadow's geometry
+    /// again, on a running world.
     ///
-    /// The three numbers in this module that a configuration decides and SPEC section 3 does
+    /// The five numbers in this module that a configuration decides and SPEC section 3 does
     /// not lock. `width` is `[world]`'s and every array here was sized from `[limits]`, so
-    /// neither moves. See [`crate::world::World::retune`].
+    /// neither moves - and the shadow moves nothing either, because
+    /// [`Neighbourhood`]'s buckets are laid out from [`REACH`] rather than from the depth and a
+    /// search simply spans more of them. See [`crate::world::World::retune`].
     pub fn retune(&mut self, config: &Config) {
         self.movement_cost = f64::from(config.metabolism.movement_cost);
         self.resting_amplitude = config.behaviour.resting_amplitude;
         self.stroke = config.behaviour.stroke;
+        self.shadow = Shadow::of(config);
     }
 
     /// Let every cell do what its kind does, for one tick.
@@ -654,6 +704,7 @@ impl Behaviour {
     ) {
         let Self {
             width,
+            shadow,
             hash,
             drift,
             want,
@@ -668,6 +719,7 @@ impl Behaviour {
             grid,
             owner,
             width: *width,
+            shadow: *shadow,
         };
 
         for (index, cell) in cells.iter().enumerate() {
@@ -1144,18 +1196,27 @@ fn bites(
 ///
 /// A blocker's contribution is the product of two tapers:
 ///
-/// - **sideways**: `1 - across / (my radius + its radius)`, so a blocker directly over the
-///   cell counts fully, one just far enough out that the two discs no longer overlap counts
-///   for nothing, and everything between is in proportion.
-/// - **downwards**: `1 - drop / SHADOW_DEPTH`, for a blocker anywhere strictly above and
+/// - **sideways**: `1 - across / width`, where `width` is the two cells' radii summed and then
+///   opened out by [`Shadow::width`] - so a blocker directly over the cell counts fully, one
+///   just far enough out that the shadow no longer reaches counts for nothing, and everything
+///   between is in proportion.
+/// - **downwards**: `1 - drop / light.shadow_depth`, for a blocker anywhere strictly above and
 ///   within that depth. Level with, or below, is nothing.
 ///
-/// # Why the shadow is exactly as wide as the cell casting it
+/// # Why the shadow ships exactly as wide as the cell casting it
 ///
 /// Because that is what a disc does to light falling straight down. The alternative - a
 /// shadow with some other width - would need a reason, and the only reason available would be
 /// "because it makes the pressure stronger", which is tuning the answer rather than modelling
 /// the thing.
+///
+/// ⭐⭐ **Which is exactly why the width is now a setting that ships inert.** Phase 7's Group N
+/// wanted the opposite trade - a shadow deliberately wider than the cell, because a cone shades
+/// *neighbours* where a column mostly shades a body's own descendants - and the honest way to
+/// have that is a lever somebody has to reach for, measured, with the shipped world left
+/// exactly where it was. `light.shadow_spread` is nought in `config/default.toml` and
+/// [`Shadow::width`] returns the sum of the two radii unchanged when it is. See
+/// [`crate::config::LightConfig::shadow_spread`].
 ///
 /// What the *taper* is for is different, and it is not cosmetic. A hard-edged shadow makes a
 /// cell's income a step function of where it is: a body could sit a hundredth of a unit from
@@ -1175,7 +1236,7 @@ fn bites(
 /// column - and in a crowded world that is overwhelmingly *other organisms*, drifting past on
 /// currents the lineage has no control over. Shape would still matter, but it would be a small
 /// signal buried in a large amount of noise, and selection cannot act on what it cannot
-/// distinguish. Fading over `SHADOW_DEPTH` makes shading a **local** effect at roughly the
+/// distinguish. Fading over `light.shadow_depth` makes shading a **local** effect at roughly the
 /// scale of a body, which is the scale the thing being selected lives at.
 ///
 /// It is also not a fudge physically. Water scatters, and a shadow in real water blurs out and
@@ -1214,18 +1275,23 @@ fn bites(
 ///
 /// # What it costs
 ///
-/// A box one [`REACH`] wide and [`SHADOW_DEPTH`] tall, looked up in the bucket index - so
-/// fifteen buckets, which at any realistic density is a dozen or so candidates. Written the
+/// A box `2 × light.shadow_depth × (1 + light.shadow_spread)` wide and `light.shadow_depth`
+/// tall, looked up in the bucket index - so at the shipped geometry fifteen buckets, which at
+/// any realistic density is a dozen or so candidates. ⚠️ **That is the one price of the two
+/// settings**: they are the only numbers in `config/` that multiply the work of a tick rather
+/// than only changing its answer, and doubling either roughly doubles the most expensive
+/// question in this pass. Nothing breaks; the run gets slower. Written the
 /// obvious way, as "compare this cell with every other cell", it would be the square of the
 /// population and the simulation would stop being able to run overnight; SPEC section 8 makes
 /// exactly this argument about collisions and it applies here unchanged.
 fn shade(around: &Surroundings<'_>, index: usize) -> f32 {
     let here = around.cells[index];
+    let shadow = around.shadow;
     let mut optical_depth = 0.0f32;
 
     around
         .hash
-        .near(here.pos, REACH, SHADOW_DEPTH, 0.0, |other| {
+        .near(here.pos, shadow.half_width(), shadow.depth, 0.0, |other| {
             if other == index {
                 return;
             }
@@ -1236,19 +1302,19 @@ fn shade(around: &Surroundings<'_>, index: usize) -> f32 {
             // height shade each other not at all, which is the only answer that is symmetric -
             // there is no fact about which of them is on top.
             let drop = here.pos.y - blocker.pos.y;
-            if drop <= 0.0 || drop >= SHADOW_DEPTH {
+            if drop <= 0.0 || drop >= shadow.depth {
                 return;
             }
 
             // The short way round the world, because a body straddling the join is an ordinary
             // body and its cells shade one another exactly as they would anywhere else.
             let across = wrapped_offset(blocker.pos, here.pos, around.width).x.abs();
-            let overlap = here.radius + blocker.radius;
+            let overlap = shadow.width(here.radius + blocker.radius, drop);
             if across >= overlap {
                 return;
             }
 
-            optical_depth += (1.0 - across / overlap) * (1.0 - drop / SHADOW_DEPTH);
+            optical_depth += (1.0 - across / overlap) * (1.0 - drop / shadow.depth);
         });
 
     1.0 / (1.0 + optical_depth)
@@ -1267,6 +1333,9 @@ struct Surroundings<'a> {
     grid: &'a Grid,
     owner: &'a [usize],
     width: f32,
+
+    /// The geometry of occlusion this world is running under. See [`Shadow`].
+    shadow: Shadow,
 }
 
 /// What a sensocyte is reporting, between nought and one.
@@ -1963,6 +2032,12 @@ mod tests {
     /// place a comparison between the two shapes would be measuring the gradient as much as
     /// the shadow - and the blotchiness would put a different ceiling under every cell.
     fn evenly_lit() -> Config {
+        evenly_lit_with(|_| {})
+    }
+
+    /// The same water with one more thing changed, for the tests that are about a setting
+    /// rather than about the shipped arithmetic.
+    fn evenly_lit_with(change: impl FnOnce(&mut RawConfig)) -> Config {
         config(|raw| {
             raw.world.width = 256.0;
             raw.world.height = 144.0;
@@ -1972,6 +2047,7 @@ mod tests {
             raw.light.patchiness = 0.0;
             raw.limits.max_organisms = 8;
             raw.limits.max_cells_per_organism = 8;
+            change(raw);
         })
     }
 
@@ -1979,7 +2055,16 @@ mod tests {
     /// around it - each in an organism of its own, so nothing is being shaded only by its own
     /// body unless a test says so.
     fn earnings(at: Vec2, blockers: &[(CellKind, Vec2)]) -> f64 {
-        let mut scene = Scene::new(&evenly_lit());
+        earnings_under(&evenly_lit(), at, blockers)
+    }
+
+    /// The same reading, taken in a world whose shadow is not the shipped one.
+    ///
+    /// Split out for `the_shadows_geometry_is_a_setting`: everything above measures the shipped
+    /// occlusion, and there has to be a way of measuring a different one without a second copy
+    /// of the scene-building.
+    fn earnings_under(config: &Config, at: Vec2, blockers: &[(CellKind, Vec2)]) -> f64 {
+        let mut scene = Scene::new(config);
         scene.fill_with_light();
 
         let genome = scene.no_genome();
@@ -2146,6 +2231,104 @@ mod tests {
             buried > 0.0,
             "a photocyte under seven cells earns exactly nothing, so there is no longer any \
              gradient for selection to find its way out of a blob by"
+        );
+    }
+
+    /// ⭐⭐ **The shadow's geometry is a setting, and it ships at the two numbers that were
+    /// compiled in.**
+    ///
+    /// SPEC gives no occlusion model at all, so every number in the test above was chosen in
+    /// Phase 4 and none of them was ever adjustable. That mattered once `docs/NEXT.md` had
+    /// measured what density does: mean exposure falls 0.858 to 0.631 over an eightfold density
+    /// range and the fraction of photocytes under *half* exposure rises 0.030 to 0.299 — a
+    /// factor of 9.9, the same nine as the third-photocyte coefficient. **Shade is the one
+    /// strictly zero-sum resource in this world**, since a photon intercepted above a cell never
+    /// reaches it, and it is sub-linear when a body shades itself and an increasing return when
+    /// it shades somebody else. Density cannot ship, because it costs two thirds of the
+    /// population; the shadow's *geometry* is the same pressure asked for without it.
+    ///
+    /// # The four claims
+    ///
+    /// **The defaults are the constants.** `light.shadow_depth` ships at `2 × MAX_REST_LENGTH`
+    /// to the bit and `light.shadow_spread` at nought, so `config/default.toml` is the world
+    /// every figure in this project was measured on. That is what
+    /// `run.rs`'s `a_world_with_no_current_is_the_world_that_was_there_before` still passing
+    /// proves at the level of a whole population; this proves it at the level of the number.
+    ///
+    /// **The depth moves the reach.** A blocker thirty units up is out of range at 27.2 and
+    /// shades at 54.4, which is the whole of what the setting is for.
+    ///
+    /// **The spread moves the width.** A blocker seven units to the side of a photocyte casts
+    /// nothing at all on it in the shipped world — the two cells are 6.4 wide between them —
+    /// and does cast on it once the shadow is allowed to open out on the way down. ⭐ **This is
+    /// the claim that matters**, because it is the one that reaches a *neighbour* rather than a
+    /// body's own descendants.
+    ///
+    /// **And the spread widens rather than dims.** Directly overhead is exactly what it was, to
+    /// the last bit, at every spread — the cone puts more shade on more cells rather than
+    /// spreading the same shade thinner. That is a deliberate choice and not a physical claim;
+    /// what dims a scattered shadow is [`crate::config::LightConfig::shadow_depth`]'s fade,
+    /// which is already there.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the shipped depth is pinned to the length it is anchored to; an approximate \
+                  match would let the two drift apart, which is the whole failure this catches"
+    )]
+    fn the_shadows_geometry_is_a_setting() {
+        let shipped = evenly_lit();
+        assert_eq!(
+            shipped.light.shadow_depth,
+            2.0 * MAX_REST_LENGTH,
+            "the shipped shadow is no longer twice the longest limb a genome can grow, so the \
+             one length occlusion was ever anchored to has come unmoored from it"
+        );
+        assert_eq!(
+            shipped.light.shadow_spread, 0.0,
+            "the shipped shadow is a cone, so `config/default.toml` is not the world every \
+             figure in this project was measured on. **Investigate; do not paste in new \
+             numbers.**"
+        );
+
+        let at = Vec2::new(40.0, 72.0);
+        let clear = earnings_under(&shipped, at, &[]);
+
+        // The depth. Thirty units up is past the shipped reach and inside twice it.
+        let far = [(CellKind::Sclerocyte, Vec2::new(40.0, 72.0 - 30.0))];
+        let deeper = evenly_lit_with(|raw| raw.light.shadow_depth = 54.4);
+        assert!(
+            (earnings_under(&shipped, at, &far) - clear).abs() < 1e-12,
+            "a blocker thirty units up shades at the shipped depth of 27.2"
+        );
+        assert!(
+            earnings_under(&deeper, at, &far) < clear * 0.999,
+            "a blocker thirty units up shades nothing at a shadow depth of 54.4, so \
+             `light.shadow_depth` is a key nobody can tell is there"
+        );
+
+        // The width. Seven units to the side, six up: clear of a 6.4-unit column and inside a
+        // cone that has opened out by a fifth of its own width over that drop.
+        let beside = [(CellKind::Sclerocyte, Vec2::new(47.0, 66.0))];
+        let cone = evenly_lit_with(|raw| raw.light.shadow_spread = 1.0);
+        assert!(
+            (earnings_under(&shipped, at, &beside) - clear).abs() < 1e-12,
+            "a blocker seven units to the side shades at a spread of nought, so the shipped \
+             shadow is wider than the thing casting it"
+        );
+        assert!(
+            earnings_under(&cone, at, &beside) < clear * 0.999,
+            "a blocker seven units to the side shades nothing at a spread of one, so \
+             `light.shadow_spread` is a key nobody can tell is there - and it is the key that \
+             reaches a *neighbour* rather than a body's own descendants"
+        );
+
+        // And the cone is a widening rather than a blurring: straight overhead is untouched.
+        let overhead = [(CellKind::Sclerocyte, Vec2::new(40.0, 66.0))];
+        assert!(
+            (earnings_under(&cone, at, &overhead) - earnings_under(&shipped, at, &overhead)).abs()
+                < 1e-12,
+            "opening the shadow out changed what a cell directly overhead costs, so the spread \
+             is spreading a fixed amount of shade thinner rather than shading more cells"
         );
     }
 

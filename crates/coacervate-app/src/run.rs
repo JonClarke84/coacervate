@@ -1210,6 +1210,70 @@ mod tests {
         );
     }
 
+    /// ⭐⭐ **A world with the shipped shadow is the world that was there before the shadow was
+    /// a setting** — the same population, the same cells, and every one of them in exactly the
+    /// same place.
+    ///
+    /// `light.shadow_depth` and `light.shadow_spread` were `behaviour.rs` constants until
+    /// Phase 7's Group N, at `2 × MAX_REST_LENGTH` and at a shadow exactly as wide as the cell
+    /// casting it. They ship at those two values, and the digest below is the same digest
+    /// `a_world_with_no_current_is_the_world_that_was_there_before` pins — **recorded before
+    /// either was a key, and asserted here unchanged.** That is the whole of the claim: no
+    /// coefficient in `SPEC.md`, no figure in `docs/PHASE7.md` and no golden vector anywhere
+    /// has to be taken again.
+    ///
+    /// ⚠️ **The second half is the one that makes the first half mean anything**, exactly as it
+    /// is for the current: a test that only pinned a digest would pass just as happily against
+    /// a program in which the setting is inert at *every* value. So the same world is run again
+    /// with the shadow opened out, and it has to come back somewhere else — once for the depth
+    /// and once for the width, because they are two mechanisms and a single reading could not
+    /// tell which of them was doing the work.
+    #[test]
+    #[ignore = "three shipped-world dawns and fifteen thousand ticks; check.ps1 runs it in release"]
+    fn the_shipped_shadow_is_the_shadow_that_was_there_before() {
+        let ran = |change: fn(&mut RawConfig)| {
+            let mut world = World::new(&config(change));
+            genesis(&mut world, 8);
+            for _ in 0..5_000 {
+                world.tick();
+            }
+
+            (
+                world.organisms().iter().flatten().count(),
+                world.living_cells().len(),
+                where_everybody_is(&world),
+            )
+        };
+
+        assert_eq!(
+            ran(|_| {}),
+            // The same three numbers `a_world_with_no_current_is_the_world_that_was_there_before`
+            // records, and they were recorded before the shadow was a configuration key.
+            (318, 631, 0x35fe_af96_9d17_98e0),
+            "a shipped world with `light.shadow_depth = 27.2` and `light.shadow_spread = 0.0` \
+             is no longer the world this project has been measuring all along. **Investigate; \
+             do not paste in the new numbers.** Those two values are the constants that were \
+             compiled into `behaviour.rs`, so this digest moving means the arithmetic moved \
+             with them rather than around them"
+        );
+
+        // ⭐ And neither of them is a key nobody reads.
+        assert_ne!(
+            ran(|raw| raw.light.shadow_depth = 54.4).2,
+            ran(|_| {}).2,
+            "the same world run at twice the shadow depth left every cell in exactly the same \
+             place, so `light.shadow_depth` is a setting a person can turn and a world that \
+             cannot feel it"
+        );
+        assert_ne!(
+            ran(|raw| raw.light.shadow_spread = 1.0).2,
+            ran(|_| {}).2,
+            "the same world run with the shadow opened out into a cone left every cell in \
+             exactly the same place, so `light.shadow_spread` is a setting a person can turn \
+             and a world that cannot feel it"
+        );
+    }
+
     /// ⭐ **A5 group control.** A run of a fixed seed and configuration produces exactly what
     /// it produced before Phase 5 touched anything.
     ///

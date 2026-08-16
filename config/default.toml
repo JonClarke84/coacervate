@@ -51,6 +51,33 @@ season_amplitude = 0.0   # how deep that rise and fall goes, as a fraction of `i
                          # world with 0.25. Bounded at 0.5, which is where the measurements stop
                          # and nowhere else - a seasoned world does not collapse, it carries more
                          # and smaller bodies on the same energy. SPEC 4.
+shadow_depth = 27.2      # how far below a cell its shadow still reaches at all, in world units.
+                         # SPEC gives no occlusion model whatever — the whole of it, this number
+                         # included, was chosen in Phase 4 — so this is the first time the
+                         # document's silence has been made adjustable rather than a deviation
+                         # from it. **It ships at 27.2, which is 2 x genome::MAX_REST_LENGTH**,
+                         # twice the longest limb a genome can grow: shorter than one limb and a
+                         # daughter placed directly below its parent is already in clear water,
+                         # so occlusion discriminates between nothing; very much longer and a
+                         # photocyte's income is decided by whatever is drifting through the
+                         # water column above it rather than by the shape of its own body. ⚠️ It
+                         # and `shadow_spread` are the only two numbers in this file that
+                         # multiply the *work* of a tick: the shade search is a box
+                         # `2 x depth x (1 + spread)` wide by `depth` tall around every
+                         # photocyte. Refused at nought, because the fade divides by it.
+shadow_spread = 0.0      # how much wider that shadow is at the bottom of its reach than at the
+                         # cell casting it, as a multiple of the cell's own width. Nought is a
+                         # column, which is what a disc casts in light falling straight down.
+                         #
+                         # ⚠️ **SHIPS INERT, and 0.0 is bit-for-bit the world every figure in
+                         # this project was measured on** — `Shadow::width` multiplies by exactly
+                         # 1.0 there and hands the two radii back untouched. It exists to ask one
+                         # question: **does raising *inter-body* shading make bodies bigger?**
+                         # Shade is the one strictly zero-sum resource in this world, since a
+                         # photon intercepted above a cell never reaches it — but a column
+                         # mostly shades a body's *own* descendants, which is sub-linear in body
+                         # size, while a cone reaches sideways and shades neighbours, which is
+                         # an increasing return. See SPEC section 6 and docs/NEXT.md.
 
 [physics]
 drag = 0.92              # velocity retained per tick (high — viscous regime)
