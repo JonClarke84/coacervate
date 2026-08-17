@@ -1240,3 +1240,57 @@ contact: a body that drifts past a neighbour touches it briefly instead of settl
 **Movement and feeding want opposite things**, at this scale, in this world.
 
 ⚠️ **Do not retry motor-then-mouth, or mouth-then-motor.** Both directions are now measured.
+
+---
+
+## ⭐⭐⭐ The candidate Result 11 points at: predation is grazing, and grazing wants stillness
+
+**This is a hypothesis, not a measurement.** It is written down because Result 11 makes it the
+obvious next thing to test and because the reasoning is short enough to check.
+
+Result 11 says a mouth is worth **less** on a body that carries a motor. The mechanism given for
+that was *"a devorocyte needs sustained contact, and undirected motion is the enemy of sustained
+contact"*. That is true, and it is worth asking **why** a devorocyte needs sustained contact,
+because that is a modelling choice and not a fact about the world.
+
+`behaviour.rs`'s `feed` drains a victim **continuously, per tick, at a rate reduced by its
+toughness**. A mouth is therefore a *grazer*: its income is proportional to **how long it stays
+in contact**, exactly as a photocyte's income is proportional to how long it stays in the light.
+**Both of this world's ways of eating reward standing still.** A body that moves is a body that is
+worse at both, and the eleven nulls of this round are that sentence.
+
+⭐⭐ **Real predation is not like that, and the difference is the interesting one.** Phagocytosis is
+an **event**: a single engulfment transfers a large amount at once, and what a predator needs is
+not to sit on prey but to *meet a lot of it*. Under a bite-as-event model, encounter rate is the
+currency — and encounter rate is precisely what a motor buys. Movement and feeding would want the
+**same** thing instead of opposite things.
+
+### What it would take, and what to measure
+
+A discrete bite on first contact — a large one-off transfer when a devorocyte meets tissue it was
+not already touching, with a refractory period — against the continuous drain that ships. Both
+are one function in `behaviour.rs`, and the pair can be run against each other.
+
+⚠️ **Predict before measuring, per the discipline this round spent four errors learning:**
+
+1. A bite-as-event model makes a mouth's income depend on **encounter rate** rather than on
+   contact duration. Since round 7 measured that 99.9% of a mouth's contacts are its own family,
+   the *first* effect will be a lineage eating itself faster, and the sign on a lone devorocyte
+   may well get **worse**, not better.
+2. The interaction with a motor should change sign — from Result 11's −2.8 %/generation towards
+   zero or above. **That difference-of-differences is the measurement**, not either arm alone.
+3. ⚠️ If (2) does not move, then contact is not what limits predation either, and what is left is
+   round 7's geometry: strangers are 60–88 units away and a body is born touching its siblings.
+
+### ⚠️ And the honest counter-argument, recorded so it is not skipped
+
+A discrete bite is a **bigger change to SPEC than anything this round made**. It changes what a
+devorocyte *is*, not what it costs, and SPEC section 6's whole table was priced against continuous
+drainage — a devorocyte's 0.009 upkeep, its 0.30 toughness, the sclerocyte's 0.90 as "the answer
+to predation" — all of it assumes income proportional to contact time. **Every one of those
+numbers would need re-deriving**, and the sclerocyte's role in particular may evaporate: armour
+that reduces a *rate* is a different thing from armour that reduces a *bite*.
+
+That is a real cost and it should be paid deliberately. But it is the first candidate in eleven
+rounds that would make movement and feeding want the same thing, and every cheaper lever is now
+spent.
