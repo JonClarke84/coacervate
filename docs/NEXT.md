@@ -1207,3 +1207,36 @@ the travel it buys is worth 0.0037.** Everything above is that ratio, seen from 
    encountered, and Result 9 says size does not change that. What has never been measured is
    whether a *devorocyte on a body that already carries a motor* does better, which is the
    exaptation ladder asked from the other end.
+
+### ⚠️⚠️ Result 11: the exaptation ladder has no rung — a motor makes a mouth *worse*
+
+`is_a_mouth_worth_more_on_a_body_that_already_has_a_motor`. The question asked from the end
+nobody had tried: not *does a motor pay so a mouth can follow*, but **is a mouth worth more on a
+body that already has one**. Two five-celled bodies one `child_kind` apart — two photocytes, a
+gonocyte, a fourth cell, and a fifth that is either a sclerocyte or a devorocyte — priced twice,
+once with a **flagellocyte** as the fourth cell and once with a sclerocyte. A difference of
+differences, so what comes out is not the mouth's own price.
+
+| seed | a mouth WITH a motor | a mouth WITHOUT | the difference |
+| --- | --- | --- | --- |
+| 42 | −6.902 | −1.501 | **−5.400** |
+| 43 | −5.163 | −2.879 | **−2.284** |
+| 44 | −2.958 | −2.237 | **−0.720** |
+| **mean** | | | **−2.802** |
+
+**All three negative.** A mouth on a motorised body is worth about 2.8 %/generation *less* than
+the same mouth on a still one.
+
+⭐⭐ **So the two specialisations are sub-additive, and that is the eleventh round's answer to the
+question the whole project has been circling.** The hoped-for shape was a ladder: grow a motor,
+which pays for some reason of its own; then grow a mouth, which now pays because the motor can
+reach things. Neither half of that is true. The motor does not pay, and it makes the mouth pay
+less.
+
+The mechanism is not mysterious and it was measured in round 10 in a different form —
+*"nothing in this world is super-additive; the only interaction that reproduces is negative."*
+A devorocyte needs **sustained contact**, and undirected motion is the enemy of sustained
+contact: a body that drifts past a neighbour touches it briefly instead of settling against it.
+**Movement and feeding want opposite things**, at this scale, in this world.
+
+⚠️ **Do not retry motor-then-mouth, or mouth-then-motor.** Both directions are now measured.
