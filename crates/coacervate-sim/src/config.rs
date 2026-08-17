@@ -92,6 +92,7 @@ pub struct RawPhysics {
     pub collision_stiffness: f64,
     pub spring_damping: f64,
     pub current: f64,
+    pub thrust: f64,
 }
 
 /// The `[behaviour]` table as written: how hard SPEC section 9's controller drives a muscle.
@@ -206,6 +207,12 @@ pub fn spec_defaults() -> RawConfig {
             collision_stiffness: 40.0,
             spring_damping: 0.35,
             current: 0.0,
+            // ⚠️ PROVISIONAL — 0.0 until the sweep below it has been taken. See
+            // `PhysicsConfig::thrust`. Starting inert is not a preference for inertness here,
+            // as it was for `current` and `shadow_spread`; it is so that the *only* thing
+            // separating this build from the last one is the seventh cell kind's effect on
+            // the mutation stream, which makes the re-recorded golden vectors legible.
+            thrust: 0.0,
         },
         behaviour: RawBehaviour {
             resting_amplitude: 0.8,
@@ -1286,6 +1293,44 @@ pub struct PhysicsConfig {
     /// goes which way and leaves the relative motion, which is the whole object of it,
     /// identical.
     pub current: f32,
+
+    /// ⭐⭐⭐ How hard one flagellocyte pushes on the water, per unit of its gene's `osc_freq`.
+    ///
+    /// The force units are the ones springs, collisions and buoyancy are already written in, and
+    /// it is applied in [`crate::physics::Physics::propel`] beside [`crate::physics::Physics::carry`]
+    /// for the reason given there: **thrust is an external force**, so unlike everything a muscle
+    /// does, its sum over a body is not zero and the body genuinely goes somewhere.
+    ///
+    /// # What it buys, arithmetically, before any biology
+    ///
+    /// A cell under a constant force settles where drag takes back what the force adds. That is
+    /// the same relation [`PhysicsConfig::current`] documents: `force × drag × DT ÷ (1 − drag)`
+    /// world units per second, or `force ÷ 313` per tick at the shipped drag. A body of `n` cells
+    /// carrying `m` flagellocytes at frequency `f` is pushed by `m × thrust × f` and dragged as
+    /// `n` cells, so **speed goes as the fraction of the body that is motor** and not as the
+    /// number of motors — which is why a lineage cannot simply bolt on more.
+    ///
+    /// # Why the direction is not a parameter, and must never become one
+    ///
+    /// Each flagellocyte pushes along the unit vector from the mean of its adhered partners to
+    /// itself: outward, along geometry development already chose, rotating as the body flexes.
+    /// The consequence that matters is that **a symmetric body's thrust sums to nothing**. Motors
+    /// spread evenly round a rosette cancel; motors gathered on one side do not. So placement is
+    /// what evolution has to find, and CLAUDE.md's amended decision-log row is what this
+    /// implements: a motor is permitted, a tactic is not. A `thrust` that pointed up a gradient
+    /// would answer the question this whole world exists to ask.
+    ///
+    /// `sensor_gain` modulates the *magnitude* only, and a body with motors on two sides that
+    /// drives them unequally turns — which is a taxis assembled from an organ and an evolved
+    /// number, rather than one written down.
+    ///
+    /// # ⚠️ Provisional
+    ///
+    /// Ships at nought while the sweep is taken, so that the only difference between this build
+    /// and the last is the seventh kind's effect on the mutation stream. **A shipped nought here
+    /// is not the recorded negative that `current` and `shadow_spread` are** — those were
+    /// measured and refuted; this has not been measured yet.
+    pub thrust: f32,
 }
 
 /// The checked `[behaviour]` table: how hard SPEC section 9's controller drives a muscle.
@@ -1618,6 +1663,17 @@ impl RawConfig {
                 // under any constant force - see `physics.rs` - so a fierce current is a fast
                 // world rather than an unstable one.
                 current: non_negative("physics.current", self.physics.current)?,
+                // Not less than nothing, and here the reason *is* the usual one rather than
+                // `current`'s. This is a strength multiplying a direction the geometry already
+                // fixes, so a negative value is a motor that pulls a body onto its own flagella
+                // - which is a coherent thing to simulate and is not what this setting means. A
+                // lineage that wants to be pushed the other way grows its motors on the other
+                // side, which is one mutation to a gene's `angle` and is exactly the search this
+                // organelle exists to make possible.
+                //
+                // No upper bound, for `current`'s reason: the integrator is a contraction under
+                // any constant force, so a fierce motor is a fast world and not an unstable one.
+                thrust: non_negative("physics.thrust", self.physics.thrust)?,
             },
             behaviour: BehaviourConfig {
                 // SPEC section 9 clamps the amplitude into `0..=1` on the line after this
@@ -1766,6 +1822,7 @@ mod tests {
             ),
             ("physics.spring_damping", raw.physics.spring_damping),
             ("physics.current", raw.physics.current),
+            ("physics.thrust", raw.physics.thrust),
             (
                 "behaviour.resting_amplitude",
                 raw.behaviour.resting_amplitude,
@@ -1818,8 +1875,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            33,
-            "SPEC section 3 has thirty-three decimal settings; this list has {}, so one has \
+            34,
+            "SPEC section 3 has thirty-four decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );

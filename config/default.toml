@@ -109,6 +109,32 @@ current = 0.0            # a sideways force on every cell, running one way at th
                          # sinks, and by then the population has fallen 42% and the contact
                          # fraction from 0.4723 to 0.3105. `config/current.toml` is the live
                          # profile and carries the whole sweep. SPEC 8.
+thrust = 0.0             # ⭐⭐⭐ how hard ONE FLAGELLOCYTE pushes on the water, per unit of its
+                         # gene's `osc_freq`. Applied along the vector from the mean of the
+                         # cells it is adhered to, to itself — outward, along geometry
+                         # development already chose. A cell settles at `thrust / 313` units a
+                         # tick as `current` does, but divided by how many cells the body has,
+                         # because the thrust is one cell's and the drag is all of them: SPEED
+                         # GOES AS THE FRACTION OF A BODY THAT IS MOTOR, not as the count.
+                         #
+                         # The point of the outward direction is that a SYMMETRIC BODY GOES
+                         # NOWHERE — motors round a rosette cancel, motors on one side do not —
+                         # so what evolution has to find is where to put them. Nothing here
+                         # reads the light, a neighbour or the field: a motor is permitted and
+                         # a tactic is not. `sensor_gain` scales the magnitude only, so a body
+                         # with motors on two sides driving them unequally turns, and taxis is
+                         # assembled rather than given.
+                         #
+                         # Costs `movement_cost × force² × drag × dt² / (1 - drag)` — force
+                         # times the distance it drives water through, which is the myocyte's
+                         # own price with the distance derived rather than observed, and is the
+                         # square law drag power obeys everywhere in biology.
+                         #
+                         # ⚠️ **PROVISIONAL 0.0 — this is NOT a recorded negative.** `current`
+                         # and `light.shadow_spread` above ship inert because they were measured
+                         # and refuted. This ships inert only so that the one difference between
+                         # this build and the last is the seventh cell kind's effect on the
+                         # mutation stream. See `docs/NEXT.md` §8.
 
 [behaviour]
 resting_amplitude = 0.8  # how hard a myocyte contracts with nothing telling it otherwise —

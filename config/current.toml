@@ -83,6 +83,8 @@ current = 600.0          # ⭐ **The one number this profile changes.** At the s
                          # It is charged for nothing: `metabolism.movement_cost` is levied only
                          # against a muscle's own work, so drifting is free exactly as sinking
                          # is. What it costs is the population — see the table above.
+thrust = 0.0             # no motors: this profile is about what the *water* can do, and the
+                         # whole of its result is that the answer is nothing worth having.
 
 [behaviour]
 resting_amplitude = 0.8

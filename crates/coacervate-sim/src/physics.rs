@@ -278,6 +278,39 @@ fn bucket_along(coordinate: f32, per_unit: f64, last: f64) -> usize {
 ///
 /// Downwards there is no wrap, because the world has a surface and a floor. The search
 /// simply stops at the top and bottom rows.
+/// One bucket's run of things, as an offset into a sorted index and a length.
+///
+/// A `u32` pair rather than two `usize` fields so that the whole of it is eight bytes and
+/// three side-by-side buckets are one cache line. See [`SpatialHash::runs`] for why that is
+/// worth caring about. Nothing in this project can hold more than a few hundred thousand
+/// cells — `limits.max_organisms` times `limits.max_cells_per_organism`, which is 256,000 at
+/// SPEC section 3's defaults — so a 32-bit offset has four orders of magnitude spare.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Run {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
+}
+
+impl Run {
+    /// A bucket with nothing in it, which is what every bucket starts as.
+    pub(crate) const EMPTY: Self = Self { start: 0, len: 0 };
+
+    /// This run's slice of a sorted index.
+    ///
+    /// ⚠️ A run of no length is the empty slice wherever its `start` happens to point, and
+    /// that is the case that matters: an emptied bucket keeps a stale `start`, which is
+    /// always an offset some earlier rebuild handed out and so never past the end.
+    pub(crate) fn of(self, order: &[usize]) -> &[usize] {
+        let from = widened(self.start);
+        &order[from..from + widened(self.len)]
+    }
+}
+
+/// A 32-bit index as a machine word. Infallible on every target this project builds for.
+pub(crate) fn widened(narrow: u32) -> usize {
+    usize::try_from(narrow).expect("a machine word holds a 32-bit index")
+}
+
 struct SpatialHash {
     /// How many buckets across the world is, and how many down.
     cols: usize,
@@ -296,15 +329,32 @@ struct SpatialHash {
     /// Which bucket each cell landed in, from the most recent rebuild.
     bucket_of: Vec<usize>,
 
-    /// Where each bucket's run of cells begins in `order`. One entry longer than there are
-    /// buckets, so a bucket's run is always `starts[bucket]..starts[bucket + 1]` with no
-    /// special case for the last one.
-    starts: Vec<usize>,
+    /// Where each bucket's run of cells begins in `order`, and how long it is.
+    ///
+    /// ⭐⭐ **One array of pairs rather than two arrays**, and it is worth eight bytes of
+    /// explanation. The collision search reads three side-by-side buckets per row, three rows
+    /// deep, for every cell in the world — and with the two halves in separate arrays that is
+    /// two cache lines a row against one. Measured: the search is **26% of a tick** and is
+    /// bound by waiting for memory rather than by arithmetic, because 4,000-odd cells are
+    /// spread over 50,869 buckets and nothing it wants is ever in cache. As a `u32` pair the
+    /// whole thing is eight bytes, so three neighbouring buckets are twenty-four contiguous
+    /// bytes and usually one line.
+    ///
+    /// ⚠️ `start` is meaningful only where `len` is not nought. An empty bucket keeps whatever
+    /// offset it was last given, which is always a valid offset into `order` — see
+    /// [`SpatialHash::rebuild`] on why the entry is left there rather than swept.
+    runs: Vec<Run>,
 
     /// Working room for the counting sort: each bucket's next free slot as it fills.
-    cursor: Vec<usize>,
+    cursor: Vec<u32>,
 
-    /// Every cell, in bucket order. This is the sorted result the search reads.
+    /// Which buckets the last rebuild put anything in, in the order they were first reached.
+    ///
+    /// ⭐⭐ **This is what makes a rebuild cost what the crowd costs rather than what the
+    /// world costs.** See [`SpatialHash::rebuild`].
+    used: Vec<usize>,
+
+    /// Every cell, gathered into runs by bucket. This is the sorted result the search reads.
     order: Vec<usize>,
 }
 
@@ -330,8 +380,9 @@ impl SpatialHash {
             last_col: f64::from(cols_across - 1),
             last_row: f64::from(rows_down - 1),
             bucket_of: vec![0; capacity],
-            starts: vec![0; cols * rows + 1],
+            runs: vec![Run::EMPTY; cols * rows],
             cursor: vec![0; cols * rows],
+            used: Vec::with_capacity(capacity),
             order: vec![0; capacity],
         }
     }
@@ -341,6 +392,29 @@ impl SpatialHash {
     /// Called once a tick, before any force is worked out, because a bucketing that is one
     /// tick out of date is a bucketing that misses exactly the pairs that have just moved
     /// into contact.
+    ///
+    /// # ⭐⭐ It costs what the crowd costs, and it used to cost what the world costs
+    ///
+    /// The obvious counting sort clears a count for every bucket, adds the counts up across
+    /// every bucket, and copies the result to a cursor for every bucket — three walks of
+    /// **50,869** entries in the shipped world, against the **4,000-odd** living cells that
+    /// are the only things in it. Measured: **105 µs to hash an empty crowd** and 133 µs to
+    /// hash four thousand cells, so four fifths of the cost was the world being swept rather
+    /// than the crowd being sorted, three times a tick.
+    ///
+    /// So the buckets that are actually occupied are remembered in `used`, and every walk
+    /// above runs over that list instead. Empty buckets are never touched: they are cleared
+    /// on the rebuild *after* the one that filled them, which is what `used` is retained
+    /// between calls for.
+    ///
+    /// ⚠️ **This is a change of cost and not of result, and the second half is load-bearing.**
+    /// The runs no longer lie in `order` in ascending bucket order, because `used` is in the
+    /// order the buckets were first reached rather than sorted. Nothing observes that: the
+    /// search indexes `runs` by bucket, so where a bucket's run physically sits is
+    /// invisible. What the search *can* see is the order of cells **within** a run, and that
+    /// is unchanged — the placement walk below still visits cells in ascending index, so a
+    /// bucket still hands its cells back smallest first. Every force is therefore summed in
+    /// exactly the order it was summed in before, to the bit.
     fn rebuild(&mut self, cells: &[Cell]) {
         assert!(
             cells.len() <= self.bucket_of.len(),
@@ -349,12 +423,15 @@ impl SpatialHash {
             cells.len()
         );
 
-        let buckets = self.cols * self.rows;
         let (cols, across, down) = (self.cols, self.across_per_unit, self.down_per_unit);
         let (last_col, last_row) = (self.last_col, self.last_row);
 
-        // Nothing of the previous tick survives: every count starts at nought.
-        self.starts[..=buckets].fill(0);
+        // Nothing of the previous rebuild survives — but only the buckets it actually used
+        // have anything in them to survive.
+        for &bucket in &self.used {
+            self.runs[bucket].len = 0;
+        }
+        self.used.clear();
 
         for (index, cell) in cells.iter().enumerate() {
             let col = bucket_along(cell.pos.x, across, last_col);
@@ -362,16 +439,20 @@ impl SpatialHash {
             let bucket = row * cols + col;
 
             self.bucket_of[index] = bucket;
-            self.starts[bucket + 1] += 1;
+            if self.runs[bucket].len == 0 {
+                self.used.push(bucket);
+            }
+            self.runs[bucket].len += 1;
         }
 
-        // Running totals: each bucket's run begins where all the earlier buckets' runs
-        // finished.
-        for bucket in 1..=buckets {
-            self.starts[bucket] += self.starts[bucket - 1];
+        // Running totals: each occupied bucket's run begins where the previous occupied
+        // one's finished. Empty buckets take up no room and are not visited.
+        let mut running = 0;
+        for &bucket in &self.used {
+            self.runs[bucket].start = running;
+            self.cursor[bucket] = running;
+            running += self.runs[bucket].len;
         }
-
-        self.cursor[..buckets].copy_from_slice(&self.starts[..buckets]);
 
         let Self {
             bucket_of,
@@ -380,7 +461,7 @@ impl SpatialHash {
             ..
         } = self;
         for (index, &bucket) in bucket_of[..cells.len()].iter().enumerate() {
-            order[cursor[bucket]] = index;
+            order[widened(cursor[bucket])] = index;
             cursor[bucket] += 1;
         }
     }
@@ -411,6 +492,12 @@ impl SpatialHash {
     /// The order is fixed and repeatable: down the rows from the top, across the columns
     /// from the left, and in ascending cell index within each bucket. A cell never sees
     /// itself.
+    ///
+    /// ⚠️ An empty bucket is one whose run has a `len` of nought, and a `start` of whatever
+    /// the last rebuild that filled it left there. That is always an offset a previous
+    /// rebuild handed out, so it is never past the end of `order`, and a run of nought
+    /// length starting at it is the empty slice wherever it points. See
+    /// [`SpatialHash::rebuild`].
     fn for_each_neighbour(&self, cell: usize, mut visit: impl FnMut(usize)) {
         let bucket = self.bucket_of[cell];
         let (columns, wide) = self.columns_around(bucket % self.cols);
@@ -423,7 +510,7 @@ impl SpatialHash {
             for &col in &columns[..wide] {
                 let near = row * self.cols + col;
 
-                for &other in &self.order[self.starts[near]..self.starts[near + 1]] {
+                for &other in self.runs[near].of(&self.order) {
                     if other != cell {
                         visit(other);
                     }
@@ -698,7 +785,88 @@ impl Physics {
         self.pull_springs(cells, springs);
         self.push_apart(cells);
         self.carry(cells);
+        self.propel(cells);
         self.integrate(cells);
+    }
+
+    /// ⭐⭐⭐ Let every flagellocyte push on the water.
+    ///
+    /// **The second force in this module that does not cancel, and the first one a lineage can
+    /// aim.** Buoyancy above it is external too, but a body changes its depth only by changing
+    /// what it is made of and cannot choose a direction at all. This one has a direction, and
+    /// where that direction comes from is the whole design.
+    ///
+    /// # Which way a motor pushes
+    ///
+    /// Out along the cell's own geometry: the unit vector from the mean position of the cells it
+    /// is adhered to, to itself. Three things follow, and all three are the point.
+    ///
+    /// **A symmetric body goes nowhere.** Motors spread evenly round a rosette point radially
+    /// outward and their sum is nothing. Motors gathered on one side sum to a vector. So the
+    /// thing evolution has to discover is not *whether* to have a motor but *where to put it*,
+    /// which is a gene's `angle` and is exactly the kind of question this project exists to ask.
+    ///
+    /// **A lone cell cannot swim.** No adhesions, no partners, no direction, no thrust — and
+    /// `behaviour.rs` asks the same question before it charges, so such a cell is not billed
+    /// either. That is not a special case bolted on; it falls out of the definition, and it
+    /// matters because it means the founding single cell gains nothing by accident and
+    /// multicellularity is a precondition for locomotion here exactly as it is not for bacteria.
+    ///
+    /// **The direction rotates as the body flexes**, because it is read off live positions every
+    /// tick. A body that bends steers itself, without anything having been told to steer.
+    ///
+    /// # What is deliberately absent
+    ///
+    /// Nothing here reads the light, the field, a neighbour, or any other body. A motor that
+    /// pointed up a gradient or at prey would be the answer written in advance, and CLAUDE.md's
+    /// amended decision-log row draws that line: **a motor is permitted, a tactic is not.** The
+    /// only thing outside the body that can reach this force at all is `sensor_gain`, in
+    /// `behaviour.rs`, and it scales the *magnitude*. A body with motors on two sides that drives
+    /// them unequally turns — which is a taxis assembled out of an organ and an evolved number
+    /// rather than one written down. That assembly is allowed to be found; it is not provided.
+    ///
+    /// # ⚠️ At `thrust = 0.0`
+    ///
+    /// `behaviour.rs` leaves every `Cell::thrust` at nought, this loop finds nothing to do on any
+    /// cell, and not one force is touched — so a world with no motors in it is bit-for-bit the
+    /// world that was there before, and `world.rs`'s
+    /// `a_world_with_no_thrust_is_the_world_that_was_there_before` holds it to that.
+    fn propel(&mut self, cells: &[Cell]) {
+        let Self {
+            width,
+            forces,
+            bond_starts,
+            bond_partners,
+            ..
+        } = self;
+        let width = *width;
+
+        for (index, cell) in cells.iter().enumerate() {
+            if cell.thrust == 0.0 {
+                continue;
+            }
+
+            let partners = &bond_partners[bond_starts[index]..bond_starts[index + 1]];
+            if partners.is_empty() {
+                continue;
+            }
+
+            // The mean of where its partners are, as an offset from the cell itself, so the
+            // world's seam is crossed once per partner by `wrapped_offset` rather than being
+            // averaged across - a mean of raw positions either side of the wrap lands in the
+            // middle of the wrong half of the world.
+            let mut away = Vec2::ZERO;
+            for &partner in partners {
+                away += wrapped_offset(cells[partner].pos, cell.pos, width);
+            }
+
+            let reach = away.length();
+            if reach == 0.0 {
+                continue;
+            }
+
+            forces[index] += away.scaled(cell.thrust / reach);
+        }
     }
 
     /// Let the water carry each cell — up or down according to what kind of cell it is, and
@@ -2947,6 +3115,74 @@ mod tests {
                  direction decided by the order their cells are stored in",
                 lengthways[end].x / 10.0,
                 sideways[end].y / 10.0
+            );
+        }
+    }
+
+    /// ⚠️⚠️ **A bucket that has emptied hands back nothing.**
+    ///
+    /// The rebuild clears only the buckets the *previous* rebuild used, which is what makes it
+    /// cost what the crowd costs rather than what the world costs. The hazard that buys is
+    /// precise and it is the only one: a bucket that held cells and now holds none must not go
+    /// on reporting the cells it used to hold. A stale run would hand the collision search
+    /// indices into a crowd that has moved, which is a force between two cells that are
+    /// nowhere near each other — and every test about springs would still pass.
+    #[test]
+    fn a_bucket_that_empties_reports_nothing() {
+        let world = config(|_| {});
+        let mut hash = SpatialHash::new(&world);
+
+        // A crowd spread over the left-hand half of the world, then the same crowd moved
+        // bodily into the right-hand half. Every bucket the first crowd used is empty in the
+        // second, and no bucket is shared between them.
+        let spread = |offset: f32| -> Vec<Cell> {
+            (0..64u8)
+                .map(|index| {
+                    let seed = f32::from(index);
+                    Cell::new(
+                        CellKind::Photocyte,
+                        Vec2::new(offset + seed * 13.0, 40.0 + seed * 11.0),
+                    )
+                })
+                .collect()
+        };
+
+        let left = spread(0.0);
+        let right = spread(1024.0);
+
+        hash.rebuild(&left);
+        hash.rebuild(&right);
+
+        // A hash that has only ever seen the second crowd is what the second crowd's answer
+        // has to be, cell for cell and in order.
+        let mut fresh = SpatialHash::new(&world);
+        fresh.rebuild(&right);
+
+        for index in 0..right.len() {
+            let (mut reused, mut clean) = (Vec::new(), Vec::new());
+            hash.for_each_neighbour(index, |other| reused.push(other));
+            fresh.for_each_neighbour(index, |other| clean.push(other));
+
+            assert_eq!(
+                reused, clean,
+                "cell {index}'s neighbours came back differently from a hash that had \
+                 sorted an earlier crowd, so a bucket the earlier crowd filled is still \
+                 handing back what it used to hold"
+            );
+        }
+
+        // And the emptied half is genuinely empty rather than merely unvisited: every bucket
+        // the first crowd occupied reports a run of no length.
+        for cell in &left {
+            let col = bucket_along(cell.pos.x, hash.across_per_unit, hash.last_col);
+            let row = bucket_along(cell.pos.y, hash.down_per_unit, hash.last_row);
+            let bucket = row * hash.cols + col;
+
+            assert_eq!(
+                hash.runs[bucket].len, 0,
+                "bucket {bucket} held a cell of the first crowd and still claims \
+                 {} of them after a rebuild that put nothing there",
+                hash.runs[bucket].len
             );
         }
     }

@@ -15,6 +15,9 @@ coacervate-render = { path = "crates/coacervate-render" }
 # StdRng and SysRng, which turns SPEC section 2's "No thread_rng, ever" into a compile
 # error rather than a rule somebody has to remember.
 rand = { version = "0.10.2", default-features = false, features = ["chacha", "std"] }
+# CLAUDE.md's stack names it and nothing had used it. See coacervate-sim's manifest for
+# what it is used on and why that use cannot change a result.
+rayon = "1.11.0"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.4"
 proptest = "1.11.0"

@@ -147,12 +147,16 @@ pub const SETTLED: u8 = 8;
 const KINDS: usize = CellKind::ALL.len();
 
 /// A mask with every kind of cell in it: what [`Chronicle::built`] holds once the world has seen
-/// all six.
+/// all seven.
 ///
 /// Written out and checked against `cell.rs`'s own list rather than shifted into being, because a
-/// kind added to the enumeration and forgotten here would leave the log looking for a seventh
+/// kind added to the enumeration and forgotten here would leave the log looking for one more
 /// first appearance on every tick of every run for ever.
-const EVERY_KIND: u8 = 0b0011_1111;
+///
+/// ⭐ **And that is not hypothetical: the flagellocyte arrived and this assertion caught it**,
+/// at compile time, before a test ran. It is worth leaving written out by hand for that reason
+/// alone.
+const EVERY_KIND: u8 = 0b0111_1111;
 
 const _: () = assert!(
     EVERY_KIND.count_ones() as usize == KINDS,
@@ -1413,6 +1417,7 @@ const fn one(kind: CellKind) -> &'static str {
         CellKind::Sclerocyte => "sclerocyte",
         CellKind::Sensocyte => "sensocyte",
         CellKind::Gonocyte => "gonocyte",
+        CellKind::Flagellocyte => "flagellocyte",
     }
 }
 
@@ -1425,6 +1430,7 @@ const fn many(kind: CellKind) -> &'static str {
         CellKind::Sclerocyte => "sclerocytes",
         CellKind::Sensocyte => "sensocytes",
         CellKind::Gonocyte => "gonocytes",
+        CellKind::Flagellocyte => "flagellocytes",
     }
 }
 
@@ -1444,6 +1450,15 @@ const fn does(kind: CellKind) -> &'static str {
         // this module's header. It is the right ban and this is the right rewrite: a gonocyte
         // holds energy *for* a child, which is what it does, where *towards* is a direction.
         CellKind::Gonocyte => "it holds energy for a child, and a body without one has none",
+        // ⚠️ "and so a body that has one can swim" is what the myocyte's line says, and it is
+        // the wrong sentence here even though it is the truer one. A single flagellocyte on a
+        // body pushes it about; what actually moves a body somewhere is having them **on one
+        // side**, because the thrust of a symmetric arrangement sums to nothing. The register
+        // has to describe the arrangement rather than the cell, or a reader is told something
+        // the world does not do.
+        CellKind::Flagellocyte => {
+            "it pushes on the water, and a body with them all on one side moves"
+        }
     }
 }
 
@@ -1633,6 +1648,7 @@ mod tests {
                 divide(2, 2, CellKind::Sclerocyte, 3, true),
                 divide(3, 3, CellKind::Sensocyte, 4, true),
                 divide(4, 4, CellKind::Gonocyte, 5, true),
+                divide(5, 5, CellKind::Flagellocyte, 6, true),
             ],
             limits,
         )
@@ -1754,8 +1770,11 @@ mod tests {
         );
     }
 
-    /// ⭐ **C3.** Every one of SPEC section 6's six kinds of cell is noticed the first time it is
+    /// ⭐ **C3.** Every one of SPEC section 6's kinds of cell is noticed the first time it is
     /// built, and only the first time.
+    ///
+    /// Counted against [`CellKind::ALL`] rather than against a number written here, which is why
+    /// the arrival of a seventh kind needed one line adding to `every_kind` and nothing else.
     #[test]
     fn the_first_appearance_of_each_cell_kind_is_noticed() {
         let mut world = dark();

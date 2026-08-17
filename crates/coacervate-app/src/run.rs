@@ -1210,10 +1210,28 @@ mod tests {
 
         assert_eq!(
             ran(0.0),
-            // 318 organisms alive holding 631 cells between them, five thousand ticks after a
+            // 311 organisms alive holding 615 cells between them, five thousand ticks after a
             // shipped-world dawn founded with eight bodies, and every one of those cells in the
             // place this digest describes.
-            (318, 631, 0x35fe_af96_9d17_98e0),
+            //
+            // ⚠️⚠️ **RE-RECORDED once, and the previous value is kept here rather than deleted:
+            // `(318, 631, 0x35fe_af96_9d17_98e0)`.** The cause is written down because a digest
+            // that changes without one is exactly the silent drift this test exists to catch.
+            //
+            // `CellKind::Flagellocyte` was added — a seventh kind — and `mutation.rs` draws
+            // `child_kind` and `new_kind` uniformly over `CellKind::ALL`. A draw over seven is
+            // not a draw over six: it consumes the stream differently and lands differently, so
+            // **every world in this project moved on that commit whatever the new kind did**.
+            // `physics.thrust` shipped at nought in the same commit precisely so that this
+            // digest's move could have exactly one cause rather than two.
+            //
+            // The direction is worth keeping too, because it is the honest cost of the change:
+            // seven organisms and sixteen cells *fewer*. A seventh kind is a seventh of every
+            // kind mutation spent on a cell that, at `thrust = 0.0`, does nothing at all for a
+            // dearer upkeep than the photocyte funding it. That is a real tax on the shipped
+            // world and it is the price of the organelle being reachable by evolution rather
+            // than switched on by hand.
+            (311, 615, 0xff2a_8c04_7598_7ba3),
             "a shipped world with `physics.current = 0.0` is no longer the world this project \
              has been measuring all along. **Investigate; do not paste in the new numbers.** \
              Every selection coefficient in SPEC and every figure in docs/PHASE7.md was taken \
@@ -1269,7 +1287,7 @@ mod tests {
             ran(|_| {}),
             // The same three numbers `a_world_with_no_current_is_the_world_that_was_there_before`
             // records, and they were recorded before the shadow was a configuration key.
-            (318, 631, 0x35fe_af96_9d17_98e0),
+            (311, 615, 0xff2a_8c04_7598_7ba3),
             "a shipped world with `light.shadow_depth = 27.2` and `light.shadow_spread = 0.0` \
              is no longer the world this project has been measuring all along. **Investigate; \
              do not paste in the new numbers.** Those two values are the constants that were \
@@ -1335,7 +1353,7 @@ mod tests {
             ran(1.0),
             // The same three numbers the two golden vectors above record, and they were
             // recorded before a body's size had any say in what its tissue cost.
-            (318, 631, 0x35fe_af96_9d17_98e0),
+            (311, 615, 0xff2a_8c04_7598_7ba3),
             "a shipped world with `metabolism.scaling_exponent = 1.0` is no longer the world \
              this project has been measuring all along. **Investigate; do not paste in the new \
              numbers.** One is exactly linear, so the only thing that can have moved this is the \
@@ -2197,5 +2215,222 @@ mod tests {
             "the run finished {} out in relative terms",
             relative_error(world)
         );
+    }
+
+    // -------------------------------------------------------------------------------------
+    // Instruments. These measure; they do not assert.
+    //
+    // `assay.rs` measures what a *cell* is worth. These three measure what a *tick* is worth,
+    // which is the other half of the same question: evolutionary output is generations times
+    // population, and a run only gets as many generations as it can afford to compute.
+    //
+    // They live here rather than in `coacervate-sim` because they need a clock and
+    // `clippy.toml` refuses one to the simulation - "SPEC section 2: no wall-clock time in
+    // simulation logic" - which is exactly right and is not worth an exception. Everything
+    // below reads the world through its public surface.
+    // -------------------------------------------------------------------------------------
+
+    /// A world with the light and the arena changed, run to `ticks` past its dawn.
+    fn a_run(change: impl FnOnce(&mut RawConfig), ticks: u64) -> World {
+        let mut world = World::new(&config(change));
+        genesis(&mut world, 8);
+        for _ in 0..ticks {
+            world.tick();
+        }
+        world
+    }
+
+    /// How fast this world turns, and what is alive in it while it does.
+    fn how_fast(world: &mut World, ticks: u64) -> (f64, usize, usize, f64, f64) {
+        let born = world.born();
+        let at = Instant::now();
+        for _ in 0..ticks {
+            world.tick();
+        }
+        let seconds = at.elapsed().as_secs_f64();
+
+        let alive = world.organisms().iter().flatten().count();
+        let ages: u64 = world
+            .organisms()
+            .iter()
+            .flatten()
+            .map(coacervate_sim::organism::Organism::age)
+            .sum();
+
+        #[expect(clippy::cast_precision_loss, reason = "measured quantities, not state")]
+        let (rate, mean_age, births) = (
+            (ticks as f64) / seconds,
+            (ages as f64) / (alive.max(1) as f64),
+            ((world.born() - born) as f64) * 1_000.0 / (ticks as f64),
+        );
+
+        (rate, alive, world.living_cells().len(), mean_age, births)
+    }
+
+    /// ⭐⭐ **How much of a tick is paid whatever is alive**, which is the question this
+    /// project's throughput turns on.
+    ///
+    /// Evolutionary output is generations × population, and the cost of a tick rises with the
+    /// population — so if every cost scaled with the crowd, a bigger world would buy nothing:
+    /// ticks per second would fall by exactly what the population gained and **population would
+    /// cancel**. It cancels only for the part of a tick that is variable. Whatever is paid
+    /// regardless is a straight discount on filling the world up.
+    ///
+    /// Measured by letting one world fill, which costs nothing extra: the population climbs
+    /// from sixteen cells to a few thousand on its own and the cost of a tick is read off as it
+    /// goes. The light is then raised eightfold to carry the curve past where the shipped world
+    /// stops.
+    #[test]
+    #[ignore = "an instrument, not a test. ⚠️ The dear one: two worlds filled from nothing and \
+                the second of them eight times as full, about twelve minutes. Run it with \
+                --nocapture"]
+    fn what_a_tick_costs_an_empty_world() {
+        for (name, influx, cap) in [("shipped", 0.001_f64, 4_000), ("x8 light", 0.008, 32_000)] {
+            let mut world = a_run(
+                |raw| {
+                    raw.world.seed = 42;
+                    raw.light.influx = influx;
+                    raw.limits.max_organisms = cap;
+                },
+                0,
+            );
+
+            println!("\n=== {name} (influx {influx}, cap {cap}) ===");
+            for block in 0..12u32 {
+                let (rate, alive, cells, ..) = how_fast(&mut world, 400);
+                println!(
+                    "  at {:>6} ticks: alive {alive:>6}  cells {cells:>6}  {rate:>8.1} ticks/s",
+                    block * 5_000
+                );
+
+                for _ in 0..4_600 {
+                    world.tick();
+                }
+            }
+        }
+    }
+
+    /// ⭐⭐ **How fast the shipped world turns**, and how many generations an hour of wall
+    /// clock buys — which is the only number an owner who wants more evolution actually cares
+    /// about.
+    ///
+    /// Seed 42, eight founders, timed over eight thousand ticks after sixty thousand, which is
+    /// far enough in for the population to have settled.
+    #[test]
+    #[ignore = "an instrument, not a test. Two shipped-world dawns and 16,000 timed ticks, \
+                about two minutes. Run it with --nocapture"]
+    fn how_fast_the_shipped_world_turns() {
+        for (name, change) in [
+            ("shipped", (|_: &mut RawConfig| {}) as fn(&mut RawConfig)),
+            ("kleiber", |raw: &mut RawConfig| {
+                raw.metabolism.scaling_exponent = 0.75;
+            }),
+        ] {
+            let mut world = a_run(
+                |raw| {
+                    raw.world.seed = 42;
+                    change(raw);
+                },
+                60_000,
+            );
+            let (rate, alive, cells, mean_age, births) = how_fast(&mut world, 8_000);
+
+            println!(
+                "\n{name}: alive {alive}, cells {cells}, mean age {mean_age:.0}, \
+                 births/1k {births:.1}\n  {rate:.1} ticks/s  ->  {:.0} generations/hour",
+                rate * 3_600.0 / (2.0 * mean_age * 1_225.2 / 1_753.9)
+            );
+        }
+    }
+
+    /// ⚠️⚠️ **What `dt` does to the length of a generation, which is nothing.**
+    ///
+    /// `physics.rs`'s `DT` is read by the integrator, by the speed detritus sinks at, and by
+    /// the clock a myocyte's oscillation is phased against. It is read by **nothing** in
+    /// `metabolism.rs`, `reproduction.rs`, `ledger.rs`, `grid.rs` or `organism.rs`: upkeep is
+    /// charged per tick, income arrives per tick, a body ages one tick per tick, and its
+    /// lifespan is a tick count. So raising `dt` moves bodies further per tick and leaves the
+    /// length of a generation, in ticks, exactly where it was — which means it is a lever on
+    /// travel per lifetime, as `docs/NEXT.md`'s candidate 2 says, and **not** a lever on how
+    /// many generations an hour of wall clock buys.
+    ///
+    /// Run this, change `DT`, and run it again. The mean age is the number to watch.
+    #[test]
+    #[ignore = "an instrument, not a test. One 102,000-tick shipped-world run, about two \
+                minutes. Run it with --nocapture"]
+    fn what_dt_does_to_a_generation() {
+        let mut world = a_run(|raw| raw.world.seed = 42, 100_000);
+        let (rate, alive, cells, mean_age, births) = how_fast(&mut world, 2_000);
+
+        println!(
+            "\nalive {alive}, cells {cells}, mean age {mean_age:.0}, births/1k {births:.1}, \
+             biomass {:.0}, {rate:.0} ticks/s",
+            world.ledger().biomass()
+        );
+    }
+
+    /// ⭐⭐⭐ **What actually divides ticks-per-generation: running the economy faster.**
+    ///
+    /// Every per-tick *rate* multiplied by `k` and every *stock* left alone is the same world
+    /// happening in `k` times fewer ticks. The rates are `light.influx` and
+    /// `metabolism.upkeep_scale` — the second scales tissue upkeep and `gene_cost` together,
+    /// and SPEC section 10's lifespan is `LIFETIME_UPKEEP × body ÷ upkeep`, so it divides by
+    /// `k` without anything else being asked. `light.cap` goes up with the influx because a
+    /// photocyte's steady income is whatever its tile regains, and a tile cannot regain `k`
+    /// times more per tick while holding the same ceiling.
+    ///
+    /// Each arm is run for `200,000 ÷ k` ticks, so every one of them has lived the same amount
+    /// of its own history and been through about the same number of generations. That is what
+    /// makes the columns comparable.
+    #[test]
+    #[ignore = "an instrument, not a test. ⚠️ Four worlds settled and timed, about six \
+                minutes. Run it with --nocapture"]
+    fn what_a_generation_costs_in_ticks() {
+        println!(
+            "\n{:>6} {:>7} {:>7} {:>9} {:>10} {:>9} {:>11} {:>9} {:>10}",
+            "tempo",
+            "alive",
+            "cells",
+            "biomass",
+            "births/1k",
+            "mean age",
+            "cells/body",
+            "ticks/s",
+            "gens/hour"
+        );
+
+        for tempo in [1.0_f64, 2.0, 4.0, 8.0] {
+            #[expect(
+                clippy::cast_sign_loss,
+                reason = "tempo is one of four positive literals"
+            )]
+            #[expect(clippy::cast_possible_truncation, reason = "a small whole tick count")]
+            let settle = (200_000.0 / tempo) as u64;
+
+            let mut world = a_run(
+                |raw| {
+                    raw.world.seed = 42;
+                    raw.light.influx = 0.001 * tempo;
+                    raw.light.cap = 8.0 * tempo;
+                    raw.metabolism.upkeep_scale = tempo;
+                },
+                settle,
+            );
+
+            let (rate, alive, cells, mean_age, births) = how_fast(&mut world, 1_000);
+
+            #[expect(clippy::cast_precision_loss, reason = "a printed ratio")]
+            let per_body = (cells as f64) / (alive.max(1) as f64);
+
+            println!(
+                "{tempo:>6} {alive:>7} {cells:>7} {:>9.0} {births:>10.1} {mean_age:>9.0} \
+                 {per_body:>11.2} {rate:>9.0} {:>10.0}",
+                world.ledger().biomass(),
+                // Twice the mean age of the living is the mean *lifetime* for a stable age
+                // distribution, and `docs/NEXT.md` section 5's recorded pair - 1,753.9 lifetime
+                // against a 1,225.2 generation - is what turns one into the other.
+                rate * 3_600.0 / (2.0 * mean_age * 1_225.2 / 1_753.9)
+            );
+        }
     }
 }

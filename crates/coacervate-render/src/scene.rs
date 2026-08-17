@@ -109,6 +109,7 @@ pub const fn kind_number(kind: CellKind) -> u32 {
         CellKind::Sclerocyte => 3,
         CellKind::Sensocyte => 4,
         CellKind::Gonocyte => 5,
+        CellKind::Flagellocyte => 6,
     }
 }
 
@@ -322,8 +323,8 @@ mod tests {
         // mutation draws over. A kind renumbered here repaints every cell in the world.
         assert_eq!(
             CellKind::ALL.map(kind_number),
-            [0, 1, 2, 3, 4, 5],
-            "the six kinds are not numbered in SPEC section 6's order"
+            [0, 1, 2, 3, 4, 5, 6],
+            "the kinds are not numbered in SPEC section 6's order"
         );
 
         // A world with one body in it, read.

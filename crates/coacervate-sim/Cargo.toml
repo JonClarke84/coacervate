@@ -5,8 +5,16 @@ edition.workspace = true
 
 # CLAUDE.md: "Pure simulation. No I/O, no rendering, no dependencies beyond std + rand +
 # serde." Verify with: cargo tree -p coacervate-sim -e normal
+#
+# ⭐⭐ `rayon` is the third, and it is the one CLAUDE.md's stack line names and the header
+# above predates. It buys the read-only half of the behaviour pass on sixteen threads
+# instead of one. **It cannot change a single number**, and that is by design rather than by
+# care: SPEC section 2 gives every organism its own RNG stream "which is what allows `rayon`
+# parallelism without breaking reproducibility", and the one pass it is used on writes only
+# to the index it is given. See `behaviour.rs`'s `Behaviour::look`.
 [dependencies]
 rand = { workspace = true }
+rayon = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]

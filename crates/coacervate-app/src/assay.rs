@@ -880,6 +880,13 @@ fn swimmer(limits: &LimitsConfig, plan: &[CellKind], beat: f32, gain: f32) -> Ge
     for (index, kind) in plan.iter().enumerate() {
         let step = u8::try_from(index).expect("a hand-built body is a few cells long");
         let muscle = *kind == CellKind::Myocyte;
+        // A flagellocyte is driven by the same `osc_freq` and the same `sensor_gain` a myocyte
+        // is - that reuse is the organelle's whole design, and a builder that only knew about
+        // muscle would hand every motor a frequency of nought and measure a body that was never
+        // switched on. It is **not** given a phase: a phase offsets a stroke, a motor has no
+        // stroke, and counting one here would silently shift the phase of any real muscle
+        // further down the same plan.
+        let driven = muscle || *kind == CellKind::Flagellocyte;
         let phase = f32::from(muscles) * std::f32::consts::FRAC_PI_2;
         if muscle {
             muscles += 1;
@@ -899,9 +906,9 @@ fn swimmer(limits: &LimitsConfig, plan: &[CellKind], beat: f32, gain: f32) -> Ge
             stiffness: 10.0,
             new_kind: CellKind::Photocyte,
             new_state: State::ZERO,
-            osc_freq: if muscle { beat } else { 0.0 },
+            osc_freq: if driven { beat } else { 0.0 },
             osc_phase: if muscle { phase } else { 0.0 },
-            sensor_gain: if muscle { gain } else { 0.0 },
+            sensor_gain: if driven { gain } else { 0.0 },
             sensor_target: SensorTarget::Light,
         });
     }
@@ -989,9 +996,9 @@ fn seeded_world(seed: u64, change: impl FnOnce(&mut RawConfig)) -> Config {
 mod tests {
     use super::{
         ARMS, BEAT, FOUNDER_ENERGY, FOUNDERS, GENERATION, INTRODUCTIONS, Invader, Invasion,
-        Outcome, POLL_EVERY, SETTLE, assay, dawn, founder_genome, founder_with_a_third_cell,
-        held_still, invade, one_mutation_apart, package_assay, place, placed_assay, seeded_world,
-        swimmer, travels,
+        Outcome, POLL_EVERY, SEGMENT, SETTLE, assay, dawn, founder_genome,
+        founder_with_a_third_cell, held_still, invade, one_mutation_apart, package_assay, place,
+        placed_assay, seeded_world, swimmer, travels,
     };
     use coacervate_sim::cell::{CellKind, Vec2};
     use coacervate_sim::config::{Config, RawConfig};
@@ -2566,9 +2573,17 @@ mod tests {
 
         // The calibration: the shipped world, and the fact the round existed to change.
         assert!(
-            still.contact_fraction() > 0.45,
+            // ⚠️ Re-recorded once, with the previous figure kept: **0.4723 before
+            // `CellKind::Flagellocyte` existed, 0.4480 after**, and the threshold moved from
+            // 0.45 to 0.42 to sit the same distance below it. The cause is the seventh kind
+            // widening every `child_kind` draw — see `run.rs`'s re-recorded digest for the whole
+            // argument. It is a small drop and it is in the direction that change predicts: a
+            // seventh of kind mutations now land on a cell that did nothing at all in the build
+            // this was re-measured on, so bodies are marginally smaller and a cell has
+            // marginally less of its own family beside it.
+            still.contact_fraction() > 0.42,
             "a mouth in the shipped world was touching somebody at {:.4} of the moments it was \
-             looked at, and the measured figure is 0.4723",
+             looked at, and the measured figure is 0.4480 (0.4723 before the seventh cell kind)",
             still.contact_fraction()
         );
         assert!(
@@ -2606,6 +2621,113 @@ mod tests {
              another",
             running.alive,
             still.alive
+        );
+    }
+
+    /// ⭐⭐⭐ What a motor buys in travel, and what it costs to buy it — the sweep that chose
+    /// `physics.thrust`.
+    ///
+    /// **This is the measurement `docs/NEXT.md` §8 was written before.** Prediction 1 there was that
+    /// travel per lifetime would go from about two-thirds of a body length to more than five, that the
+    /// confidence in it was high and that it deserved none, because a steady external force against
+    /// linear drag is arithmetic rather than biology.
+    ///
+    /// # The instrument
+    ///
+    /// [`travels`], which is Group J's and follows one body's **seed cell** alone in a lit world that
+    /// cannot hold anybody else. The control is [`held_still`]: the identical genome with `osc_freq`
+    /// at nought, which for a motor means a thrust of nought — the same cells, the same buoyancy, the
+    /// same springs, the same upkeep, the same shape, differing only in whether the motor is running.
+    /// A displacement quoted against nothing at all would be buoyancy and settling springs added to
+    /// whatever locomotion there was.
+    ///
+    /// # ⚠️ What this does **not** measure
+    ///
+    /// Whether a motor pays. One body alone in empty water has nothing to compete with, nothing to
+    /// reach and nothing to eat, so a figure from here is a fact about physics and a fact about price,
+    /// and says nothing whatever about selection. That question is
+    /// [`what_a_motor_is_worth_where_there_is_somewhere_to_go`]'s, and the two are deliberately kept
+    /// apart because conflating them is how a lever gets shipped on the strength of doing something
+    /// rather than on the strength of being worth doing.
+    #[test]
+    #[ignore = "a sweep of whole lifetimes; run deliberately with --ignored"]
+    fn what_a_motor_buys_in_travel() {
+        // A chain with the motor at one end. Position is the whole of what makes this work: a
+        // flagellocyte's thrust points out along the vector from its adhered partners to itself, so
+        // one at the tail of a chain pushes out of the end and drags the body after it, and one in
+        // the middle of a symmetric body pushes against its own other half. The plan is otherwise a
+        // plain viable body - photocytes to earn, a gonocyte so it could in principle breed.
+        const PLAN: [CellKind; 4] = [
+            CellKind::Photocyte,
+            CellKind::Photocyte,
+            CellKind::Gonocyte,
+            CellKind::Flagellocyte,
+        ];
+
+        println!("thrust | travel | control | ratio | lived | body lengths");
+
+        let mut readings = Vec::new();
+        for thrust in [0.0f32, 5.0, 15.0, 40.0, 100.0, 250.0, 600.0] {
+            let (moved, lived) = travels(
+                42,
+                |raw| raw.physics.thrust = f64::from(thrust),
+                |limits| swimmer(limits, &PLAN, BEAT, 0.0),
+                LIFETIME,
+            );
+            let (drifted, _) = travels(
+                42,
+                |raw| raw.physics.thrust = f64::from(thrust),
+                |limits| held_still(&swimmer(limits, &PLAN, BEAT, 0.0), limits),
+                LIFETIME,
+            );
+
+            // The body is four segments of `SEGMENT` laid end to end, so its own length is what a
+            // displacement has to be read against: crossing one body length is a different animal
+            // from crossing sixty world units.
+            let lengths = moved / (SEGMENT * 3.0);
+            println!(
+                "{thrust:6.0} | {moved:6.2} | {drifted:7.2} | {:5.1} | {lived:5} | {lengths:.2}",
+                if drifted > 0.0 { moved / drifted } else { 0.0 }
+            );
+            readings.push((thrust, moved, drifted, lived));
+        }
+
+        let (_, still_moved, _, _) = readings[0];
+        assert!(
+            still_moved < 3.0,
+            "with no thrust at all the body covered {still_moved:.2} units, and the measured \
+         baseline for a drifting body is under 3. If this has moved, the control is broken and \
+         every ratio below it is meaningless"
+        );
+
+        // ⭐⭐ Prediction 1 of `docs/NEXT.md` §8: more than five body lengths, somewhere in reach.
+        let best = readings
+            .iter()
+            .map(|&(_, moved, _, _)| moved)
+            .fold(0.0f32, f32::max);
+        assert!(
+            best > 5.0 * SEGMENT * 3.0,
+            "the furthest any motorised body travelled in a lifetime was {best:.2} units, which is \
+         {:.2} of its own length. Ten rounds of muscle work put the figure at two-thirds, and \
+         an organelle that cannot beat five body lengths has not closed the gap this world's \
+         whole locomotion problem is",
+            best / (SEGMENT * 3.0)
+        );
+
+        // ⭐⭐ And that it is the motor doing it rather than the water. A ratio against the identical
+        // body with its motor switched off is the only claim here that cannot be explained by
+        // buoyancy, by springs settling, or by a body of a different shape drifting differently.
+        let (thrust, moved, drifted, _) = readings
+            .iter()
+            .copied()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).expect("displacements are finite"))
+            .expect("the sweep has readings in it");
+        assert!(
+            moved > 10.0 * drifted,
+            "at a thrust of {thrust} the body covered {moved:.2} units against {drifted:.2} for the \
+         same body with the motor off, which is a ratio of {:.1}. Below ten and what is being \
+         measured is drift",
+            moved / drifted
         );
     }
 }

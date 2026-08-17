@@ -123,7 +123,7 @@ const FED_DIMMEST: f32 = -0.40;
 // doing well".
 const FED_SATURATION: f32 = 0.20;
 
-// How saturated each of SPEC section 6's six kinds is drawn, in `scene.rs`'s numbering.
+// How saturated each of SPEC section 6's kinds is drawn, in `scene.rs`'s numbering.
 //
 // SPEC section 12: "saturation and brightness modulated by cell kind and energy_flow". The
 // shape of this is the shape of section 6's table rather than a decoration: a sclerocyte is
@@ -137,6 +137,12 @@ fn saturation_of(kind: u32) -> f32 {
         case 3u: { return 0.20; }  // sclerocyte - structure, and nothing else
         case 4u: { return 0.55; }  // sensocyte  - senses
         case 5u: { return 0.95; }  // gonocyte   - carries the lineage
+        // A flagellocyte sits just under the devorocyte. It is the second most conspicuous
+        // thing a body can be made of and it should look it: a lineage that has grown motors
+        // is the one a person watching from across a room most wants to be able to pick out,
+        // and the whole of D6's argument is that a difference worth noticing has to survive
+        // being seen at that distance.
+        case 6u: { return 0.88; }  // flagellocyte - pushes on the water
         default: { return 0.80; }
     }
 }

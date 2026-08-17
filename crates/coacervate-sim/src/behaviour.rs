@@ -71,7 +71,16 @@ use crate::genome::{Gene, MAX_REST_LENGTH, SensorTarget};
 use crate::grid::Grid;
 use crate::ledger::Ledger;
 use crate::organism::Organism;
-use crate::physics::{DT, Spring, wrapped_offset};
+use rayon::prelude::*;
+
+use crate::physics::{DT, Run, Spring, widened, wrapped_offset};
+
+/// The fewest cells a thread is given a run of, in [`Behaviour::look`].
+///
+/// Splitting work costs something, and a world with forty cells in it would spend more on
+/// handing them round sixteen threads than on doing the work. This is where the split starts
+/// being worth making: below it the whole pass runs on one thread, as it always did.
+const MIN_PARALLEL_RUN: usize = 256;
 
 /// SPEC section 6: a photocyte "harvests from the field tile it occupies, rate ∝ local
 /// energy × exposure". This is the constant of proportionality that SPEC's "∝" leaves open.
@@ -364,25 +373,32 @@ struct Neighbourhood {
     /// Which bucket each thing landed in, from the most recent rebuild.
     bucket_of: Vec<usize>,
 
-    /// Where each bucket's run begins in `order`, one entry longer than there are buckets so
-    /// the last run needs no special case.
-    starts: Vec<usize>,
+    /// Where each bucket's run begins in `order`, and how long it is.
+    ///
+    /// One array of `u32` pairs rather than two of machine words, for the cache reason
+    /// [`crate::physics`]'s `SpatialHash::runs` sets out. ⚠️ A run's `start` is meaningful
+    /// only where its `len` is not nought — see [`Neighbourhood::rebuild`].
+    runs: Vec<Run>,
 
     /// Working room for the counting sort: each bucket's next free slot as it fills.
-    cursor: Vec<usize>,
+    cursor: Vec<u32>,
 
-    /// Everything indexed, in bucket order. This is the sorted result a search reads.
+    /// Which buckets the last rebuild put anything in, in the order they were first reached.
+    used: Vec<usize>,
+
+    /// Everything indexed, gathered into runs by bucket. This is the sorted result a search
+    /// reads.
     order: Vec<usize>,
 
     /// How many things went into the most recent rebuild.
     ///
-    /// Kept only so that an index over *nothing* can be recognised in one comparison, and it
-    /// earns its place: a rebuild clears and prefix-sums one entry per bucket, which for the
-    /// default world is fifty thousand of them, on every tick, whether or not there is
-    /// anything to sort into them. The drift is empty for the whole of a world that has not
-    /// killed anything yet - which is every tick of the field-only conservation tests, and the
-    /// opening stretch of every real run - and paying a fifty-thousand-entry sweep for it
-    /// **doubled the cost of a hundred thousand ticks**, from 27 seconds to 52. Measured.
+    /// Kept only so that an index over *nothing* can be recognised in one comparison. It used
+    /// to earn its place against a rebuild that cleared and prefix-summed one entry per
+    /// bucket — fifty thousand of them for the default world, on every tick, whether or not
+    /// there was anything to sort into them, which **doubled the cost of a hundred thousand
+    /// ticks**, from 27 seconds to 52. Measured. ⭐ A rebuild now costs what the crowd costs,
+    /// so the saving this bought is a rounding error and the field is kept for the plainness
+    /// of the guard rather than for the time.
     count: usize,
 }
 
@@ -403,8 +419,9 @@ impl Neighbourhood {
             last_col: f64::from(cols_across - 1),
             last_row: f64::from(rows_down - 1),
             bucket_of: vec![0; capacity],
-            starts: vec![0; cols * rows + 1],
+            runs: vec![Run::EMPTY; cols * rows],
             cursor: vec![0; cols * rows],
+            used: Vec::with_capacity(capacity),
             order: vec![0; capacity],
             count: 0,
         }
@@ -414,6 +431,12 @@ impl Neighbourhood {
     ///
     /// `at` says where the nth of them is, and is the whole of what this needs to know about
     /// them: the crowd hands it a cell's position and the drift hands it a grain's.
+    ///
+    /// ⭐⭐ **It costs what the crowd costs**, which it did not used to — see
+    /// [`crate::physics`]'s `SpatialHash::rebuild` for the measurement and the argument that
+    /// this is a change of cost rather than of result. The two are the same structure and the
+    /// change is the same change; they are separate types because one sorts cells for the
+    /// collision search and the other sorts anything at all for three different searches.
     fn rebuild(&mut self, count: usize, at: impl Fn(usize) -> Vec2) {
         assert!(
             count <= self.bucket_of.len(),
@@ -421,18 +444,21 @@ impl Neighbourhood {
             self.bucket_of.len()
         );
 
-        // An index over nothing is left untouched rather than swept clear, and [`Neighbourhood::near`]
-        // knows not to read it. See the note on `count`.
+        // Nothing of the previous rebuild survives - but only the buckets it actually used
+        // have anything in them to survive, so this is the length of the last crowd rather
+        // than the width of the world.
+        for &bucket in &self.used {
+            self.runs[bucket].len = 0;
+        }
+        self.used.clear();
+
         self.count = count;
         if count == 0 {
             return;
         }
 
-        let buckets = self.cols * self.rows;
         let (cols, across, down) = (self.cols, self.across_per_unit, self.down_per_unit);
         let (last_col, last_row) = (self.last_col, self.last_row);
-
-        self.starts[..=buckets].fill(0);
 
         for index in 0..count {
             let pos = at(index);
@@ -440,13 +466,18 @@ impl Neighbourhood {
                 bucket_along(pos.y, down, last_row) * cols + bucket_along(pos.x, across, last_col);
 
             self.bucket_of[index] = bucket;
-            self.starts[bucket + 1] += 1;
+            if self.runs[bucket].len == 0 {
+                self.used.push(bucket);
+            }
+            self.runs[bucket].len += 1;
         }
 
-        for bucket in 1..=buckets {
-            self.starts[bucket] += self.starts[bucket - 1];
+        let mut running = 0;
+        for &bucket in &self.used {
+            self.runs[bucket].start = running;
+            self.cursor[bucket] = running;
+            running += self.runs[bucket].len;
         }
-        self.cursor[..buckets].copy_from_slice(&self.starts[..buckets]);
 
         let Self {
             bucket_of,
@@ -455,7 +486,7 @@ impl Neighbourhood {
             ..
         } = self;
         for (index, &bucket) in bucket_of[..count].iter().enumerate() {
-            order[cursor[bucket]] = index;
+            order[widened(cursor[bucket])] = index;
             cursor[bucket] += 1;
         }
     }
@@ -509,7 +540,7 @@ impl Neighbourhood {
             for step in 0..columns {
                 let bucket = band * self.cols + (leftmost + step) % self.cols;
 
-                for &other in &self.order[self.starts[bucket]..self.starts[bucket + 1]] {
+                for &other in self.runs[bucket].of(&self.order) {
                     visit(other);
                 }
             }
@@ -538,6 +569,30 @@ pub struct Behaviour {
     /// for why the stroke stops at one.
     resting_amplitude: f32,
     stroke: f32,
+
+    /// SPEC's `physics.thrust`: how hard one flagellocyte pushes per unit of its `osc_freq`.
+    ///
+    /// A physics setting read by this module rather than by that one, because the force is
+    /// *decided* here - it depends on a gene and on what the cell can hear, and both are
+    /// behaviour - while it is *applied* there. `metabolism.movement_cost` above it crosses the
+    /// same way for the same reason.
+    thrust: f32,
+
+    /// What a unit of thrust, squared, costs in work: `drag × DT² ÷ (1 − drag)`.
+    ///
+    /// Folded once at construction rather than per cell per tick, because it is three
+    /// configuration numbers that do not change between retunes. See [`Behaviour::propel`] for
+    /// where the expression comes from - it is the distance a free cell under a constant force
+    /// travels in one tick, which is what turns force into work.
+    thrust_work: f64,
+
+    /// Whether each cell has any adhesion at all, rebuilt each tick.
+    ///
+    /// [`Behaviour::propel`] needs the same answer `physics.rs` gets from its bond index, and
+    /// this module has no bond index. A flat array of booleans over one pass of the springs is
+    /// cheaper than building one, because the question here is only *whether* a cell has a
+    /// partner and never *which*.
+    adhesions: Vec<bool>,
 
     /// How wide the world is, for measuring the short way round it.
     width: f32,
@@ -624,6 +679,9 @@ impl Behaviour {
             movement_cost: f64::from(config.metabolism.movement_cost),
             resting_amplitude: config.behaviour.resting_amplitude,
             stroke: config.behaviour.stroke,
+            thrust: config.physics.thrust,
+            thrust_work: thrust_work(config),
+            adhesions: vec![false; cells],
             width: config.world.width,
             shadow: Shadow::of(config),
             hash: Neighbourhood::new(config, cells),
@@ -653,6 +711,8 @@ impl Behaviour {
         self.movement_cost = f64::from(config.metabolism.movement_cost);
         self.resting_amplitude = config.behaviour.resting_amplitude;
         self.stroke = config.behaviour.stroke;
+        self.thrust = config.physics.thrust;
+        self.thrust_work = thrust_work(config);
         self.shadow = Shadow::of(config);
     }
 
@@ -684,6 +744,8 @@ impl Behaviour {
             .rebuild(detritus.len(), |index| detritus[index].pos);
 
         self.look(cells, grid, detritus, owner, organisms);
+        self.hear(cells, springs);
+        self.propel(cells, springs, owner, organisms, ledger);
         self.contract(cells, springs, owner, organisms, ledger, ticks);
         self.eat(cells, owner, grid, ledger);
         self.feed(cells, owner, organisms, detritus, ledger);
@@ -691,6 +753,28 @@ impl Behaviour {
     }
 
     /// The read-only half: work out what every cell is about to do, changing nothing.
+    ///
+    /// # ⭐⭐ The one pass in this project that runs on more than one thread
+    ///
+    /// **It is 22% of a tick**, measured — the largest single thing in the behaviour pass and
+    /// the joint largest in the world, because working out how shaded a photocyte is means a
+    /// box of fifteen buckets per cell. And it is read-only by construction: everything it
+    /// touches outside itself is behind a shared reference, and the two things it writes are
+    /// `want[index]` and `signal[index]` — its own index and no other.
+    ///
+    /// ⚠️⚠️ **That is what makes running it in parallel a change of cost and not of result,
+    /// and the argument is worth stating rather than assuming.** Determinism in this project is
+    /// load-bearing and six golden vectors are the proof of it. A pass that *accumulated* —
+    /// the collision forces, the harvest, anything that adds into a shared total — could not be
+    /// parallelised without changing the order the additions happen in, which changes the
+    /// roundings, which changes the world. This one accumulates nothing. Each cell's two
+    /// answers are a pure function of state nobody is modifying, written to a slot nobody else
+    /// writes to, so the array that comes out the other end is the same array whatever order
+    /// the work was done in and however many threads did it.
+    ///
+    /// SPEC section 2 anticipated exactly this: each organism carries its own RNG stream
+    /// "which is what allows `rayon` parallelism without breaking reproducibility". Nothing had
+    /// spent that guarantee until now, and this spends it in the narrowest way available.
     ///
     /// The cells arrive grouped by organism, in slot order, so the table of which gene answers
     /// to which state is rebuilt once per body rather than searched for once per cell.
@@ -722,39 +806,47 @@ impl Behaviour {
             shadow: *shadow,
         };
 
-        for (index, cell) in cells.iter().enumerate() {
-            // Shading is worked out only where somebody is about to eat. It is the most
-            // expensive question in the pass - a box of fifteen buckets per cell - and a
-            // sclerocyte standing in a shadow does nothing differently for being in one.
-            want[index] = if cell.kind == CellKind::Photocyte {
-                let tile = grid.tile_at(cell.pos);
+        let count = cells.len();
+        want[..count]
+            .par_iter_mut()
+            .zip(&mut signal[..count])
+            .enumerate()
+            .with_min_len(MIN_PARALLEL_RUN)
+            .for_each(|(index, (want, signal))| {
+                let cell = &cells[index];
 
-                HARVEST_RATE * f64::from(grid.tiles()[tile]) * f64::from(shade(&around, index))
-            } else {
-                0.0
-            };
+                // Shading is worked out only where somebody is about to eat. It is the most
+                // expensive question in the pass - a box of fifteen buckets per cell - and a
+                // sclerocyte standing in a shadow does nothing differently for being in one.
+                *want = if cell.kind == CellKind::Photocyte {
+                    let tile = grid.tile_at(cell.pos);
 
-            signal[index] = 0.0;
-            if cell.kind != CellKind::Sensocyte {
-                continue;
-            }
+                    HARVEST_RATE * f64::from(grid.tiles()[tile]) * f64::from(shade(&around, index))
+                } else {
+                    0.0
+                };
 
-            let Some(organism) = organisms[owner[index]].as_ref() else {
-                continue;
-            };
-            // What a sensocyte is tuned to is the `sensor_target` of the gene that made it a
-            // sensocyte. See [`Behaviour::contract`] for the argument, which is one argument
-            // for both kinds that have any behaviour at all.
-            let Some(gene) = cell.gene else {
-                continue;
-            };
+                *signal = 0.0;
+                if cell.kind != CellKind::Sensocyte {
+                    return;
+                }
 
-            signal[index] = sense(
-                organism.genome().genes()[usize::from(gene)].sensor_target,
-                &around,
-                index,
-            );
-        }
+                let Some(organism) = organisms[owner[index]].as_ref() else {
+                    return;
+                };
+                // What a sensocyte is tuned to is the `sensor_target` of the gene that made it
+                // a sensocyte. See [`Behaviour::contract`] for the argument, which is one
+                // argument for both kinds that have any behaviour at all.
+                let Some(gene) = cell.gene else {
+                    return;
+                };
+
+                *signal = sense(
+                    organism.genome().genes()[usize::from(gene)].sensor_target,
+                    &around,
+                    index,
+                );
+            });
     }
 
     /// Myocytes work their springs, and their organisms pay for the work.
@@ -831,6 +923,156 @@ impl Behaviour {
     /// light field quantised on eight-unit tiles and steps discontinuously at every boundary
     /// crossing. Force through distance means the force that was opposing the movement when it
     /// began; `no_single_tick_can_charge_a_muscle_more_than_the_body_holds` is the bound.
+    /// What every cell hears from the sensocytes it is joined to.
+    ///
+    /// SPEC section 9's "mean of connected Sensocyte outputs, or 0 if none" - the summing half of
+    /// it; the division by the count happens where the mean is used. Connected means **adhered**,
+    /// one spring away and no further: a cell hears the sensocytes it is joined to and nothing
+    /// else. Anything wider - the whole body, say - would give every driven cell in an organism
+    /// the same number, and a body whose muscles all hear the same thing can pulse but cannot
+    /// turn.
+    ///
+    /// ⚠️ Lifted out of [`Behaviour::contract`], where it used to be the first thing done, so
+    /// that [`Behaviour::propel`] can read the same answer rather than compute a second one.
+    /// **It is the identical loop over the identical springs and it is bit-for-bit what was
+    /// there**; the golden vectors that moved in this commit moved because of the seventh cell
+    /// kind and not because of this.
+    fn hear(&mut self, cells: &[Cell], springs: &[Spring]) {
+        let Self {
+            signal,
+            sensed,
+            sensors,
+            ..
+        } = self;
+
+        sensed[..cells.len()].fill(0.0);
+        sensors[..cells.len()].fill(0);
+        for spring in springs.iter() {
+            for (from, to) in [(spring.a, spring.b), (spring.b, spring.a)] {
+                if cells[from].kind == CellKind::Sensocyte {
+                    sensed[to] += signal[from];
+                    sensors[to] += 1;
+                }
+            }
+        }
+    }
+
+    /// ⭐⭐⭐ Set every flagellocyte running, and charge its organism for the water it moves.
+    ///
+    /// The magnitude half of the organelle. The direction half is
+    /// [`Physics::propel`](crate::physics::Physics::propel), and the split is argued on
+    /// [`Cell::thrust`]: this half may touch the ledger and may not know how a body is shaped,
+    /// and that half is the other way round.
+    ///
+    /// # How hard
+    ///
+    /// `physics.thrust × osc_freq × amplitude`, where the amplitude is
+    /// [`amplitude`] — the same controller a myocyte is driven by, sensor gain and all.
+    ///
+    /// **`osc_freq` is the beat frequency and this is not a pun on the field name.** In
+    /// resistive-force theory, which is how real microswimmers are modelled, thrust is linear in
+    /// beat frequency at a fixed waveform. Reusing the myocyte's own field is therefore the
+    /// physically right relation *and* it costs the genome nothing: no new gene, no wider
+    /// mutation table, and a lineage crossing from muscle to motor arrives with its frequency
+    /// already tuned. Every motor in biology is an exaptation of machinery that already worked,
+    /// and this is the model of that.
+    ///
+    /// # What it costs
+    ///
+    /// `movement_cost × force²  × drag × DT² ÷ (1 − drag)`, which is the myocyte's own
+    /// `movement_cost × force × distance` with the distance worked out rather than observed. A
+    /// free cell under a constant force settles at `force × drag × DT ÷ (1 − drag)` per second,
+    /// so the distance a motor drives water through in one tick is that times `DT`, and the
+    /// square falls out. It is the right power law independently: drag power goes as the square
+    /// of speed, which is why swimming twice as fast costs four times as much everywhere in
+    /// biology.
+    ///
+    /// ⚠️ **The cost does not depend on whether the body actually moves**, and that is deliberate
+    /// rather than overlooked. A tethered bacterium still burns its whole flagellar budget. Were
+    /// it charged on realised displacement, a motor jammed against a neighbour would be free, and
+    /// the cheapest way to own one would be to be stuck.
+    ///
+    /// # ⚠️ A motor with nothing to push against is not billed
+    ///
+    /// The adhesion test here is the same one `physics.rs` makes before it applies a force, and
+    /// the two have to agree or the ledger pays for thrust the world never felt. A flagellocyte
+    /// with no adhered partner has no direction, produces nothing, and is charged nothing - it
+    /// is an unattached cell with an expensive upkeep and no function, which is a fair thing for
+    /// a lineage to have grown by mistake.
+    fn propel(
+        &mut self,
+        cells: &mut [Cell],
+        springs: &[Spring],
+        owner: &[usize],
+        organisms: &[Option<Organism>],
+        ledger: &mut Ledger,
+    ) {
+        let Self {
+            movement_cost,
+            resting_amplitude,
+            stroke,
+            thrust,
+            thrust_work,
+            sensed,
+            sensors,
+            adhesions,
+            lost,
+            flow,
+            ..
+        } = self;
+        let (movement_cost, thrust, thrust_work) = (*movement_cost, *thrust, *thrust_work);
+        let drive = Drive {
+            resting: *resting_amplitude,
+            stroke: *stroke,
+        };
+
+        for cell in cells.iter_mut() {
+            cell.thrust = 0.0;
+        }
+
+        if thrust == 0.0 {
+            return;
+        }
+
+        adhesions[..cells.len()].fill(false);
+        for spring in springs {
+            adhesions[spring.a] = true;
+            adhesions[spring.b] = true;
+        }
+
+        for index in 0..cells.len() {
+            let cell = &cells[index];
+            let (CellKind::Flagellocyte, Some(which)) = (cell.kind, cell.gene) else {
+                continue;
+            };
+            if !adhesions[index] {
+                continue;
+            }
+            let Some(organism) = organisms[owner[index]].as_ref() else {
+                continue;
+            };
+            let gene = &organism.genome().genes()[usize::from(which)];
+
+            let heard = if sensors[index] > 0 {
+                sensed[index] / narrowed(f64::from(sensors[index]))
+            } else {
+                0.0
+            };
+
+            let force = thrust * gene.osc_freq * amplitude(drive, gene, heard);
+            if force <= 0.0 {
+                continue;
+            }
+
+            let cost = movement_cost * f64::from(force) * f64::from(force) * thrust_work;
+
+            cells[index].thrust = force;
+            ledger.spend(cost);
+            lost[owner[index]] += cost;
+            flow[index] -= narrowed(cost);
+        }
+    }
+
     fn contract(
         &mut self,
         cells: &mut [Cell],
@@ -845,7 +1087,6 @@ impl Behaviour {
             movement_cost,
             resting_amplitude,
             stroke,
-            signal,
             sensed,
             sensors,
             contracted,
@@ -858,22 +1099,6 @@ impl Behaviour {
             resting: *resting_amplitude,
             stroke: *stroke,
         };
-
-        // SPEC section 9's "mean of connected Sensocyte outputs, or 0 if none". Connected
-        // means **adhered**, one spring away and no further: a myocyte hears the sensocytes it
-        // is joined to and nothing else. Anything wider - the whole body, say - would give
-        // every muscle in an organism the same number, and a body whose muscles all hear the
-        // same thing can pulse but cannot turn.
-        sensed[..cells.len()].fill(0.0);
-        sensors[..cells.len()].fill(0);
-        for spring in springs.iter() {
-            for (from, to) in [(spring.a, spring.b), (spring.b, spring.a)] {
-                if cells[from].kind == CellKind::Sensocyte {
-                    sensed[to] += signal[from];
-                    sensors[to] += 1;
-                }
-            }
-        }
 
         // ⭐ **What every muscle's controller says, this tick.** A per-cell quantity, so it is
         // worked out once per cell rather than once per spring - and it has to be, because
@@ -1523,11 +1748,47 @@ struct Drive {
 /// is a turn. With the gain on the sensocyte, every muscle hearing it would respond the same
 /// way and a body could only speed up and slow down.
 fn contraction(drive: Drive, gene: &Gene, signal: f32, angle: f64) -> f32 {
-    let amplitude = signal
-        .mul_add(gene.sensor_gain, drive.resting)
-        .clamp(0.0, 1.0);
+    amplitude(drive, gene, signal).mul_add(drive.stroke * narrowed(angle.sin()), 1.0)
+}
 
-    amplitude.mul_add(drive.stroke * narrowed(angle.sin()), 1.0)
+/// How far a free cell under a force of one travels in a single tick, which is what turns a
+/// motor's force into the work it does.
+///
+/// The integrator is `v ← (v + f × DT) × drag`, whose fixed point is `v = f × DT × drag ÷
+/// (1 − drag)` world units per second. A tick covers `v × DT` of that. At SPEC's shipped drag of
+/// 0.92 it comes to a 313th of a world unit per unit of force — the same relation
+/// [`crate::config::PhysicsConfig::current`] quotes for water, because it is the same
+/// arithmetic acting on a different force.
+///
+/// ⚠️ **A drag of exactly one would divide by nothing**, and `config.rs` is where that cannot
+/// happen: `physics.drag` is validated into `0.0..1.0` with the top end excluded, because a
+/// world whose water gives nothing back is one where a single push accelerates a cell for ever.
+fn thrust_work(config: &Config) -> f64 {
+    let drag = f64::from(config.physics.drag);
+
+    drag * f64::from(DT) * f64::from(DT) / (1.0 - drag)
+}
+
+/// ⭐ How hard a cell's controller is driving it, between nought and one.
+///
+/// SPEC section 9's `clamp(resting_amplitude + sensor_gain × signal, 0, 1)`, and the whole of
+/// what a sensor is allowed to do to anything in this world.
+///
+/// Lifted out of [`contraction`] so that a flagellocyte can be driven by **the same controller a
+/// myocyte is**, rather than by a second one written beside it. That is worth more than the four
+/// lines it saves. The two kinds are one `child_kind` mutation apart, and a lineage that crosses
+/// between them keeps a `sensor_gain` that already means what it meant — including its sign,
+/// which is the difference between driving harder when a signal rises and driving softer. Two
+/// controllers would have made that crossing arrive at an untuned number.
+///
+/// ⚠️ **A motor takes this and stops; a muscle multiplies it by a sine.** That is the whole
+/// structural difference between them, and it is the reason the motor works at this timestep at
+/// all: the sine is a stroke, a stroke has to be sampled, and `DT` cannot sample anything above
+/// about 3 Hz. See [`CellKind::Flagellocyte`](crate::cell::CellKind::Flagellocyte).
+fn amplitude(drive: Drive, gene: &Gene, signal: f32) -> f32 {
+    signal
+        .mul_add(gene.sensor_gain, drive.resting)
+        .clamp(0.0, 1.0)
 }
 
 /// How many simulated seconds a run has taken.

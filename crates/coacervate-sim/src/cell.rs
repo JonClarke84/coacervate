@@ -154,6 +154,36 @@ pub enum CellKind {
     /// Accumulates energy towards reproduction. An organism without one cannot reproduce.
     /// Phase 4.
     Gonocyte,
+    /// ⭐⭐⭐ Produces thrust: a steady push on the water, along the cell's own geometry, for
+    /// as long as it is paid for.
+    ///
+    /// **The seventh kind, added last so that the six before it keep their positions** — see
+    /// this enumeration's own note on why the order is load-bearing. It is still a change to
+    /// what `mutation.rs` draws over, and every golden vector moved when it arrived.
+    ///
+    /// # Why it exists, when a myocyte already moves things
+    ///
+    /// Because a myocyte moves things and, measured over ten rounds, **never once moved one
+    /// far enough to matter**. A body covers about two-thirds of its own length in a whole
+    /// lifetime, against 23 units to a neighbour and 60–88 to a stranger. Swimming with
+    /// muscle needs two of them, phased, on a body already bent — the scallop theorem forbids
+    /// anything simpler, and correctly so. That is three mutations that pay nothing until all
+    /// three are present, which is a valley, and **biology never crossed it either.** The
+    /// bacterial flagellum's export apparatus is homologous to the Type III secretion system:
+    /// machinery for secretion, co-opted to swim. Twitching motility runs on pili that evolved
+    /// for DNA uptake. The eukaryotic cilium sits on microtubule transport that was already
+    /// there. Every motor in life is an exaptation of something that already worked, and this
+    /// is that: one mutation, from a cell kind whose frequency parameter is already tuned.
+    ///
+    /// # Its thrust is computed, not simulated, and that is not a shortcut
+    ///
+    /// A real flagellum beats at about 100 Hz. `DT` is a sixtieth of a second, so nothing
+    /// above roughly 3 Hz can be resolved at all, and a simulated stroke at this timestep
+    /// would be an aliased one. Resistive-force theory — which is how actual microswimmers are
+    /// modelled — integrates the stroke away and gives a mean thrust, linear in beat frequency
+    /// at a fixed waveform. `behaviour.rs` does that, and `physics.rs` applies the result the
+    /// same way it applies buoyancy.
+    Flagellocyte,
 }
 
 impl CellKind {
@@ -162,13 +192,14 @@ impl CellKind {
     /// Here so that a test can walk the whole set rather than a sample of it. A kind added
     /// to the enumeration and forgotten here is caught immediately, because the tests count
     /// this list against the number of kinds SPEC's table has rows.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Photocyte,
         Self::Devorocyte,
         Self::Myocyte,
         Self::Sclerocyte,
         Self::Sensocyte,
         Self::Gonocyte,
+        Self::Flagellocyte,
     ];
 
     /// The widest any cell in this world can be.
@@ -192,6 +223,13 @@ impl CellKind {
             Self::Sclerocyte => 3.4,
             Self::Sensocyte => 2.0,
             Self::Gonocyte => 3.2,
+            // Slim, and second only to the sensocyte. A flagellated cell is mostly the thing
+            // it swings; there is not much body to it. It matters more than it looks that
+            // this is under the sclerocyte's 3.4 and so leaves `LARGEST_RADIUS` alone -
+            // `physics.rs` sizes the spatial hash off that constant once, before any cell
+            // exists, and a seventh kind that widened the world's largest cell would have
+            // rebuilt every bucket in it.
+            Self::Flagellocyte => 2.4,
         }
     }
 
@@ -237,7 +275,12 @@ impl CellKind {
     pub const fn toughness(self) -> f32 {
         match self {
             Self::Photocyte | Self::Gonocyte => 0.10,
-            Self::Devorocyte | Self::Myocyte => 0.30,
+            // A flagellocyte joins the middle band for the reason a myocyte is in it: it is
+            // fibrous working tissue rather than armour, so eating one costs a predator
+            // something without being a deterrent. Putting a motor anywhere else would have
+            // decided something. Low and a fast lineage is also a soft one, which reads as a
+            // designed trade-off; high and armour and locomotion arrive on the same mutation.
+            Self::Devorocyte | Self::Myocyte | Self::Flagellocyte => 0.30,
             Self::Sclerocyte => 0.90,
             Self::Sensocyte => 0.00,
         }
@@ -336,6 +379,15 @@ impl CellKind {
             Self::Sclerocyte => 1.00,
             Self::Sensocyte => -0.20,
             Self::Gonocyte => 0.50,
+            // ⭐ **Exactly zero, and for the myocyte's reason turned up as far as it goes.**
+            // The paragraph above says a myocyte is weightless because giving the one cell
+            // whose job is to move the body a weight would make growing one a way of changing
+            // depth *without swimming*. A flagellocyte is that argument's purest case: it is
+            // nothing but propulsion, so any buoyancy at all would let a lineage buy free
+            // vertical travel by growing motors it never pays to run, and the run would then
+            // show motors spreading while nothing moved. The organelle has to earn its
+            // displacement through `physics.thrust` or not have any.
+            Self::Flagellocyte => 0.00,
         }
     }
 
@@ -441,6 +493,19 @@ impl CellKind {
             Self::Sclerocyte => 0.002,
             Self::Sensocyte => 0.006,
             Self::Gonocyte => 0.005,
+            // Dearer than the myocyte it is one mutation from, and dearer than the photocyte
+            // paying for it - which is the constraint the myocyte's own note above spends most
+            // of its length arguing, because a motor cheaper to own than the cell funding it is
+            // where neutral bloat starts. It is set above the muscle rather than level with it
+            // because a flagellocyte works *every tick whether or not it is asked to*: a
+            // myocyte on a body with nothing to push against is charged for the distance it
+            // actually moves its springs, and can idle at nearly nothing, while a motor is
+            // always running. The standing charge should reflect the standing burden.
+            //
+            // ⚠️ This is the price of *owning* one. What it costs to *run* is separate, is
+            // charged through `movement_cost` on force times distance, and is what makes going
+            // fast expensive rather than merely being able to.
+            Self::Flagellocyte => 0.006,
         }
     }
 }
@@ -532,6 +597,27 @@ pub struct Cell {
     /// because that is the one thing in this simulation that is gathered, ticked and scattered
     /// back as a unit — the same route `Self::energy_flow` takes through `World::scatter`.
     pub contraction: Option<f32>,
+
+    /// ⭐⭐⭐ How hard this cell is pushing on the water this tick, as a magnitude with no
+    /// direction in it.
+    ///
+    /// Nought for every kind but a flagellocyte, and for a flagellocyte whose gene asks for
+    /// nothing.
+    ///
+    /// # Why the direction is not here
+    ///
+    /// Because it is not a property of the cell — it is a property of how the cell sits in its
+    /// body, which is the mean of its adhered partners against its own position, and that is
+    /// something `physics.rs` already has an index for and `behaviour.rs` does not. Splitting it
+    /// this way is also what keeps the two halves honest about which one may do what:
+    /// `behaviour.rs` decides how hard and **charges the organism for it**, and `physics.rs`
+    /// decides which way and touches no ledger. Neither could do the other's half without
+    /// reaching into a module SPEC keeps it out of.
+    ///
+    /// The consequence worth knowing is that a flagellocyte with no adhesions is charged
+    /// nothing, because [`Behaviour`](crate::behaviour::Behaviour) asks the same question
+    /// physics does before it bills: **a motor with nothing to push against is not running.**
+    pub thrust: f32,
 }
 
 impl Cell {
@@ -555,6 +641,12 @@ impl Cell {
             energy_flow: 0.0,
             // No controller has run on it. See the field: this is an absence and not a one.
             contraction: None,
+            // Nothing is pushing yet. A zero rather than an absence, unlike `contraction`
+            // beside it, and the difference is real: a muscle's absent contraction means "do
+            // not charge me for a stroke that has not happened", which needs telling apart
+            // from a stroke of length nought. A motor at nought is simply a motor that is off,
+            // and there is nothing about the first tick that differs from any other.
+            thrust: 0.0,
         }
     }
 }
@@ -604,6 +696,12 @@ mod tests {
             (CellKind::Sclerocyte, 3.4, 0.002),
             (CellKind::Sensocyte, 2.0, 0.006),
             (CellKind::Gonocyte, 3.2, 0.005),
+            // ⭐ The seventh, which SPEC section 6's table did not have until this project had
+            // spent ten rounds establishing that six were not enough to move anything. It is a
+            // row of that table now and is transcribed here from it exactly as the six above
+            // are - the point of writing the table out twice is that a value changed in one
+            // place has to be changed in the other on purpose.
+            (CellKind::Flagellocyte, 2.4, 0.006),
         ];
 
         assert_eq!(
@@ -775,6 +873,7 @@ mod tests {
             (CellKind::Sclerocyte, 0.90),
             (CellKind::Sensocyte, 0.00),
             (CellKind::Gonocyte, 0.10),
+            (CellKind::Flagellocyte, 0.30),
         ];
 
         assert_eq!(
@@ -859,6 +958,7 @@ mod tests {
             (CellKind::Sclerocyte, 1.00),
             (CellKind::Sensocyte, -0.20),
             (CellKind::Gonocyte, 0.50),
+            (CellKind::Flagellocyte, 0.00),
         ];
 
         assert_eq!(
@@ -885,6 +985,24 @@ mod tests {
              seeded with is sinking or rising before anything has evolved",
             CellKind::Photocyte.buoyancy() + CellKind::Gonocyte.buoyancy()
         );
+
+        // ⭐⭐ **The two cells whose job is to move a body have to weigh exactly nothing**, and
+        // the flagellocyte matters more here than the myocyte does. A motor with any buoyancy at
+        // all would be a way of buying vertical travel by *owning* one rather than by running
+        // one - and since the whole question this organelle was built to ask is whether a
+        // lineage will pay to go somewhere, a run in which motors spread while nothing moved
+        // would answer it wrongly and look like a success. Exactly zero, and asserted rather
+        // than assumed, because a tenth here would be a fifth of a photocyte's lift and would
+        // not obviously show up in anything else.
+        for weightless in [CellKind::Myocyte, CellKind::Flagellocyte] {
+            assert_eq!(
+                weightless.buoyancy(),
+                0.0,
+                "{weightless:?} is a cell whose function is locomotion and it has a buoyancy \
+                 of {}, so growing one moves a body without swimming",
+                weightless.buoyancy()
+            );
+        }
 
         // ⭐ The trade-off the table exists to create: the cell that harvests light is the one
         // that floats, and the cells a body spends on defence and on eating are dense. Without

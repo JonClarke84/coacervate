@@ -1080,6 +1080,88 @@ mod tests {
         );
     }
 
+    /// ⭐⭐⭐ **`config/tempo.toml` is `config/default.toml` with the clock speed changed, and it
+    /// is exactly three numbers.**
+    ///
+    /// A generation costs 1,225 ticks and that is what bounds how much evolution a night of wall
+    /// clock buys. The profile multiplies every per-tick **rate** by eight and leaves every
+    /// **stock** alone, so the same world happens in eight times fewer ticks — measured at a mean
+    /// age of 109 ticks against 928, at unchanged biomass. `config/tempo.toml`'s own header
+    /// carries the table and the argument.
+    ///
+    /// The three are `metabolism.upkeep_scale` (which `metabolism.rs` applies to `gene_cost` as
+    /// well as to tissue, and which SPEC section 10's lifespan divides by), `light.influx` (a
+    /// photocyte's steady income is what its tile regains) and `light.cap` (a tile cannot regain
+    /// eight times more per tick while holding the same ceiling).
+    ///
+    /// ⚠️ **Written as an equality between the two documents**, exactly as the kleiber and
+    /// seasonal profiles are, because a profile that quietly also moved the mutation rates would
+    /// be an experiment with two variables in it and no way to tell which had done the work. That
+    /// matters more here than for either of those: this profile changes three numbers rather than
+    /// one, so the check that it changes no *fourth* is the only thing keeping it readable as a
+    /// single change.
+    ///
+    /// **And the shipped default is untouched**, which is what keeps the blast radius at nought.
+    /// No coefficient in `SPEC.md`, no figure in `docs/PHASE7.md` and no golden vector was
+    /// measured in a world running at any tempo but one.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the two documents' numbers are pinned against each other; an approximate \
+                  match would let a profile drift away from the one it is a variation on"
+    )]
+    fn the_shipped_documents_carry_a_tempo_and_it_ships_inert() {
+        let tempo: RawConfig = toml::from_str(include_str!("../../../config/tempo.toml"))
+            .expect("the tempo profile parses");
+        let shipped: RawConfig = toml::from_str(DEFAULT_CONFIG).expect("the shipped config parses");
+
+        tempo
+            .clone()
+            .validate()
+            .expect("the tempo profile is a world the program will accept");
+
+        // The shipped world runs at one, and every number this project has recorded was taken
+        // there.
+        assert_eq!(shipped.metabolism.upkeep_scale, 1.0);
+        assert_eq!(shipped.light.influx, 0.001);
+        assert_eq!(shipped.light.cap, 8.0);
+
+        // ⭐ The three move together or not at all. A tempo whose income rose without its
+        // outgoings would be a world made richer rather than faster - which is
+        // `docs/NEXT.md` section 3's endogenous-income trap from the generous direction, and
+        // it would look like a success until somebody asked why the population had tripled.
+        let factor = tempo.metabolism.upkeep_scale;
+        assert_eq!(
+            factor, 8.0,
+            "the tempo profile does not carry the tempo it was measured at"
+        );
+        assert_eq!(
+            tempo.light.influx,
+            shipped.light.influx * factor,
+            "the tempo profile speeds a body's outgoings up without speeding its income up by \
+             the same factor, so it is a world with a different carrying capacity rather than \
+             the shipped world running faster"
+        );
+        assert_eq!(
+            tempo.light.cap,
+            shipped.light.cap * factor,
+            "the tempo profile raises the influx without raising the ceiling a tile holds. \
+             Income is `HARVEST_RATE x what the tile holds`, so the water saturates and the \
+             extra light spills instead of being eaten"
+        );
+
+        // Three numbers changed, and nothing else whatever.
+        let mut restored = tempo;
+        restored.metabolism.upkeep_scale = shipped.metabolism.upkeep_scale;
+        restored.light.influx = shipped.light.influx;
+        restored.light.cap = shipped.light.cap;
+        assert_eq!(
+            restored, shipped,
+            "the tempo profile changes something besides how fast the world's economy runs, so \
+             a run of it is an experiment with more than one variable in it"
+        );
+    }
+
     /// ⭐⭐ **Phase 7's Group L.** The shipped documents carry a season, both keys are required,
     /// and the season **ships inert**.
     ///
