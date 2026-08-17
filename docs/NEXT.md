@@ -861,3 +861,56 @@ nothing steers it — and then reproduced the solution.
 ⚠️ **This is one body alone and says nothing about selection.**
 `is_a_steered_motor_worth_more_than_a_blind_one` puts the two arms one `sensor_gain` mutation apart
 through the competition assay at three seeds, and is the reading that matters.
+
+### ⭐⭐⭐ Result 7: steering pays, and it is the first thing other than a photocyte that ever has
+
+`is_a_steered_motor_worth_more_than_a_blind_one`. Two five-celled bodies — two photocytes, a
+gonocyte, a sensocyte, a flagellocyte — **one `sensor_gain` mutation apart**, through the
+competition assay whose noise floor is ±0.11 %/generation.
+
+| seed | %/generation |
+| --- | --- |
+| 42 | **+3.327** |
+| 43 | **+3.336** |
+| 44 | **+0.412** |
+| **mean** | **+2.358** |
+
+**All three positive**, the weakest at four times the noise floor. For scale, a third photocyte —
+the only cell in this world ever measured positive — is worth **+1.06 %/generation** in the
+shipped world. **A motor wired to a sensor with a negative gain is worth more than twice that.**
+
+⚠️ **Read exactly what this says.** It is *steered motor* against *blind motor*, not *motorised
+body* against *plain founder*. It does not say a motor is worth having. It says that **given** a
+body has grown a motor and a sensor beside it, the sign of the one number joining them is worth
++2.36 %/generation — and that number is a single point mutation, with fleeing one sign flip from
+gathering.
+
+That is the rung above the one this project has been stuck on. The question is no longer *is any
+specialisation worth anything* — one is, and by a wide margin. It is **whether evolution can
+assemble three things that only pay together**, which is the ordinary hard problem of adaptation
+rather than a world in which nothing can pay at all.
+
+### ⚠️ The honest state of the round
+
+| | |
+| --- | --- |
+| A motor moves a body | ✅ 88 units a lifetime, the whole gap to a stranger |
+| Moving finds more food | ✅ +3.38% blind, +70% over its own keep when steered |
+| A motor pays as a founder's third cell | ❌ −2.5 %/gen, and the invasion assay cannot resolve it |
+| Lowering `light.diffusion` rescues it | ❌ the control collapses with it |
+| Making the cell cheaper rescues it | ❌ that is measured to be where neutral bloat begins |
+| **Wiring a sensor to it pays** | ✅ **+2.358 %/gen, three seeds, all positive** |
+
+### What to do next
+
+1. **Price the assembly, one rung at a time.** What is a sensocyte worth to a body that already
+   has a motor? What is a motor worth to a body that already has a sensor? Both are single
+   mutations from a body one step away, both are competition-assay questions, and together they
+   say whether the ladder has a rung missing or is merely long.
+2. **Watch a long run for the combination.** `config/flagellum.toml` at 840 Ma carries motors,
+   mouths and sensors all at single figures — present, produced, not spreading. The chronicle now
+   streams as it happens, so the moment a lineage grows a sensor beside a motor is a line in the
+   log rather than something lost to the ring.
+3. ⚠️ **Do not ship `physics.thrust` live on the strength of Result 7.** What is measured is the
+   value of a wiring, not the value of an organelle, and this round has already had one result
+   destroyed by replication.
