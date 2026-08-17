@@ -670,3 +670,60 @@ ladder rather than a valley.**
 the patches are effectively fixed. A world whose patches drifted faster than a body could sit
 still would be a second, stronger reason to move. **That is a lever to measure and not to
 assume**, and it is the first candidate if the motor prices badly.
+
+### ⭐⭐⭐ Result 2: the mechanism — moving *does* find more food, inside a window
+
+`assay.rs`'s `does_moving_find_more_food_than_staying_put`. One body, alone in a lit world it
+cannot share, so the only depletion in the water is the hole the body is eating itself. Gross
+income over 1,500 ticks: what the travel **found**, with everything the motor spent added back
+in closed form, against the identical genome with the motor switched off.
+
+| `thrust` | travel | gross gain | share of what a still body earns |
+| --- | --- | --- | --- |
+| 0 | 1.8 | +0.000 | — (the control) |
+| **40** | **76.2** | **+4.696** | **+3.38 %** |
+| 100 | 200.8 | −11.091 | −7.99 % |
+
+⚠️⚠️ **Going faster finds *less* food, and that is gross income rather than cost.** The reason is
+`light.gradient = 0.75`: this world is strongly top-weighted, a motor pushes along the body's own
+geometry, and **nothing steers it**. A slow body samples fresh water near the light; a fast one
+performs a long unsteered walk in a world where most directions are darker than where it began.
+
+**That is an optimum nobody chose.** It falls out of two settings that were never picked
+together, and it is what makes the whole picture consistent — the same shape appears in travel
+(where cost kills the body above 250), in gross income (peaks at 40) and in invasion fitness.
+
+### ⭐⭐⭐ Result 3: prediction 3 confirmed — a motor is worth what it can reach
+
+`assay.rs`'s `what_a_motor_is_worth_where_there_is_somewhere_to_go`. A third flagellocyte
+released as a **rare invader into a resident population that has already settled and drawn the
+field down** — the regime the competition assay cannot produce at any setting. Seed 42:
+
+| `thrust` | motor, %/gen | a third photocyte (calibration) |
+| --- | --- | --- |
+| 0 | **−19.90** | +2.59 |
+| **40** | **+1.99** | +10.24 |
+| 100 | −30.76 | +5.59 |
+
+**A motor that can push is worth ~22 %/generation more than one that cannot**, and at thrust 40
+it is the first specialisation other than a photocyte ever measured **positive** in this project.
+
+⚠️ **One seed, and the curve is not monotonic**, so this is not yet a result. The calibration arm
+— the one thing this world is known to reward — itself read +2.59, +10.24 and +5.59 across those
+three runs, a spread of nearly eight against a quoted floor of ±1.12: changing `physics.thrust`
+changes the physics, so each row is a *different world* rather than the same world measured
+again. The test now means over three seeds and prints the calibration's own spread beside every
+figure, and the assertion is that the difference must beat the between-seed spread.
+
+### ⚠️ Two errors of mine in this round, both caught by re-measurement
+
+1. **`earns` computed the wrong quantity.** It returned `Δbiomass + Δdissipated` and called it
+   gross harvest. `Ledger::overflow` credits `dissipated` with every unit drained from a tile too
+   full to hold the light, across the whole field, every tick — so it read **22,820 for a
+   four-cell body** whose upkeep is 0.02 a tick, and all three arms agreed to four significant
+   figures because they were measuring the weather. Now `Δbiomass`, with the motor's spend added
+   back analytically.
+2. **The first competition-assay test asserted `best > inert + 0.22` and passed** — on a margin
+   of 0.237, at the one thrust that kills a body outright. A fluke. It is recorded in the test's
+   own documentation rather than quietly rewritten, because an assertion that passes on noise
+   converts *"we did not measure this"* into *"we measured it and it was fine"*.

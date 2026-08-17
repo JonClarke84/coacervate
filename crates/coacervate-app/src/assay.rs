@@ -982,6 +982,66 @@ fn travels(
     (moved, lived)
 }
 
+/// ⭐⭐⭐ How much energy one body **ends up holding** over a window, alone in a lit world.
+///
+/// With `limits.max_organisms` at 1 and the body alive throughout, `Ledger::biomass` is that one
+/// body's store and nothing else, so the change in it is exactly what the body gained net of
+/// everything it spent.
+///
+/// # ⚠️ It is net, and the first version of this helper got that wrong
+///
+/// It returned `Δbiomass + Δdissipated` and called the sum gross harvest, on the reasoning that
+/// every unit leaving the field for a body lands either in the body or in what it has already
+/// spent. **The reasoning is wrong because `dissipated` is not only spending.**
+/// [`Ledger::overflow`] credits it with every unit drained from a tile too full to hold what the
+/// light gave it, across the whole field, every tick — a world-scale term that has nothing to do
+/// with the body at all. It read 22,820 for a four-cell body over 1,500 ticks, against an upkeep
+/// of about 0.02 a tick, and the three arms of the sweep agreed to four significant figures
+/// because they were all measuring the same weather.
+///
+/// A comparison between two arms that differ only in whether a motor runs is still exact on the
+/// net figure: the cells, the upkeep and the shape are identical, so the difference is what the
+/// travel found **minus** what the motor cost, and that cost is `movement_cost × force² ×
+/// thrust_work` a tick and can be added back in closed form by the caller.
+///
+/// ⚠️ Valid only while the body neither breeds nor dies, since a death moves its store into the
+/// detritus account. Hence the tick count it returns: the caller has to check it ran the window.
+fn earns(
+    seed: u64,
+    change: impl FnOnce(&mut RawConfig),
+    genome: impl FnOnce(&LimitsConfig) -> Genome,
+    ticks: u64,
+) -> (f64, u64) {
+    let alone = seeded_world(seed, |raw| {
+        change(raw);
+        raw.limits.max_organisms = 1;
+    });
+    let genome = genome(&alone.limits);
+
+    let mut world = World::new(&alone);
+    dawn(&mut world);
+
+    let at = Vec2::new(alone.world.width * 0.5, alone.world.height * 0.5);
+    let slot = world
+        .seed(genome, at, FOUNDER_ENERGY)
+        .expect("a lit world has room and water for one body in the middle of it");
+
+    let before = world.ledger().biomass();
+    let (mut took, mut lived) = (0.0, 0);
+
+    for tick in 1..=ticks {
+        world.tick();
+
+        if world.organisms()[slot].is_none() {
+            break;
+        }
+        took = world.ledger().biomass() - before;
+        lived = tick;
+    }
+
+    (took, lived)
+}
+
 /// SPEC's shipped world, at the seed this run of the assay is being taken on.
 fn seeded_world(seed: u64, change: impl FnOnce(&mut RawConfig)) -> Config {
     let mut raw = spec_defaults();
@@ -996,7 +1056,7 @@ fn seeded_world(seed: u64, change: impl FnOnce(&mut RawConfig)) -> Config {
 mod tests {
     use super::{
         ARMS, BEAT, FOUNDER_ENERGY, FOUNDERS, GENERATION, INTRODUCTIONS, Invader, Invasion,
-        Outcome, POLL_EVERY, SEGMENT, SETTLE, assay, dawn, founder_genome,
+        Outcome, POLL_EVERY, SEGMENT, SETTLE, assay, dawn, earns, founder_genome,
         founder_with_a_third_cell, held_still, invade, one_mutation_apart, package_assay, place,
         placed_assay, seeded_world, swimmer, travels,
     };
@@ -2731,29 +2791,58 @@ mod tests {
         );
     }
 
-    /// ⭐⭐⭐ What a motor is worth, swept over what it costs to run — predictions 2 and 3 of
-    /// `docs/NEXT.md` §8.
+    /// ⭐⭐⭐ What a motor is worth in **empty water**, swept over what it costs to run —
+    /// prediction 2 of `docs/NEXT.md` §8, and the refutation of my own experiment for
+    /// prediction 3.
     ///
     /// [`what_a_motor_buys_in_travel`] establishes that the organelle *moves a body*, and says
-    /// nothing whatever about whether moving is worth doing. This is the other half.
+    /// nothing whatever about whether moving is worth doing. This is the other half, and what it
+    /// measures is narrower than the question.
     ///
-    /// # What was predicted, before any of it was run
+    /// # What was predicted, and what happened
     ///
-    /// **2. Negative, around −1 to −3 %/generation.** The competition assay measures the filling
-    /// regime — two-celled bodies growing into empty water — and in empty water there is nowhere
-    /// worth going, so a motor is pure cost. ⚠️ A negative here is *not* a failure of the
-    /// organelle, and that was written down in advance precisely so it could not be read as one
-    /// afterwards.
+    /// **2. Negative, around −1 to −3 %/generation. ✅ Confirmed at −2.46.** The competition assay
+    /// measures the filling regime — two-celled bodies growing into empty water — and in empty
+    /// water there is nowhere worth going, so a motor is pure cost. That a negative here is *not*
+    /// a failure of the organelle was written down in advance precisely so it could not be read
+    /// as one afterwards.
     ///
-    /// **3. Materially less negative, and plausibly positive, at a thrust that carries a body
-    /// somewhere.** This is the one I was least sure of and it is the interesting one: if the
-    /// coefficient is flat across the sweep, the price is simply wrong and the motor is a tax; if
-    /// it moves with thrust, then locomotion is worth what it can reach, which would be the first
-    /// time in this project that a specialisation's value depended on the state of the world
-    /// rather than on its own price.
+    /// **3. Materially less negative at a thrust that carries a body somewhere. ⚠️⚠️ NOT ANSWERED
+    /// BY THIS TEST, AND THE FIRST VERSION OF IT CLAIMED OTHERWISE.**
+    ///
+    /// | `thrust` | %/gen | travel per lifetime |
+    /// | --- | --- | --- |
+    /// | 0 | −2.458 | 2.1 units |
+    /// | 15 | −2.933 | 29.6 |
+    /// | 40 | −2.460 | 88.8 |
+    /// | 100 | −2.547 | 232.6 |
+    /// | 250 | −2.221 | 46.7, and dead at tick 273 |
+    ///
+    /// **Flat.** The coefficient does not move while travel moves by a factor of a hundred, and
+    /// the reading is non-monotonic, so the 0.7 of spread is noise on one seed rather than a
+    /// trend.
+    ///
+    /// ⚠️ **The first version of this test asserted `best > inert + 0.22` and passed** — on
+    /// −2.221 against −2.458, a margin of 0.237, at the one thrust that kills the body in
+    /// `what_a_motor_buys_in_travel`. That is a fluke and it is recorded here rather than quietly
+    /// rewritten, because an assertion that passes on the noise of a single seed is worse than no
+    /// assertion: it converts "we did not measure this" into "we measured it and it was fine".
+    ///
+    /// # ⚠️ And the experiment was the wrong one, which is the more useful mistake
+    ///
+    /// Prediction 3 was about **a mature drawn-down world**, and this assay cannot produce one at
+    /// any setting. Both arms are founded into empty water and race to fill it; turning up the
+    /// thrust does not change that, so every row above is the filling regime and the sweep was
+    /// never able to answer the question it was written for. The instrument for a resident
+    /// population is the invasion assay, and
+    /// [`what_a_motor_is_worth_where_there_is_somewhere_to_go`] is where prediction 3 is actually
+    /// put.
+    ///
+    /// What this test is *for*, now: the price of owning a motor with the payoff removed. It is
+    /// the control the invasion reading is quoted against.
     #[test]
     #[ignore = "a sweep of 42,000-tick assays; run deliberately with --ignored"]
-    fn what_a_motor_is_worth_where_there_is_somewhere_to_go() {
+    fn what_a_motor_costs_in_empty_water() {
         let mut readings = Vec::new();
 
         for thrust in [0.0f64, 15.0, 40.0, 100.0, 250.0] {
@@ -2786,23 +2875,334 @@ mod tests {
              resolving or the two arms differ in something other than the third cell's kind"
         );
 
-        // ⭐⭐ Prediction 3. Whether it moves at all with thrust is the whole question; the
-        // direction is asserted and the size is left to the printout, because a threshold picked
-        // now would be a threshold picked to be passed.
+        // ⭐⭐ **The measured result, asserted as the flat thing it is.** The spread across a
+        // hundredfold change in travel is 0.71 %/generation and it is not monotonic - it is
+        // noise on one seed, and the honest assertion is that nothing here depends on thrust.
+        //
+        // ⚠️ This replaces `best > inert + 0.22`, which passed on a margin of 0.237 at the one
+        // thrust that kills a body outright. See this test's own documentation: an assertion
+        // that passes on noise is worse than none, because it turns "not measured" into
+        // "measured and fine".
         let best = readings
             .iter()
             .map(|&(_, per_gen)| per_gen)
             .fold(f64::NEG_INFINITY, f64::max);
+        let worst = readings
+            .iter()
+            .map(|&(_, per_gen)| per_gen)
+            .fold(f64::INFINITY, f64::min);
         assert!(
-            best > inert + 0.22,
-            "the best a motor managed anywhere in the sweep was {best:+.3} %/generation against \
-             {inert:+.3} for one that cannot push - a difference of {:.3}, which is inside the \
-             competition assay's ±0.11 %/generation noise floor doubled. **A coefficient that \
-             does not move with thrust means the motor is a tax and not a trade**: it would say \
-             a body gains nothing from the travel measured in what_a_motor_buys_in_travel, and \
-             the next round is about what there is in this world worth reaching rather than \
-             about how fast a body can reach it",
-            best - inert
+            best - worst < 1.5,
+            "the coefficient ranged over {:.3} %/generation across the thrust sweep, and the \
+             measured spread is 0.71. **If this has become a real trend the finding is \
+             overturned and that is worth knowing**: it would mean a motor pays for itself in \
+             empty water, which is the one regime where there is nothing to go and get",
+            best - worst
+        );
+        assert!(
+            best < 0.0,
+            "a motor priced positive at {best:+.3} %/generation somewhere in the sweep, in the \
+             filling regime. Every reading taken so far is between -2.2 and -2.9; a positive \
+             one means either the payoff has arrived from somewhere this test does not model, \
+             or the arms are no longer one mutation apart"
+        );
+    }
+
+    /// ⭐⭐⭐ What a motor is worth where there **is** somewhere to go — prediction 3 of
+    /// `docs/NEXT.md` §8, on the instrument that can actually answer it.
+    ///
+    /// [`what_a_motor_costs_in_empty_water`] swept thrust through the competition assay and got a
+    /// flat −2.5 %/generation while travel moved by a factor of a hundred. That was the wrong
+    /// experiment and its own documentation says so: both arms of a competition assay are founded
+    /// into empty water and race to fill it, at every thrust, so the sweep could only ever measure
+    /// the regime in which there is nothing to go and get.
+    ///
+    /// This releases a motorised invader into a **resident population that has already settled and
+    /// drawn the field down**, which is the only regime in which travel can be worth anything. The
+    /// field runs about 65% eaten at equilibrium, `light.patchiness` is 0.5, and round 7 measured
+    /// that 99.9% of a body's contacts are its own descendants — so a body sits in water its own
+    /// family is grazing, and **the thing a motor might buy is getting out of that**.
+    ///
+    /// # Why a third photocyte is in the run
+    ///
+    /// As the calibration, exactly as in
+    /// [`invasion_analysis_reproduces_the_competition_coefficients`]. The invasion assay's noise
+    /// floor is ±1.12 %/generation — four times the competition assay's — and a null from an
+    /// instrument nobody has checked that day is not a null. If the photocyte arm is not clearly
+    /// positive, this run says nothing about the motor.
+    ///
+    /// # ⚠️ What a null here would mean, written down before it is read
+    ///
+    /// That the motor is a tax rather than a trade **in this world as it currently stands**, and
+    /// the next question is not how fast a body can move but whether there is anything worth
+    /// moving to. The candidate is `light.patch_drift`, which ships at 0.0006 world units a tick —
+    /// about one unit in a whole lifetime, so the patches are effectively nailed down and a body
+    /// that stays put never loses its patch.
+    #[test]
+    #[ignore = "three 92,000-tick invasions; run deliberately with --ignored"]
+    fn what_a_motor_is_worth_where_there_is_somewhere_to_go() {
+        // ⚠️⚠️ **Three seeds, and the reason is a reading this test itself produced.** The first
+        // version ran one seed and came back −19.897, +1.990, −30.761 %/generation at thrusts of
+        // 0, 40 and 100 — which is a spectacular result and was not yet one. Two things made it
+        // untrustworthy on its own. The curve is not monotonic, so at least one point is being
+        // chosen by something other than the thrust. And the *calibration* arm — a third
+        // photocyte, the one thing this world is known to reward — read +2.589, +10.241 and
+        // +5.591 across the same three runs, a spread of nearly eight against a quoted noise
+        // floor of ±1.12. Changing `physics.thrust` changes the physics, so each row is a
+        // different realisation of the world rather than the same world measured again, and the
+        // between-world variance is what that photocyte spread is showing.
+        //
+        // So every figure here is a mean over seeds, and the calibration's own spread is printed
+        // beside it so that a future reader can see how much of any effect is world and how much
+        // is arm.
+        const SEEDS: [u64; 3] = [42, 43, 44];
+
+        let mut readings = Vec::new();
+
+        for thrust in [0.0f64, 40.0, 100.0] {
+            let mut motors = Vec::new();
+            let mut photocytes = Vec::new();
+
+            for seed in SEEDS {
+                let config = seeded_world(seed, |raw| raw.physics.thrust = thrust);
+                let plain = founder_genome(&config.limits);
+                let arms = [
+                    ("the resident's own genome", founder_genome(&config.limits)),
+                    (
+                        "a third flagellocyte",
+                        founder_with_a_third_cell(&config.limits, CellKind::Flagellocyte),
+                    ),
+                    (
+                        "a third photocyte",
+                        founder_with_a_third_cell(&config.limits, CellKind::Photocyte),
+                    ),
+                ];
+
+                let invasion = invade(&config, &plain, &arms, INTRODUCTIONS, SETTLE, WINDOW);
+                report_invasion(&format!("thrust {thrust}, seed {seed}"), &invasion);
+                motors.push(excess(&invasion, 1));
+                photocytes.push(excess(&invasion, 2));
+            }
+
+            let mean = |of: &[f64]| of.iter().sum::<f64>() / 3.0;
+            let spread = |of: &[f64]| {
+                of.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                    - of.iter().copied().fold(f64::INFINITY, f64::min)
+            };
+            readings.push((
+                thrust,
+                mean(&motors),
+                mean(&photocytes),
+                spread(&motors),
+                motors.clone(),
+            ));
+        }
+
+        println!("\nthrust | motor %/gen (mean of 3) | spread | photocyte (calibration) | seeds");
+        for (thrust, motor, photocyte, spread, each) in &readings {
+            let each: Vec<String> = each.iter().map(|value| format!("{value:+.1}")).collect();
+            println!(
+                "{thrust:6.0} | {motor:+21.3} | {spread:6.1} | {photocyte:+23.3} | {}",
+                each.join(", ")
+            );
+        }
+
+        // ⚠️ The calibration. Nothing below this counts without it.
+        for &(thrust, _, photocyte, _, _) in &readings {
+            assert!(
+                photocyte > 2.0,
+                "at thrust {thrust} a third photocyte invaded at {photocyte:+.3} %/generation, \
+                 and the measured readings on this instrument are +3.64, +5.78 and +5.11 \
+                 against a ±1.12 noise floor. The one arm this world is known to reward is not \
+                 reading, so this run says nothing about the motor"
+            );
+        }
+
+        // ⭐⭐⭐ Prediction 3 itself: does what a motor is worth depend on whether it can move?
+        let (_, still, _, still_spread, _) = readings[0];
+        let (best_thrust, best, _, best_spread, _) = readings
+            .iter()
+            .cloned()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).expect("coefficients are finite"))
+            .expect("the sweep has readings in it");
+        println!(
+            "\nPREDICTION 3: a motor that cannot push invades at {still:+.3} %/gen (spread \
+             {still_spread:.1} over {} seeds); the best a motor that can push manages is \
+             {best:+.3} at thrust {best_thrust} (spread {best_spread:.1}); the difference is \
+             {:+.3}",
+            SEEDS.len(),
+            best - still
+        );
+
+        // ⭐⭐ The claim, and it is held to a margin wider than the between-seed spread rather
+        // than to the ±1.12 noise floor - because the floor was measured on repeated seeds of one
+        // configuration and these rows are different configurations, which is a larger variance.
+        assert!(
+            best - still > still_spread.max(best_spread),
+            "a motor that can push invaded at {best:+.3} %/generation and one that cannot at \
+             {still:+.3}, a difference of {:+.3} - against a between-seed spread of \
+             {:.1}. **The difference has to beat the spread or it is a world and not an \
+             organelle.** The measured readings are −19.9 and +2.0 on seed 42 alone; if the \
+             mean over three seeds no longer separates them, prediction 3 of docs/NEXT.md §8 \
+             fails and the next round is about what there is worth reaching rather than about \
+             how fast a body can reach it",
+            best - still,
+            still_spread.max(best_spread)
+        );
+    }
+
+    /// ⭐⭐⭐ Does moving find more food? The mechanism question, asked directly.
+    ///
+    /// **This is the test that should have been written before either assay.** The competition
+    /// assay says a motor costs 2.5 %/generation. The invasion assay says what it is worth in a
+    /// crowd. Neither says whether a body that moves *eats more*, and that is the thing the whole
+    /// organelle rests on: if travel buys no income, then no price makes a motor pay and the next
+    /// round is about the world rather than about the cell.
+    ///
+    /// One body, alone in a lit world it cannot share, so the only depletion in the water is the
+    /// hole the body itself is eating. That isolation is deliberate — it asks the narrowest
+    /// version of the question, **can a body outrun its own grazing shadow**, with no competitor
+    /// to confound it. If the answer is no here it is no everywhere, because a crowd only makes
+    /// the water it moves into worse.
+    ///
+    /// Gross harvest, from [`earns`], which is `Δbiomass + Δdissipated` and is an identity rather
+    /// than an estimate. Net income would conflate what a motor found with what it cost.
+    #[test]
+    #[ignore = "a handful of whole lifetimes; run deliberately with --ignored"]
+    fn does_moving_find_more_food_than_staying_put() {
+        const PLAN: [CellKind; 4] = [
+            CellKind::Photocyte,
+            CellKind::Photocyte,
+            CellKind::Gonocyte,
+            CellKind::Flagellocyte,
+        ];
+        const WATCH: u64 = 1_500;
+
+        // What the motor spends, in closed form, so that "found nothing" and "found something and
+        // paid more for it" can be told apart. `behaviour.rs`: the force is
+        // `thrust × osc_freq × amplitude` and the charge is `movement_cost × force² ×
+        // drag × dt² ÷ (1 − drag)` a tick. Nothing senses anything in this plan, so the amplitude
+        // is `behaviour.resting_amplitude` exactly.
+        let shipped = seeded_world(42, |_| {});
+        let spends = |thrust: f64| {
+            let drag = f64::from(shipped.physics.drag);
+            let dt = 1.0 / 60.0;
+            let force = thrust * f64::from(BEAT) * f64::from(shipped.behaviour.resting_amplitude);
+
+            f64::from(shipped.metabolism.movement_cost)
+                * force
+                * force
+                * (drag * dt * dt / (1.0 - drag))
+        };
+
+        println!("thrust | moving nets | still nets | motor cost | gross gain | travel");
+
+        let mut readings = Vec::new();
+        for thrust in [0.0f64, 40.0, 100.0] {
+            let (moving, lived) = earns(
+                42,
+                |raw| raw.physics.thrust = thrust,
+                |limits| swimmer(limits, &PLAN, BEAT, 0.0),
+                WATCH,
+            );
+            let (still, _) = earns(
+                42,
+                |raw| raw.physics.thrust = thrust,
+                |limits| held_still(&swimmer(limits, &PLAN, BEAT, 0.0), limits),
+                WATCH,
+            );
+            let (travel, _) = travels(
+                42,
+                |raw| raw.physics.thrust = thrust,
+                |limits| swimmer(limits, &PLAN, BEAT, 0.0),
+                WATCH,
+            );
+
+            assert_eq!(
+                lived, WATCH,
+                "the body died at tick {lived} of {WATCH} at thrust {thrust}, and `earns` reads \
+                 a living body's store - a death moves it into the detritus account this \
+                 measurement does not read"
+            );
+
+            // ⭐ What the travel found, with what the travel cost added back. This is the number
+            // the whole test is about: it is income and not profit, so a motor that found
+            // nothing and a motor that found plenty and spent more than it found cannot read
+            // the same.
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a tick count of a few thousand is exact in an f64"
+            )]
+            let paid = spends(thrust) * WATCH as f64;
+            let gross = moving + paid - still;
+
+            println!(
+                "{thrust:6.0} | {moving:11.4} | {still:10.4} | {paid:10.4} | {gross:+10.4} | \
+                 {travel:.1}"
+            );
+            readings.push((thrust, gross, still, travel));
+        }
+
+        // ⭐⭐⭐ **The claim, and the answer is yes — but only inside a window.** A body that
+        // crosses seventy world units eats water no part of which it had already grazed; a body
+        // that stays put re-eats the hole it is sitting in. Measured, over 1,500 ticks:
+        //
+        //   thrust | travel | gross gain | as a share of what a still body earns
+        //        0 |    1.8 |     +0.000 | nothing, and this is the control
+        //       40 |   76.2 |     +4.696 | **+3.38%**
+        //      100 |  200.8 |    −11.091 | −7.99%
+        //
+        // ⚠️⚠️ **Going faster finds LESS food, and that is not a cost — it is gross income,
+        // with everything the motor spent already added back.** The reason is
+        // `light.gradient`, which is 0.75 and makes this world strongly top-weighted. A motor
+        // pushes along the body's own geometry and nothing steers it, so a fast body performs a
+        // long random walk in a world where most directions are darker than where it started.
+        // Slow travel samples fresh water near the light; fast travel leaves the light behind.
+        //
+        // That is a genuine optimum arriving out of two settings that were not chosen together,
+        // and it is what makes the invasion reading legible: +2.0 %/generation at thrust 40 and
+        // −30.8 at 100.
+        let (_, _, still, _) = readings[0];
+        let (thrust, gross, _, travel) = readings
+            .iter()
+            .copied()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).expect("energies are finite"))
+            .expect("the sweep has readings in it");
+
+        println!(
+            "\nMECHANISM: the best any thrust managed was {gross:+.4} at thrust {thrust}, on \
+             {travel:.1} units of travel, against the {still:.4} a body earns standing still - \
+             a gain of {:+.2}%. Gross: what the motor spent is added back, so this is what the \
+             travel FOUND.",
+            gross / still * 100.0
+        );
+
+        assert!(
+            gross > still * 0.02,
+            "the best gross gain from moving anywhere in the sweep was {gross:+.4} against the \
+             {still:.4} a still body earns - {:+.2}%, and the measured figure is +3.38% at a \
+             thrust of 40. **If this has fallen to nothing then moving no longer finds food**, \
+             which would mean the field has no spatial structure left at the scale a body can \
+             travel - `light.diffusion` at 0.04 a tick is what would smooth it away - and no \
+             thrust and no price could make locomotion pay until there is. The lever would then \
+             be the field and not the cell",
+            gross / still * 100.0
+        );
+
+        // ⭐⭐ And that it is a window rather than a slope, which is the half a single reading
+        // would have missed and the half that makes `physics.thrust` a setting worth choosing
+        // carefully rather than turning up.
+        let (_, fastest, _, _) = readings
+            .iter()
+            .copied()
+            .max_by(|a, b| a.3.partial_cmp(&b.3).expect("displacements are finite"))
+            .expect("the sweep has readings in it");
+        assert!(
+            fastest < gross,
+            "the fastest body in the sweep also found the most food ({fastest:+.4} against \
+             {gross:+.4}), so there is no optimum and travel simply pays. The measured shape is \
+             an optimum at thrust 40 with the fastest arm at −11.09, because `light.gradient` \
+             is 0.75 and an unsteered body that goes far enough leaves the light"
         );
     }
 }
