@@ -333,6 +333,17 @@ pub fn overrides(spec: &str) -> Result<impl Fn(&mut RawConfig) + Sync + use<>, S
                 }
                 "metabolism.offspring_share" => take(&mut raw.metabolism.offspring_share, *value),
                 "mutation.point_rate" => take(&mut raw.mutation.point_rate, *value),
+
+                // ⚠️⚠️ **The arena caps, and a bench needs them because a world can hit one.**
+                // A run that reported `alive = 4000.00000` exactly was not measuring an ecology;
+                // it was measuring `limits.max_organisms`. A censored population inflates the
+                // between-seed spread and makes every other row read as noise, which is how a
+                // wall disguises itself as variance.
+                "limits.max_organisms" => whole_field(&mut raw.limits.max_organisms, *value),
+                "limits.max_cells_per_organism" => {
+                    whole_field(&mut raw.limits.max_cells_per_organism, *value)
+                }
+                "limits.max_genes" => whole_field(&mut raw.limits.max_genes, *value),
                 "mutation.duplication_rate" => take(&mut raw.mutation.duplication_rate, *value),
                 _ => false,
             };
@@ -415,4 +426,29 @@ fn genesis_motorised(world: &mut World) {
             crate::founding::FOUNDER_ENERGY,
         );
     }
+}
+
+/// Write a whole number into a limit, from the decimal a command line hands over.
+///
+/// A limit is a count and the parser reads decimals, so the value is rounded rather than
+/// truncated: `--bench limits.max_organisms=16000` should mean sixteen thousand and not fifteen
+/// thousand nine hundred and ninety-nine because of how a decimal literal landed.
+fn whole_field(field: &mut u32, value: f64) -> bool {
+    // Walked up rather than cast. A cast from a float to an integer is the one operation
+    // CLAUDE.md bans outright, and there is no need for one here: a limit is a small count, so
+    // finding it by comparison costs nothing anybody can measure and cannot truncate or wrap.
+    let wanted = value.round();
+    *field = if wanted.is_finite() && wanted >= 1.0 {
+        // ⚠️ Bounded at a million, which is far past any arena this machine could allocate and
+        // far short of a walk that anybody would notice. An unbounded search here would hang on
+        // a typo.
+        (1u32..=1_000_000)
+            .take_while(|n| f64::from(*n) <= wanted)
+            .last()
+            .unwrap_or(1)
+    } else {
+        0
+    };
+
+    true
 }
