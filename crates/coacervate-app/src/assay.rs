@@ -1042,6 +1042,65 @@ fn earns(
     (took, lived)
 }
 
+/// How far apart the two furthest-apart cells of one body get, and how far the body travels,
+/// alone in a lit world.
+///
+/// ⭐ **The discriminator between two very different ways a motor could earn its keep.** A
+/// flagellocyte at the tail of a chain does two things at once: it drags the body through the
+/// water, and it **pulls the chain straight**. `behaviour.rs`'s
+/// `a_spread_out_body_earns_more_than_a_compact_one` is a committed test saying the second of
+/// those is worth real energy on its own, because a photocyte shaded by the cell above it
+/// harvests nothing. So a motorised body earning more than an inert one is not evidence of
+/// locomotion until the two are told apart.
+///
+/// Returns the body's extent at the end and its seed cell's displacement, so that a reading in
+/// which extent rises while displacement falls is legible as what it is: a lineage buying a
+/// better shape and not a better address.
+fn spreads(
+    seed: u64,
+    change: impl FnOnce(&mut RawConfig),
+    genome: impl FnOnce(&LimitsConfig) -> Genome,
+    ticks: u64,
+) -> (f32, f32) {
+    let alone = seeded_world(seed, |raw| {
+        change(raw);
+        raw.limits.max_organisms = 1;
+    });
+    let genome = genome(&alone.limits);
+
+    let mut world = World::new(&alone);
+    dawn(&mut world);
+
+    let at = Vec2::new(alone.world.width * 0.5, alone.world.height * 0.5);
+    let slot = world
+        .seed(genome, at, FOUNDER_ENERGY)
+        .expect("a lit world has room and water for one body in the middle of it");
+
+    let began = world.cells_of(slot)[0].pos;
+    let (mut extent, mut moved) = (0.0f32, 0.0f32);
+
+    for _ in 1..=ticks {
+        world.tick();
+        if world.organisms()[slot].is_none() {
+            break;
+        }
+
+        let cells = world.cells_of(slot);
+        // The widest the body is, measured every tick and kept at its largest rather than read
+        // once at the end: a body driven by a motor is being flexed, so a single snapshot is a
+        // sample of an oscillation.
+        let mut widest = 0.0f32;
+        for (index, one) in cells.iter().enumerate() {
+            for other in &cells[index + 1..] {
+                widest = widest.max((other.pos - one.pos).length());
+            }
+        }
+        extent = extent.max(widest);
+        moved = (cells[0].pos - began).length();
+    }
+
+    (extent, moved)
+}
 /// SPEC's shipped world, at the seed this run of the assay is being taken on.
 fn seeded_world(seed: u64, change: impl FnOnce(&mut RawConfig)) -> Config {
     let mut raw = spec_defaults();
@@ -1058,7 +1117,7 @@ mod tests {
         ARMS, BEAT, FOUNDER_ENERGY, FOUNDERS, GENERATION, INTRODUCTIONS, Invader, Invasion,
         Outcome, POLL_EVERY, SEGMENT, SETTLE, assay, dawn, earns, founder_genome,
         founder_with_a_third_cell, held_still, invade, one_mutation_apart, package_assay, place,
-        placed_assay, seeded_world, swimmer, travels,
+        placed_assay, seeded_world, spreads, swimmer, travels,
     };
     use coacervate_sim::cell::{CellKind, Vec2};
     use coacervate_sim::config::{Config, RawConfig};
@@ -3638,8 +3697,8 @@ mod tests {
             reason = "a tick count of a few thousand is exact in an f64"
         )]
         let bar = f64::from(CellKind::Flagellocyte.upkeep()) * WATCH as f64;
-        println!("the motor must find more than {bar:.3} over {WATCH} ticks to be worth owning\n");
-        println!("sensor gain | gross gain | as % of the bar | travel");
+        println!("a motor costs {bar:.3} to own over {WATCH} ticks\n");
+        println!("sensor gain | NET vs the same body with its motor off | travel");
 
         let mut readings = Vec::new();
         for gain in [0.0f32, 0.5, 1.0, -0.5, -1.0] {
@@ -3660,33 +3719,29 @@ mod tests {
                 "the body died at tick {lived} of {WATCH} at a gain of {gain}"
             );
 
-            // ⚠️ What the motor spent cannot be written in closed form here as it was in
-            // `what_the_field_has_to_be_like_for_moving_to_pay`, because the amplitude is no
-            // longer `resting_amplitude` exactly — it is whatever the sensor made it, tick by
-            // tick. It is bounded above by the unsteered figure, since the controller clamps the
-            // amplitude to one and the unsteered arm sits at 0.8, so `paid` here is an
-            // OVERESTIMATE of the cost at any positive gain and the gross gain below is therefore
-            // an overestimate too. It is quoted anyway because the comparison that matters is
-            // between the rows, and every row is overestimated by at most the same 25%.
-            #[expect(
-                clippy::cast_precision_loss,
-                reason = "a tick count of a few thousand is exact in an f64"
-            )]
-            let paid = {
-                let (drag, dt) = (0.92f64, 1.0 / 60.0);
-                let force = THRUST * f64::from(BEAT);
-                0.0001 * force * force * (drag * dt * dt / (1.0 - drag)) * WATCH as f64
-            };
-            let gross = moving + paid - still;
+            // ⚠️⚠️⚠️ **THIS USED TO ADD BACK A COST THE MOTOR NEVER SPENT, AND IT PRODUCED THIS
+            // ROUND'S HEADLINE.** The old version computed `paid` in closed form from
+            // `THRUST × BEAT` — that is, at the amplitude a motor runs at when nothing is
+            // modulating it — and reported `moving + paid − still` as "gross gain", so that a
+            // negative gain scored 170% of its keep against a blind motor's 88%.
+            //
+            // `is_a_steered_motor_steering_or_switching_itself_off` measures what actually
+            // happens: at a gain of −1.0 the controller clamps the amplitude to a **tenth**, so
+            // the motor spends about one per cent of what was being added back (cost goes as the
+            // square) and the "gross gain" was inflated by nearly the whole of `paid`.
+            //
+            // So the number reported here is now **net**, which needs no cost model at all. It
+            // is `moving − still`: the same five-celled body, with the motor running and with
+            // `osc_freq` at nought, in the same water. Every cost the motor incurred is already
+            // inside it, correctly, whatever the sensor did to the amplitude — and it is also
+            // the quantity selection actually sees.
+            let net = moving - still;
 
-            println!(
-                "{gain:11.1} | {gross:+10.4} | {:15.1} | {travel:.1}",
-                gross / bar * 100.0
-            );
-            readings.push((gain, gross, travel));
+            println!("{gain:11.1} | {net:+38.4} | {travel:.1}");
+            readings.push((gain, net, travel));
         }
 
-        let (_, blind, _) = readings[0];
+        let (_, blind, blind_travel) = readings[0];
         let (gain, best, travel) = readings
             .iter()
             .copied()
@@ -3694,11 +3749,11 @@ mod tests {
             .expect("the sweep has readings in it");
 
         println!(
-            "\nSTEERING: a blind motor finds {blind:+.3}; the best steered one finds {best:+.3} \
-             at a gain of {gain} on {travel:.1} units of travel. The bar it has to clear is \
-             {bar:.1}, so a steered motor is at {:.0}% of its keep against a blind one's {:.0}%.",
-            best / bar * 100.0,
-            blind / bar * 100.0
+            "\nSTEERING: a blind motor nets {blind:+.4} over the same body with the motor off, \
+             on {blind_travel:.1} units of travel. The best gain is {gain}, netting {best:+.4} \
+             on {travel:.1} units. ⚠️ A gain of −1 does not steer — it throttles the motor to a \
+             tenth (see is_a_steered_motor_steering_or_switching_itself_off), so what a negative \
+             gain buys is mostly the running cost it does not pay."
         );
 
         assert!(
@@ -3881,6 +3936,31 @@ mod tests {
     /// cell in the world, so the difference is what the motor *does* and not what a seventh cell
     /// costs. Both arms carry the same `sensor_gain`, built by swapping one `child_kind` on the
     /// motorised genome, so they are one mutation apart and the assay will accept them.
+    ///
+    /// # ⚠️⚠️ The first run of this test measured a motor that was switched off
+    ///
+    /// It used `sensor_gain = −1.0`, on the strength of that being the best-scoring gain in
+    /// `can_a_motor_that_can_steer_pay_for_itself`. But
+    /// `is_a_steered_motor_steering_or_switching_itself_off` then measured what a gain of −1.0
+    /// actually does: the controller clamps the amplitude to **a tenth** on a six-celled body and
+    /// to **nothing at all** on a larger one. `when_a_motor_earns_is_it_travelling_or_being_pulled_straight`
+    /// caught it independently — at fourteen and eighteen cells, a body with a motor and a body
+    /// with a sclerocyte in the same slot had the **same extent and the same travel to three
+    /// significant figures**. The two arms were physically identical, so the sweep was measuring
+    /// noise between two copies of the same body.
+    ///
+    /// The gain is 0.0 here for that reason: a motor that runs. What was measured before, kept
+    /// because it is the reason for the change:
+    ///
+    /// | cells | mean %/gen | spread | the three seeds |
+    /// | --- | --- | --- | --- |
+    /// | 6 | −1.616 | 2.85 | −0.34, −1.31, −3.20 |
+    /// | 10 | −3.207 | 6.65 | −0.76, −1.45, −7.41 |
+    /// | 14 | +0.724 | 5.29 | +1.15, −2.13, +3.16 |
+    /// | 18 | — | — | +0.63, **extinct**, −0.14 |
+    ///
+    /// ⚠️ Eighteen cells is dropped from the sweep: an arm went extinct there, and a hand-built
+    /// chain that long is past the size anything in this world has been shown to live at.
     #[test]
     #[ignore = "twelve 42,000-tick competition runs; run deliberately with --ignored"]
     fn does_a_motor_pay_on_a_body_big_enough_to_afford_one() {
@@ -3898,14 +3978,14 @@ mod tests {
         println!("cells | motor vs sclerocyte, %/gen (mean of 3) | spread | seeds");
 
         let mut readings = Vec::new();
-        for photocytes in [2usize, 6, 10, 14] {
+        for photocytes in [2usize, 6, 10] {
             let plan = plan(photocytes);
             let cells = plan.len() + 1;
             let mut each = Vec::new();
 
             for seed in [42u64, 43, 44] {
                 let config = seeded_world(seed, |raw| raw.physics.thrust = 40.0);
-                let motorised = swimmer(&config.limits, &plan, BEAT, -1.0);
+                let motorised = swimmer(&config.limits, &plan, BEAT, 0.0);
                 let inert = {
                     let mut genes = motorised.genes().to_vec();
                     let last = genes.len() - 1;
@@ -3975,6 +4055,201 @@ mod tests {
             "the widest between-seed spread in the sweep is {worst_spread:.2} %/generation, \
              which is too wide to read a trend through. The competition assay's floor is ±0.11 \
              and its arms are meant to agree to within a few tenths"
+        );
+    }
+
+    /// ⭐⭐⭐ When a motor earns its keep, is it travelling or just being pulled straight?
+    ///
+    /// A flagellocyte at the tail of a chain does two things at once. It drags the body through
+    /// the water — and it **pulls the chain straight**. `behaviour.rs`'s committed
+    /// `a_spread_out_body_earns_more_than_a_compact_one` says the second is worth real energy on
+    /// its own, because a photocyte shaded by the cell above it harvests nothing. **So a
+    /// motorised body earning more than an inert one is not evidence of locomotion**, and every
+    /// income figure in this round has quietly assumed it was.
+    ///
+    /// The two come apart on the numbers: locomotion means a large **displacement**, shape means
+    /// a large **extent** with the body going nowhere. This measures both, against the identical
+    /// body with a sclerocyte where the motor is, across the sizes
+    /// `does_a_motor_pay_on_a_body_big_enough_to_afford_one` sweeps.
+    ///
+    /// ⚠️ If extent rises with size while displacement falls, then what a motor sells to a large
+    /// body is **posture**, and the honest name for the organelle is a strut that happens to
+    /// wander. That would not make it useless — it would make every claim in this round about
+    /// *reaching* things wrong, and predation would be no nearer than it was.
+    #[test]
+    #[ignore = "a lifetime per arm; run deliberately with --ignored"]
+    fn when_a_motor_earns_is_it_travelling_or_being_pulled_straight() {
+        const WATCH: u64 = 1_500;
+
+        let plan = |photocytes: usize, tail: CellKind| {
+            let mut plan = vec![CellKind::Photocyte; photocytes];
+            plan.push(CellKind::Gonocyte);
+            plan.push(CellKind::Sensocyte);
+            plan.push(tail);
+            plan
+        };
+
+        println!("cells | motor extent | inert extent | extent gain | motor travel | inert travel");
+
+        let mut readings = Vec::new();
+        for photocytes in [2usize, 6, 10, 14] {
+            let cells = photocytes + 4;
+            let tune = |raw: &mut RawConfig| raw.physics.thrust = 40.0;
+
+            let (motor_extent, motor_travel) = spreads(
+                42,
+                tune,
+                |limits| {
+                    swimmer(
+                        limits,
+                        &plan(photocytes, CellKind::Flagellocyte),
+                        BEAT,
+                        -1.0,
+                    )
+                },
+                WATCH,
+            );
+            let (inert_extent, inert_travel) = spreads(
+                42,
+                tune,
+                |limits| swimmer(limits, &plan(photocytes, CellKind::Sclerocyte), BEAT, -1.0),
+                WATCH,
+            );
+
+            println!(
+                "{cells:5} | {motor_extent:12.2} | {inert_extent:12.2} | {:11.3} | \
+                 {motor_travel:12.2} | {inert_travel:12.2}",
+                motor_extent / inert_extent
+            );
+            readings.push((
+                cells,
+                motor_extent,
+                inert_extent,
+                motor_travel,
+                inert_travel,
+            ));
+        }
+
+        let (_, small_extent, small_inert, small_travel, _) = readings[0];
+        let (_, big_extent, big_inert, big_travel, _) = readings[readings.len() - 1];
+
+        println!(
+            "\nPOSTURE OR TRAVEL: at the smallest size a motor makes the body {:.3}x wider and \
+             carries it {small_travel:.1} units; at the largest, {:.3}x wider and \
+             {big_travel:.1} units. If the width ratio rises while the travel falls, a motor \
+             sells posture to a large body rather than movement.",
+            small_extent / small_inert,
+            big_extent / big_inert
+        );
+
+        // ⚠️ No direction asserted — this is a diagnostic, and both answers are informative. What
+        // is held is that the instrument is reading: a body with a motor has to differ from the
+        // same body without one in at least one of the two quantities, or nothing is being
+        // measured at all.
+        assert!(
+            (big_extent - big_inert).abs() > 0.01 || (big_travel - small_travel).abs() > 0.01,
+            "at the largest size a motorised body and an inert one had the same extent \
+             ({big_extent:.3} against {big_inert:.3}) and the motorised body travelled \
+             {big_travel:.3}. Nothing distinguishes the two arms, so neither this test nor the \
+             coefficients taken on the same pair of bodies mean anything"
+        );
+    }
+
+    /// ⚠️⚠️⚠️ Is a "steered" motor steering, or just switching itself off?
+    ///
+    /// **This test exists because the answer is the second one, and the round's headline result
+    /// was written before anybody checked.**
+    ///
+    /// `can_a_motor_that_can_steer_pay_for_itself` reported that a `sensor_gain` of −1.0 makes a
+    /// motor earn 170% of its keep against a blind motor's 88%, and
+    /// `is_a_steered_motor_worth_more_than_a_blind_one` measured the pair one mutation apart at
+    /// **+2.358 %/generation over three seeds, all positive**. Both readings are real. The
+    /// *interpretation* put on them — orthokinesis, a body racing through the dark and crawling
+    /// in the bright — was not checked at all.
+    ///
+    /// `behaviour.rs`'s controller is `clamp(resting_amplitude + sensor_gain × signal, 0, 1)`
+    /// with `resting_amplitude` at 0.8. **At a gain of −1.0, any sensocyte signal at or above 0.8
+    /// clamps the amplitude to nought and the motor stops entirely.** That is not a body steering.
+    /// That is a body with its engine off, saving the running cost.
+    ///
+    /// The tell was in a different test.
+    /// `when_a_motor_earns_is_it_travelling_or_being_pulled_straight` measured, at a gain of −1.0:
+    ///
+    /// | cells | motor travel | inert travel |
+    /// | --- | --- | --- |
+    /// | 6 | 6.26 | 1.82 |
+    /// | 10 | 1.98 | 2.02 |
+    /// | 14 | **2.02** | **2.02** |
+    /// | 18 | **2.02** | **2.02** |
+    ///
+    /// A body with a motor and a body with a **sclerocyte** in the same slot travel the same
+    /// distance to three significant figures. The motor is not running.
+    ///
+    /// This test measures the throttling directly, by travel, across the gain and across
+    /// `osc_freq`. If a gain of −1.0 is equivalent to simply owning a smaller motor, the two
+    /// sweeps meet.
+    #[test]
+    #[ignore = "a lifetime per arm; run deliberately with --ignored"]
+    fn is_a_steered_motor_steering_or_switching_itself_off() {
+        const PLAN: [CellKind; 5] = [
+            CellKind::Photocyte,
+            CellKind::Photocyte,
+            CellKind::Gonocyte,
+            CellKind::Sensocyte,
+            CellKind::Flagellocyte,
+        ];
+        const WATCH: u64 = 1_500;
+
+        println!("gain  | beat | travel");
+        let mut steered = Vec::new();
+        for gain in [0.0f32, -0.25, -0.5, -0.75, -1.0] {
+            let (travel, _) = travels(
+                42,
+                |raw| raw.physics.thrust = 40.0,
+                |limits| swimmer(limits, &PLAN, BEAT, gain),
+                WATCH,
+            );
+            println!("{gain:5.2} | {BEAT:4.1} | {travel:.2}");
+            steered.push((gain, travel));
+        }
+
+        println!("\nand a BLIND motor at reduced beat, for comparison:");
+        println!("gain  | beat | travel");
+        let mut throttled = Vec::new();
+        for beat in [3.0f32, 2.0, 1.0, 0.5, 0.25] {
+            let (travel, _) = travels(
+                42,
+                |raw| raw.physics.thrust = 40.0,
+                |limits| swimmer(limits, &PLAN, beat, 0.0),
+                WATCH,
+            );
+            println!(" 0.00 | {beat:4.1} | {travel:.2}");
+            throttled.push((beat, travel));
+        }
+
+        let blind = steered[0].1;
+        let hardest_steered = steered[steered.len() - 1].1;
+        println!(
+            "\nTHROTTLE: a blind motor at beat {BEAT} travels {blind:.2}; the same motor at a \
+             gain of −1 travels {hardest_steered:.2}, which is {:.1}% of it. A motor's thrust \
+             is linear in amplitude, so that ratio IS the mean amplitude the sensor left it \
+             running at.",
+            hardest_steered / blind * 100.0
+        );
+
+        // ⚠️⚠️ **The correction, asserted so it cannot quietly come back.** A negative gain must
+        // be shown to *throttle*, because every claim in this round that called it steering
+        // rests on it doing something else. If a future change makes a steered motor travel
+        // nearly as far as a blind one, then the controller has genuinely started modulating
+        // rather than clamping, and every conclusion here is reopened — which is worth being
+        // told about loudly.
+        assert!(
+            hardest_steered < blind * 0.5,
+            "a motor at a sensor gain of −1 travelled {hardest_steered:.2} against a blind \
+             motor's {blind:.2}, which is more than half. The measured figures are 6.26 and \
+             59.9 — about a tenth — and the whole correction in this test's documentation \
+             depends on a negative gain CLAMPING the amplitude to nought rather than modulating \
+             it. If that has changed, re-read every result in docs/NEXT.md section 8"
         );
     }
 }

@@ -35,14 +35,29 @@ an exaptation of machinery that already worked.
 | **Cost curve** | Turns over: at thrust 250 a body dies at tick 273, at 600 in three ticks. Running cost goes as force², travel as force. Nobody chose that — it is Stokes drag. |
 | **Income, blind** | +3.38% more food found, gross. But at thrust 100 a body finds **8% less** — `light.gradient` is 0.75 and an unsteered body walks out of the light. |
 | **The bar** | A flagellocyte costs 0.006/tick — **9.0 over 1,500 ticks** — and blind travel finds 4.7. **It earns half its keep.** Every null in this round is that one ratio. |
-| **⭐⭐⭐ Steered** | `sensor_gain = −1.0` on a body with a sensocyte adhered to the motor: **+15.34, which is 170% of its keep.** Travel falls to 6.3 units. |
+| ⚠️ "Steered" | `sensor_gain = −1.0`: scored best, and **it is the motor switching itself off.** See the retraction below. |
 
-⭐⭐⭐ **The winning sign is negative, and that is orthokinesis.** Drive the motor *softer* where
-the sensor reads more light, and a body races through the dark and crawls in the bright; a
-population piles up where it is worth being. **The point is not to go far, it is to stop
-somewhere good.** *E. coli* has no rudder either — it modulates how long it swims before
-tumbling, and that alone climbs a gradient. This world reproduced the constraint by accident and
-then reproduced the solution.
+### ⚠️⚠️⚠️ The retraction — read this before believing anything about steering
+
+A `sensor_gain` of −1.0 was reported as **orthokinesis** earning 170% of its keep, and as
+**+2.358 %/generation** over a blind motor across three seeds. The coefficient is real. The
+mechanism is not what it was called.
+
+`behaviour.rs`'s controller is `clamp(resting_amplitude + sensor_gain × signal, 0, 1)` with
+`resting_amplitude` at 0.8, so **at a gain of −1.0 any signal at or above 0.8 clamps the amplitude
+to nought and the motor stops.** Measured: a gain of −1.0 leaves the motor at **10.5% amplitude**,
+and the gain sweep and a plain beat-frequency sweep trace the *same curve*. It is a throttle, not
+a rudder. Independently: at fourteen and eighteen cells a body with a motor and a body with a
+**sclerocyte** in that slot have the same extent and the same travel to three significant figures
+— the motor is not running at all.
+
+So the "170%" figure added back a running cost that was never spent (cost goes as force², and the
+motor was at a tenth). And the +2.358 %/gen is *a throttled motor beating a full-throttle one* —
+what a negative gain buys is the running cost it avoids. Real, and much smaller than it looked.
+
+⭐ **The lesson, and it is the third instance in one round: a parameter with a good coefficient is
+not a mechanism.** What caught this was asking a question with no coefficient in it — *how far
+does the body actually move?*
 
 ⚠️ **Every body measured in the first five experiments of this round had `sensor_gain = 0`.** The
 round priced an organelle with its one steering input nailed shut, and that is what the five
@@ -438,12 +453,16 @@ stranger, and it does it for a price the physics set rather than one anybody cho
 the distance problem is a **price** problem, and it is now known to one decimal: a motor costs
 0.006 a tick and blind travel earns 0.0037. **The reach gap is closed and the ledger is not.**
 
-And the ledger closes too, in the one configuration nothing in the first five experiments tried:
-a motor with a sensor wired to it and a *negative* gain earns **170% of its keep**. Whether that
-survives selection is the reading in flight as this was written; whether a lineage can assemble a
-sensocyte, a flagellocyte and the right sign of one number is the open question, and it is a
-question about **evolution finding a combination** rather than about whether the combination is
-worth finding. That is a better place to be stuck than any of the ten rounds before it.
+⚠️ **And the ledger does not close.** For a while it looked as though it did — a motor with a
+sensor and a negative gain appeared to earn 170% of its keep — and that was the motor switching
+itself off; see the retraction in section 0. Every honest reading has a motor as a loss: −2.5
+%/generation as a founder's third cell, −1.6 on a five-celled body that already senses, and no
+trend with body size that survives its own between-seed spread.
+
+**Predation is measured too, and it is three parts in ten thousand of world income** — in the
+shipped world, under Kleiber, and under Kleiber-plus-motors alike, with the *shipped* world highest
+of the three. Making bodies bigger does not buy predation; the extra surface a large body has is
+surface against its own other cells.
 
 **The best thing built here is still not a feature.** It is that this project can tell a real
 effect from a hopeful one in forty minutes, and used that — in this round alone — to kill its own

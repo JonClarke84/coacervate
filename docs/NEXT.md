@@ -999,3 +999,73 @@ strangers.
 
 ⚠️ **Do not retry "grow the bodies and predation will follow."** It is now measured, in the profile
 built for it.
+
+---
+
+## ⚠️⚠️⚠️ RETRACTION: Results 6 and 7 were misread. "Steering" is the motor switching itself off.
+
+**Read this before Results 6 and 7 above. They are left standing rather than edited, because how
+the mistake was made is worth more than the tidied version.**
+
+### What was claimed
+
+That a `sensor_gain` of −1.0 produces **orthokinesis** — a body racing through the dark and
+crawling in the bright — earning 170% of its keep against a blind motor's 88%, and worth
+**+2.358 %/generation** in the competition assay across three seeds, all positive.
+
+### What is actually happening
+
+`behaviour.rs`'s controller is `clamp(resting_amplitude + sensor_gain × signal, 0, 1)`, with
+`resting_amplitude` at 0.8. **At a gain of −1.0 any sensocyte signal at or above 0.8 clamps the
+amplitude to nought and the motor stops.** Measured directly, by
+`is_a_steered_motor_steering_or_switching_itself_off`:
+
+| `sensor_gain` | travel | | blind motor at beat | travel |
+| --- | --- | --- | --- | --- |
+| 0.00 | 59.86 | | 3.0 | 59.86 |
+| −0.25 | 43.84 | | 2.0 | 37.89 |
+| −0.50 | 29.63 | | 1.0 | 15.95 |
+| −0.75 | 17.68 | | 0.5 | 5.11 |
+| **−1.00** | **6.26** | | 0.2 | 0.90 |
+
+**They are the same curve.** A gain of −1.0 leaves the motor running at **10.5% amplitude** — it
+is equivalent to owning a motor with a beat of about 0.55. That is a throttle, not a rudder.
+
+And `when_a_motor_earns_is_it_travelling_or_being_pulled_straight` caught it independently, on a
+different quantity:
+
+| cells | motor extent | inert extent | motor travel | inert travel |
+| --- | --- | --- | --- | --- |
+| 6 | 55.41 | 42.36 | 6.26 | 1.82 |
+| 10 | 85.11 | 74.18 | 1.98 | 2.02 |
+| **14** | 111.80 | 106.00 | **2.02** | **2.02** |
+| **18** | **128.37** | **128.37** | **2.02** | **2.02** |
+
+At fourteen and eighteen cells a body with a motor and a body with a **sclerocyte** in the same
+slot have the same extent and the same travel to three significant figures. **The motor is not
+running at all.**
+
+### What that does to the two results
+
+**Result 6's "170% of its keep" is wrong.** It reported `moving + paid − still`, where `paid` was
+computed in closed form at the amplitude of an *unmodulated* motor. The motor was running at a
+tenth, so it spent about **one per cent** of what was being added back — cost goes as the square
+of force — and the figure was inflated by nearly the whole of `paid`. The test now reports **net**
+(`moving − still`), which needs no cost model, contains every cost the motor actually incurred,
+and is what selection sees.
+
+**Result 7's +2.358 %/generation is real and its interpretation is wrong.** It is a measured
+competition coefficient and no cost model went near it. But what it measures is *a motor throttled
+to a tenth* beating *a motor at full throttle* — so what a negative gain buys is mostly **the
+running cost it does not pay**. It is not evidence that steering is worth anything. It is evidence
+that **running a motor at full throttle in this world is expensive enough to be worth avoiding**,
+which is a real finding and a much smaller one.
+
+### ⭐ The general lesson, which is the third instance of it this round
+
+**A parameter with a good coefficient is not a mechanism.** Three times now — the single-seed
+invasion reading, the `earns` helper measuring the weather, and this — a number came back looking
+like a discovery and the thing behind it was not what the name said. What caught this one was
+asking a question with **no coefficient in it at all**: *how far does the body actually move?*
+
+⚠️ **A number is a claim about a mechanism, and the mechanism has to be measured separately.**
