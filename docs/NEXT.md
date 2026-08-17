@@ -914,3 +914,56 @@ rather than a world in which nothing can pay at all.
 3. ⚠️ **Do not ship `physics.thrust` live on the strength of Result 7.** What is measured is the
    value of a wiring, not the value of an organelle, and this round has already had one result
    destroyed by replication.
+
+### ⚠️ Result 8: a motor is still a loss on a body that already senses
+
+`is_a_motor_worth_having_on_a_body_that_already_senses`. Two five-celled bodies, **one
+`child_kind` mutation apart** — two photocytes, a gonocyte, a sensocyte, and a fifth cell that is
+either a sclerocyte (the cheapest, most inert thing in the world) or a flagellocyte at
+`sensor_gain = −1.0`. Both arms carry the same gain, built by taking the motorised genome and
+swapping that one field, so `one_mutation_apart` accepts them.
+
+| seed | %/generation |
+| --- | --- |
+| 42 | −0.344 |
+| 43 | −1.307 |
+| 44 | −3.198 |
+| **mean** | **−1.616** |
+
+**All three negative.** Steering halves the penalty — the founder's third flagellocyte is −2.5
+and this is −1.6 — but it does not close it.
+
+⚠️ **Seed 42 alone reads −0.344, which is nearly break-even**, and it was described that way once
+before the other two arrived. It is one seed. This round has now been burned by a single seed
+twice.
+
+### ⭐ The three coefficients together, which is the useful form
+
+On a five-celled sensing body, against a sclerocyte in the same slot:
+
+| the fifth cell | %/generation |
+| --- | --- |
+| a sclerocyte | 0 — the reference |
+| **a steered motor** | **−1.62** |
+| a blind motor | ≈ **−3.97**, being −1.62 less the +2.36 that steering is worth |
+
+**Steering is worth +2.36 and the motor is worth −3.97, and the sum is still negative.** What is
+now known precisely is the size of the hole: **1.6 %/generation**, which is about 1.5 energy units
+over a lifetime on a body that earns 139.
+
+### ⚠️ What this does and does not close off
+
+It does **not** say locomotion cannot pay here. Every arm measured in this round has been a body
+of four or five cells with two photocytes, because that is what the competition assay's
+one-mutation constraint allows. `metabolism.scaling_exponent` at 0.75 produces bodies of
+**forty-nine** cells in `config/emergence.toml`, and **a motor's cost is flat in body size while
+the food its travel finds is not.**
+
+Nothing has measured a motor on a body of that size. The one attempt —
+`is_a_motor_worth_having_on_a_body_that_can_afford_one`, at seven cells — came back with a
+between-seed spread of 28 %/generation, and its own instrument check refused to let the numbers be
+quoted.
+
+**That is the open question**, and it needs an instrument that does not exist yet: a competition
+assay whose resident *and* both arms are large bodies, so the marginal cell is hung on something
+that can afford it.

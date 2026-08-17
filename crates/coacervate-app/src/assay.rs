@@ -3790,4 +3790,76 @@ mod tests {
              to explain rather than the organelle. The three: {readings:?}"
         );
     }
+
+    /// ⭐⭐⭐ Is a motor worth having on a body that has already grown a sensor? The rung above.
+    ///
+    /// `is_a_steered_motor_worth_more_than_a_blind_one` says that **given** a motor and a sensor
+    /// side by side, the sign of the number joining them is worth +2.36 %/generation. It does not
+    /// say the motor is worth having. This asks that, on the one body where the answer could
+    /// plausibly be yes: a body that already carries the sensor.
+    ///
+    /// Both arms are five cells — two photocytes, a gonocyte, a sensocyte, and a fifth cell that
+    /// is either a **sclerocyte** or a **flagellocyte**. The sclerocyte is the fairest control
+    /// there is: the cheapest, most inert thing in the world, so the difference is what the motor
+    /// *does* rather than what it costs relative to something that also earns.
+    ///
+    /// ⚠️ **Both arms carry the same `sensor_gain`**, which the plain `swimmer` builder would not
+    /// give them — it sets a gain only on cells it considers driven, so a sclerocyte arm would
+    /// come back with a gain of nought and the two would differ in **two** genes rather than one.
+    /// `one_mutation_apart` inside the assay would refuse them, and rightly. The genome is built
+    /// from the flagellocyte plan and then has that one `child_kind` swapped, which leaves every
+    /// other field identical by construction.
+    #[test]
+    #[ignore = "two 42,000-tick competition runs; run deliberately with --ignored"]
+    fn is_a_motor_worth_having_on_a_body_that_already_senses() {
+        const PLAN: [CellKind; 5] = [
+            CellKind::Photocyte,
+            CellKind::Photocyte,
+            CellKind::Gonocyte,
+            CellKind::Sensocyte,
+            CellKind::Flagellocyte,
+        ];
+
+        let mut readings = Vec::new();
+        for seed in [42u64, 43, 44] {
+            let config = seeded_world(seed, |raw| raw.physics.thrust = 40.0);
+            let motorised = swimmer(&config.limits, &PLAN, BEAT, -1.0);
+
+            // The same genome with the last gene's `child_kind` swapped and nothing else touched.
+            let inert = {
+                let mut genes = motorised.genes().to_vec();
+                let last = genes.len() - 1;
+                genes[last].child_kind = CellKind::Sclerocyte;
+                coacervate_sim::genome::Genome::new(genes, &config.limits)
+            };
+
+            let outcome = assay(&config, [&inert, &motorised], WINDOW);
+            report(
+                &format!("a motor against dead weight, seed {seed}"),
+                &outcome,
+            );
+            readings.push(outcome.per_generation() * 100.0);
+        }
+
+        let mean = readings.iter().sum::<f64>() / 3.0;
+        let worst = readings.iter().copied().fold(f64::INFINITY, f64::min);
+        println!(
+            "\nTHE RUNG: on a body that already has a sensor, a fifth cell that is a motor is \
+             worth {mean:+.3} %/generation against one that is a sclerocyte, meaned over three \
+             seeds. Weakest seed {worst:+.3}. The three: {readings:?}"
+        );
+
+        // ⚠️ No direction is asserted, and that is deliberate. Every earlier reading in this round
+        // says a motor is a loss and the steering reading says its wiring is a gain; this is the
+        // first measurement that could go either way on the evidence, so what is held is only
+        // that the seeds agree with each other well enough for the mean to mean anything.
+        let spread = readings.iter().copied().fold(f64::NEG_INFINITY, f64::max) - worst;
+        assert!(
+            spread < 6.0,
+            "the three seeds spread {spread:.3} %/generation around a mean of {mean:+.3}, which \
+             is too wide to read either way: {readings:?}. The competition assay's floor is \
+             ±0.11 and its arms are meant to agree to within a few tenths, so a spread this \
+             size means the arms are not competing so much as taking turns to be lucky"
+        );
+    }
 }
