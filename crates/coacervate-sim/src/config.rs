@@ -108,6 +108,7 @@ pub struct RawBehaviour {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawMetabolism {
+    pub tissue_share: f64,
     pub upkeep_scale: f64,
     pub scaling_exponent: f64,
     pub gene_cost: f64,
@@ -222,6 +223,7 @@ pub fn spec_defaults() -> RawConfig {
         },
         metabolism: RawMetabolism {
             upkeep_scale: 1.0,
+            tissue_share: 0.0,
             scaling_exponent: 1.0,
             gene_cost: 0.0001,
             movement_cost: 0.0001,
@@ -1417,6 +1419,26 @@ pub struct BehaviourConfig {
 pub struct MetabolismConfig {
     pub upkeep_scale: f32,
 
+    /// ⭐⭐⭐ What fraction of a body's construction cost is **locked into its tissue** at birth:
+    /// energy it has paid for its body, cannot spend, and gives up when it dies or is eaten.
+    ///
+    /// See [`crate::organism::Organism::tissue`] for the whole argument. The short form is that
+    /// predation is measured at three parts in ten thousand of this world's income and scavenging
+    /// at one part, **not because mouths cannot find food but because there is nothing in the
+    /// larder**. A fifty-five-celled body is worth about 220 units of construction and holds none
+    /// of it; a devorocyte costs 15.6 units to run for a lifetime. At 1.0 that body becomes a
+    /// 220-unit larder that cannot run away.
+    ///
+    /// ⭐ And the half that is easy to miss: **it makes being big cost something.** Growth is free
+    /// in this world, which is why it converges on one strategy - the largest photosynthetic mat
+    /// it can build. Charge for tissue and there is a trade between large-rich-slow and
+    /// small-cheap-fast, which is the predator/prey axis. Two trophic levels are not available in
+    /// a world where one strategy has no opportunity cost.
+    ///
+    /// ⚠️ **Ships at nought**, so this world is bit-for-bit the world every figure in the project
+    /// was measured on. Bounded at one: a body cannot lock away more than it cost to build.
+    pub tissue_share: f32,
+
     /// The power a body's own cell count raises its summed upkeep to: SPEC section 10's
     /// `(sum of its cells' upkeeps) × n^(scaling_exponent − 1)`.
     ///
@@ -1739,6 +1761,7 @@ impl RawConfig {
                 // The document calls it a "temperature": scale it to zero and nothing
                 // costs anything to be alive.
                 upkeep_scale: positive("metabolism.upkeep_scale", self.metabolism.upkeep_scale)?,
+                tissue_share: fraction("metabolism.tissue_share", self.metabolism.tissue_share)?,
                 // ⭐ The power a body's summed upkeep is raised to as it grows. One is linear
                 // and is what ships, so the multiplier is exactly 1.0 at every size and the
                 // default world is the world every figure in this project was measured on; a
@@ -1871,6 +1894,7 @@ mod tests {
             ),
             ("behaviour.stroke", raw.behaviour.stroke),
             ("metabolism.upkeep_scale", raw.metabolism.upkeep_scale),
+            ("metabolism.tissue_share", raw.metabolism.tissue_share),
             (
                 "metabolism.scaling_exponent",
                 raw.metabolism.scaling_exponent,
@@ -1917,8 +1941,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            35,
-            "SPEC section 3 has thirty-five decimal settings; this list has {}, so one has \
+            36,
+            "SPEC section 3 has thirty-six decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );

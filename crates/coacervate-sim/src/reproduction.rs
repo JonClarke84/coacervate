@@ -144,6 +144,10 @@ pub struct Reproduction {
     /// child.
     share: f64,
 
+    /// SPEC.s `metabolism.tissue_share`: what fraction of its construction cost a newborn locks
+    /// into its own tissue. See [`crate::config::MetabolismConfig::tissue_share`].
+    tissue_share: f64,
+
     /// SPEC section 3's `[mutation]` table, which [`mutate`] reads.
     mutation: MutationConfig,
 
@@ -162,6 +166,7 @@ impl Reproduction {
         Self {
             threshold: f64::from(config.metabolism.reproduction_threshold),
             share: f64::from(config.metabolism.offspring_share),
+            tissue_share: f64::from(config.metabolism.tissue_share),
             mutation: config.mutation.clone(),
             limits: config.limits.clone(),
             world: config.world.clone(),
@@ -179,6 +184,7 @@ impl Reproduction {
     pub fn retune(&mut self, config: &Config) {
         self.threshold = f64::from(config.metabolism.reproduction_threshold);
         self.share = f64::from(config.metabolism.offspring_share);
+        self.tissue_share = f64::from(config.metabolism.tissue_share);
         self.mutation = config.mutation.clone();
     }
 
@@ -287,6 +293,28 @@ impl Reproduction {
                 grown.cells.len(),
                 grown.springs.len(),
             ));
+            // ⭐⭐⭐ **The newborn pays for its own body.** `metabolism.tissue_share` of what the
+            // body cost to build is moved out of what it can spend and into its tissue, where
+            // upkeep cannot reach it and death gives it up.
+            //
+            // Here rather than at development, because a body in this world is laid out WHOLE at
+            // birth -- there is no incremental growth to charge for, and the child has just been
+            // handed `offspring_share` of its parent, which at the shipped settings is about its
+            // own construction cost. So this is the one moment a body exists and has the money.
+            //
+            // ⚠️ It takes only what is there. A child too poor to pay for itself locks what it can
+            // and is simply worth less as a corpse; it is not killed for being poor, which would
+            // be a second death rule nobody asked for.
+            if self.tissue_share > 0.0 {
+                let owed = self.tissue_share
+                    * construction_energy(
+                        &cells[cell_slot(nest, &self.limits).start..][..grown.cells.len()],
+                    );
+                if let Some(newborn) = organisms[nest].as_mut() {
+                    newborn.invest(owed);
+                }
+            }
+
             *next_serial = next_serial
                 .checked_add(1)
                 .expect("a run has minted every serial number there is");

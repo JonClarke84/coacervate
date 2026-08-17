@@ -541,7 +541,14 @@ impl Metabolism {
                 continue;
             }
 
-            let held = organism.energy();
+            // ⭐⭐⭐ **Everything it was holding, spendable or not.** A body that has locked energy
+            // into its own tissue gives that up here and nowhere else -- upkeep cannot reach it
+            // and neither can reproduction, so a corpse is worth what the body cost to build
+            // rather than whatever happened to be in its pocket. See `Organism::tissue`.
+            //
+            // ⚠️ At `metabolism.tissue_share = 0.0`, which is what ships, nothing is ever locked
+            // and this is `energy()` exactly as it was.
+            let held = organism.holdings();
             let body = organism.cells();
             if held > 0.0 {
                 self.scatter(cells, slot, body, held, drift, ledger);

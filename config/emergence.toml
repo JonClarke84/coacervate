@@ -158,6 +158,10 @@ resting_amplitude = 0.8
 stroke = 1.0
 
 [metabolism]
+# ⭐⭐⭐ `tissue_share` locks this fraction of a body's construction cost into its tissue at
+# birth: unspendable, unreachable by upkeep, released to detritus when it dies and drainable
+# by a mouth. Ships at nought. See config.rs's MetabolismConfig::tissue_share.
+tissue_share = 0.0
 upkeep_scale = 8.0       # ⭐ **The third, and the one that does most of the work.** SPEC section
                          # 3 calls this the world's temperature and section 10 charges
                          # `(Σ cells' upkeep) × n^(k-1) × upkeep_scale`; `metabolism.rs` puts

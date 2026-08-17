@@ -104,7 +104,7 @@ const MIN_PARALLEL_RUN: usize = 256;
 /// ⚠️⚠️ **This is now `light.uptake` and this constant is only the shipped default.** It was a
 /// compiled-in number for eleven rounds and was never once swept; `docs/PHASE4.md` records it
 /// being declined as a slider on the grounds that `influx` and `upkeep_scale` already spanned the
-/// balance space. They span the world.s WEALTH. This spans its GRAIN, which is a different axis
+/// balance space. They span the world's WEALTH. This spans its GRAIN, which is a different axis
 /// and is the one every locomotion result in this project turned out to depend on.
 /// ⚠️ Only the SHIPPED DEFAULT now, and only the tests below read it. The live value is
 /// `light.uptake`, threaded through [`Behaviour::uptake`]. `config.rs`.s `spec_defaults` carries
@@ -602,6 +602,16 @@ pub struct Behaviour {
     /// travels in one tick, which is what turns force into work.
     thrust_work: f64,
 
+    /// What each organism has had **eaten out of it** this tick, kept apart from what it spent.
+    ///
+    /// ⚠️ **These two must not share an accumulator and the reason is the tissue account.** What
+    /// a body spends comes out of what it can spend, and a body whose spendable energy reaches
+    /// nought has starved. What a predator takes comes out of the pocket first and then out of
+    /// the **body** -- see `Organism::strip`. Run through one total, a body that could not afford
+    /// its own muscles would eat its own scaffolding to stay alive, which is precisely what
+    /// `Organism::tissue` exists to prevent.
+    eaten: Vec<f64>,
+
     /// Whether each cell has any adhesion at all, rebuilt each tick.
     ///
     /// [`Behaviour::propel`] needs the same answer `physics.rs` gets from its bond index, and
@@ -698,6 +708,7 @@ impl Behaviour {
             stroke: config.behaviour.stroke,
             thrust: config.physics.thrust,
             thrust_work: thrust_work(config),
+            eaten: vec![0.0; slots],
             adhesions: vec![false; cells],
             width: config.world.width,
             shadow: Shadow::of(config),
@@ -756,6 +767,7 @@ impl Behaviour {
 
         self.gained[..organisms.len()].fill(0.0);
         self.lost[..organisms.len()].fill(0.0);
+        self.eaten[..organisms.len()].fill(0.0);
         self.flow[..population].fill(0.0);
         self.hash.rebuild(population, |index| cells[index].pos);
         self.drift
@@ -1270,7 +1282,7 @@ impl Behaviour {
             hash,
             drift,
             gained,
-            lost,
+            eaten,
             demand,
             share,
             flow,
@@ -1287,7 +1299,14 @@ impl Behaviour {
             // An organism already in the red has nothing left to give. Its energy is floored
             // at nothing rather than used as it stands, because a negative share would turn
             // every mouth on it into a source of energy rather than a drain on one.
-            let held = organism.as_ref().map_or(0.0, Organism::energy).max(0.0);
+            // ⭐⭐⭐ **Holdings, not spendable energy** — so a mouth can reach the larder. A body
+            // that has locked its construction into tissue must be WORTH MORE to eat than one
+            // that has not; reading `energy` here would have made it worth less, since locking
+            // moves energy out of the pool a bite was rationed against. See `Organism::strip`.
+            //
+            // ⚠️ At `metabolism.tissue_share = 0.0`, which ships, tissue is always nought and this
+            // is `energy()` exactly as it was.
+            let held = organism.as_ref().map_or(0.0, Organism::holdings).max(0.0);
 
             share[slot] = if demand[slot] > held {
                 held / demand[slot]
@@ -1309,7 +1328,7 @@ impl Behaviour {
 
                 ledger.predate(taken);
                 gained[owner[mouth]] += taken;
-                lost[victim] += taken;
+                eaten[victim] += taken;
                 flow[mouth] += narrowed(taken);
                 flow[bitten] -= narrowed(taken);
             },
@@ -1362,7 +1381,18 @@ impl Behaviour {
             };
 
             organism.gain(self.gained[slot]);
+
+            // What it SPENT, out of what it can spend. A body whose spendable energy reaches
+            // nought has starved, and `metabolism.rs` reaps it.
             organism.lose(self.lost[slot]);
+
+            // ⭐ And what was EATEN out of it: the pocket first, then the body behind it. A
+            // predator that has drained a victim.s spendable energy goes on to its tissue, which
+            // is the whole of what makes a body worth eating. See `Organism::strip`.
+            let owed = self.eaten[slot];
+            let pocket = organism.energy().max(0.0).min(owed);
+            organism.lose(pocket);
+            organism.strip(owed - pocket);
         }
 
         for (index, cell) in cells.iter_mut().enumerate() {

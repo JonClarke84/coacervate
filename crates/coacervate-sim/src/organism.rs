@@ -105,6 +105,38 @@ pub struct Organism {
     /// width as the account, every movement is exact and there is no difference to lose.
     energy: f64,
 
+    /// ⭐⭐⭐ What this organism has locked up in its own tissue: energy it has paid for its body,
+    /// cannot spend, and gives up when it dies or is eaten.
+    ///
+    /// # Why a second account rather than a bigger first one
+    ///
+    /// Because the whole point is that it is **not spendable**. `metabolism.rs` charges upkeep
+    /// against [`Organism::energy`] and kills a body when that reaches nought; if construction
+    /// were in the same pool a starving body would eat its own scaffolding and there would be
+    /// nothing left in a corpse, which is the thing this exists to change.
+    ///
+    /// # What it is for
+    ///
+    /// Measured over twelve rounds: **predation is three parts in ten thousand of this world.s
+    /// income and scavenging is one part in ten thousand.** Not because mouths cannot find food —
+    /// dispersal that put 76% of a mouth's contacts on strangers made it *worse* - but because
+    /// there is nothing in the larder. A body holds nine to twenty units while alive and releases
+    /// about that when it dies, against a devorocyte's whole-lifetime cost of 15.6. Robbing a
+    /// body's entire savings, perfectly, once, barely covers one mouth for one life.
+    ///
+    /// A fifty-five-celled body is worth about **220 units of construction** and holds none of
+    /// it. Locking that in tissue makes prey a larder that cannot run away - and, less obviously
+    /// and more importantly, **makes being big cost something**. Growth is currently free, which
+    /// is why this world converges on one strategy: the largest possible photosynthetic mat.
+    /// Charge for tissue and there is a trade between large-rich-slow and small-cheap-fast, and
+    /// that trade is the predator/prey axis. Two trophic levels are not available in a world
+    /// where one strategy has no opportunity cost.
+    ///
+    /// ⚠️ It is part of the ledger's `biomass` account exactly as [`Organism::energy`] is, and
+    /// moving energy between the two is **not** a ledger operation - both ends are inside the
+    /// same account. What IS a ledger operation is death, which must move `energy + tissue`.
+    tissue: f64,
+
     /// How many ticks this organism has been alive.
     ///
     /// SPEC section 10 gives death two causes, and this is half of the second one: energy
@@ -236,6 +268,9 @@ impl Organism {
             genome_hash: genome.hash(),
             genome,
             energy,
+            // A newborn has locked nothing away yet. `reproduction.rs` is what locks it, once,
+            // at the moment the body exists to be paid for.
+            tissue: 0.0,
             age: 0,
             serial,
             parent,
@@ -256,6 +291,45 @@ impl Organism {
     #[must_use]
     pub fn energy(&self) -> f64 {
         self.energy
+    }
+
+    /// What this organism has locked up in its body. See the `tissue` field.
+    #[must_use]
+    pub fn tissue(&self) -> f64 {
+        self.tissue
+    }
+
+    /// Everything this organism is holding, spendable or not.
+    ///
+    /// ⚠️ **This is the organism's share of the ledger's `biomass` account**, and the thing that
+    /// has to move when it dies. [`Organism::energy`] alone is what it can SPEND; the difference
+    /// between the two is the whole of what a corpse is worth.
+    #[must_use]
+    pub fn holdings(&self) -> f64 {
+        self.energy + self.tissue
+    }
+
+    /// Lock `amount` of what this organism can spend into its body, where upkeep cannot reach it
+    /// and death will give it up.
+    ///
+    /// Not a ledger operation: both ends are inside `biomass`. Takes only what is there, so a
+    /// body too poor to pay for itself locks what it can and is simply worth less as a corpse.
+    pub(crate) fn invest(&mut self, amount: f64) {
+        let locked = amount.min(self.energy).max(0.0);
+        self.energy -= locked;
+        self.tissue += locked;
+    }
+
+    /// Take `amount` out of this organism's tissue, which is what a mouth reaches once the
+    /// spendable pool is gone. Returns what was actually there to take.
+    ///
+    /// ⚠️ **A larder nothing can reach is not a larder.** `behaviour.rs`'s `feed` drains a
+    /// victim's spendable energy; without this a body that had locked its construction away would
+    /// be *harder* to eat than one that had not, which is the exact opposite of the point.
+    pub(crate) fn strip(&mut self, amount: f64) -> f64 {
+        let taken = amount.min(self.tissue).max(0.0);
+        self.tissue -= taken;
+        taken
     }
 
     /// How many ticks it has been alive.

@@ -147,7 +147,7 @@ pub struct Ledger {
     /// ⭐ Counted for the same reason `predated` is, and it should have been counted at the same
     /// time. Scavenging is the OTHER way a body can eat something that was once alive, and this
     /// project has spent twelve rounds asking whether predation can pay without ever asking what
-    /// share of the world.s income already arrives second-hand through the dead. A `predate` that
+    /// share of the world's income already arrives second-hand through the dead. A `predate` that
     /// moves nothing between accounts needed a counter to be visible at all; `scavenge` does move
     /// energy, from `Detritus` to `Biomass`, but nothing anywhere records how much has gone that
     /// way rather than straight from the light.

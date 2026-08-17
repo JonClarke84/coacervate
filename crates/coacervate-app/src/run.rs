@@ -2702,4 +2702,84 @@ mod tests {
              instruments disagree and neither can be trusted until they are reconciled"
         );
     }
+
+    /// ⭐⭐⭐ Does locking construction into tissue put anything in the larder?
+    ///
+    /// `metabolism.tissue_share` moves a fraction of what a body cost to build out of what it can
+    /// spend and into its own tissue, where upkeep cannot reach it and death gives it up. This is
+    /// the measurement of whether that changes what a corpse — and a victim — is worth.
+    ///
+    /// The whole case for it, measured over twelve rounds: predation is **three parts in ten
+    /// thousand** of this world's income and scavenging is **one part**, and every attempt to fix
+    /// that by helping mouths *find* food has failed — dispersal that put 76% of a mouth's
+    /// contacts on strangers made it worse, and body size does not move it either. **There is
+    /// nothing in the larder.** A body holds 9 to 20 units alive and releases about that dead,
+    /// against a devorocyte's whole-lifetime cost of 15.6.
+    #[test]
+    #[ignore = "a settled world per row; run deliberately with --ignored"]
+    fn does_locking_tissue_put_anything_in_the_larder() {
+        println!("share | alive | cells | biomass | detritus | predated | scavenged | mean corpse");
+
+        for share in [0.0f64, 0.25, 0.5, 1.0] {
+            let mut world = World::new(&config(|raw| raw.metabolism.tissue_share = share));
+            genesis(&mut world, 8);
+            for _ in 0..60_000 {
+                world.tick();
+            }
+
+            let ledger = world.ledger();
+            let alive = world.organisms().iter().flatten().count();
+            let drift = world.drift();
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a grain count of a few thousand is exact in an f64"
+            )]
+            let corpse = if drift.is_empty() {
+                0.0
+            } else {
+                ledger.detritus() / drift.len() as f64
+            };
+
+            println!(
+                "{share:5.2} | {alive:5} | {:5} | {:7.0} | {:8.0} | {:8.1} | {:9.1} | {corpse:11.4}",
+                world.living_cells().len(),
+                ledger.biomass(),
+                ledger.detritus(),
+                ledger.predation_total(),
+                ledger.scavenge_total()
+            );
+        }
+
+        // ⚠️ The inert control. At nought this must be the world every figure in the project was
+        // measured on, and `a_run_produces_what_it_produced_before_group_a` holds that bit for
+        // bit; what is asserted here is only that the setting does something when it is turned
+        // on, which is the failure `physics.thrust` shipped with for three whole experiments.
+        let held = |share: f64| {
+            let mut world = World::new(&config(|raw| raw.metabolism.tissue_share = share));
+            genesis(&mut world, 8);
+            for _ in 0..20_000 {
+                world.tick();
+            }
+            world
+                .organisms()
+                .iter()
+                .flatten()
+                .map(coacervate_sim::organism::Organism::tissue)
+                .sum::<f64>()
+        };
+
+        let (off, on) = (held(0.0), held(1.0));
+        assert!(
+            off == 0.0,
+            "with `tissue_share` at nought the world's organisms are holding {off} in tissue, so \
+             the setting is not inert and every recorded figure in this project was measured on a \
+             different world than the one that ships"
+        );
+        assert!(
+            on > 0.0,
+            "with `tissue_share` at one the world's organisms are holding nothing in tissue, so \
+             the setting is one a person can turn and a world that cannot feel it. That is \
+             exactly what `physics.thrust` did for three experiments before an audit found it"
+        );
+    }
 }

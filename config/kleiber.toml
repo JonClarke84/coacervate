@@ -85,6 +85,10 @@ resting_amplitude = 0.8
 stroke = 1.0
 
 [metabolism]
+# ⭐⭐⭐ `tissue_share` locks this fraction of a body's construction cost into its tissue at
+# birth: unspendable, unreachable by upkeep, released to detritus when it dies and drainable
+# by a mouth. Ships at nought. See config.rs's MetabolismConfig::tissue_share.
+tissue_share = 0.0
 upkeep_scale = 1.0
 scaling_exponent = 0.75  # ⭐ **The one number this profile changes.** A body of n cells pays
                          # `(sum of its cells' upkeeps) × n^-0.25`, so a two-celled body pays 0.84
