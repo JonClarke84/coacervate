@@ -1572,3 +1572,70 @@ Three ways to break one, and only one of them is cheap:
 the binding constraint at 10⁴ generations: a body in a dead zone that moves at all has some chance
 of finding a bloom, and a body that stays put certainly starves. **Blind motility pays** — no
 sensor, no wiring, no gradient-following required first.
+
+---
+
+## ⭐⭐⭐ Result 14: the bench, and a comprehensive null across the whole lever space
+
+### The tool
+
+`crates/coacervate-app/src/bench.rs`. One command, one config change, fourteen measurements,
+three seeds in parallel, a shipped-world control at every seed, and **any figure smaller than its
+own between-seed spread printed as `noise` rather than as a number.**
+
+```text
+coacervate --bench "light.bloom=1.0,light.patch_drift=0.05" --seeds 3 --motors
+```
+
+⚠️ An unknown field name is **refused**, not ignored. A bench that silently swallowed a typo would
+report *"this change did nothing"* — which is exactly how `physics.thrust` came to be measured
+across three whole experiments while the arm could not feel it.
+
+### The observable that finally resolves
+
+The `motors` census read 0.0004 in the shipped world — one cell in 2,500 — because mutation has to
+**find** a flagellocyte before selection can act on it, and in 60,000 ticks it barely does. No
+world could ever clear its own spread on a number that small.
+
+`--motors` seeds every founder as photocyte + gonocyte + flagellocyte, which turns *would a world
+invent a motor* into **does a world keep one**. That starts at **33%** instead of nought, and
+retention resolves where invention does not.
+
+> ⚠️ It answers a narrower question, and the difference matters: a world can keep a motor it was
+> given and never invent one. What it does answer is the one that has blocked thirteen rounds —
+> **is there anything here worth moving for** — in three minutes rather than a night.
+
+### The sweep: ten worlds, one answer
+
+Motor share after 60,000 ticks, started at 33%, against the shipped world's **0.00109**:
+
+| world | motors | verdict |
+| --- | --- | --- |
+| `thrust=40` | 0.00047 | noise |
+| `thrust=100` | 0.00024 | **DOWN** |
+| `bloom=1, thrust=40` | 0.00063 | noise |
+| `patch_drift=0.05, thrust=40` | 0.00103 | noise |
+| `bloom=1, drift=0.05, thrust=40` | 0.00073 | noise |
+| `bloom=1, drift=0.2, thrust=40` | 0.00061 | noise |
+| `uptake=0.3, bloom=1, drift=0.05, thrust=40` | 0.00110 | noise |
+| `kleiber=0.75, thrust=40` | 0.00075 | noise |
+| `kleiber=0.75, bloom=1, drift=0.05, thrust=40` | 0.00067 | noise |
+| `tissue_share=1, thrust=40` | 0.00043 | noise |
+
+**Every world sheds motors, from a third of every body to a thousandth, and not one lever moves
+it.** The only row that clears its own spread points *down*.
+
+⭐ That is the entire lever space this project has built — grain, supply structure, moving supply,
+sub-linear metabolism, tissue as a larder, and thrust itself — swept in thirty-five minutes and
+returning one answer. Under the old method it would have been a week and half of it would have
+been wrong.
+
+### ⚠️ What it leaves, and it is the one thing never tried
+
+A flagellocyte costs **0.006 a tick to own** plus `movement_cost × force²` to run — about
+0.009 a tick at `thrust = 40`, against a photocyte's 0.004. **It costs 2.25 times what the cell
+that funds it costs, and earns nothing extra.** Of course it is shed.
+
+**Nobody has ever lowered it.** The one attempt is documented in `CellKind::upkeep` and was
+declined on a bloat argument measured on the *myocyte* — whose case does not obviously transfer,
+because an idle muscle is free and an owned motor is run.
