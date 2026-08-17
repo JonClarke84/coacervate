@@ -967,3 +967,35 @@ quoted.
 **That is the open question**, and it needs an instrument that does not exist yet: a competition
 assay whose resident *and* both arms are large bodies, so the marginal cell is hung on something
 that can afford it.
+
+### ⚠️ Result 9: predation is three parts in ten thousand, and body size does not change it
+
+`run.rs`'s `how_much_of_what_a_body_eats_is_another_body`. `Ledger::predate` moves energy from one
+organism to another and `Ledger::harvest` moves it out of the field; both keep running totals, and
+their ratio is the honest form of *what share of a world's income is second-hand?* Eight founders,
+seed 42, 60,000 ticks each:
+
+| profile | predated | harvested | **second-hand share** | living cells |
+| --- | --- | --- | --- | --- |
+| **the shipped world** | 469.3 | 1,438,307 | **0.000326** | 4,166 |
+| `kleiber` 0.75 | 383.8 | 1,472,429 | 0.000261 | 5,649 |
+| emergence: Kleiber + motors | 419.5 | 1,472,378 | 0.000285 | 5,420 |
+
+A long `emergence` run's chronicle says *"A devorocyte has taken energy out of another body. Living
+tissue is being eaten in this world as well as the water and the dead."* **That sentence is true
+and this table is the whole of it** — predation is real, and it is a rounding error in the world's
+accounts.
+
+⭐⭐ **And the shipped world is the highest of the three, which refutes the hypothesis the test was
+written to check.** The argument was geometric and looked sound: Kleiber makes bodies large, a body
+of fifty cells presents far more surface than a body of one, so mouths should meet foreign tissue
+more often for reasons owing nothing to hunting. Kleiber has **36% more living cells and less
+predation**.
+
+Whatever extra surface a large body has is surface against **its own other cells**. That is round
+7's finding arriving from a new direction — *contact in this world is inherited, not encountered* —
+and it says that making bodies bigger buys them more of their own family rather than more
+strangers.
+
+⚠️ **Do not retry "grow the bodies and predation will follow."** It is now measured, in the profile
+built for it.

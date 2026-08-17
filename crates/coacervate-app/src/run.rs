@@ -2439,4 +2439,121 @@ mod tests {
             );
         }
     }
+
+    /// ⭐⭐⭐ How much of what a body eats is another body? Predation, as a fraction rather than
+    /// an anecdote.
+    ///
+    /// The chronicle of a long `config/emergence.toml` run says *"A devorocyte has taken energy
+    /// out of another body. Living tissue is being eaten in this world as well as the water and
+    /// the dead."* — which is a sentence about **one bite**, and the log says it once and never
+    /// again however many follow. Every earlier round of this project measured predation as
+    /// **nought establishments out of thirty-six introductions**, so a single bite is worth
+    /// knowing about and is nowhere near enough to call predation a thing this world does.
+    ///
+    /// `Ledger::predate` moves energy from one organism's account to another's and
+    /// `Ledger::harvest` moves it out of the field, and both keep running totals. Their ratio is
+    /// the honest form of the question: **what share of a world's income is second-hand?**
+    ///
+    /// # Why the profiles are compared rather than one being measured
+    ///
+    /// Because a bare fraction says nothing without something to hold it against. The shipped
+    /// world is the control — it is where the nought-out-of-thirty-six was measured — and
+    /// `kleiber.toml` and `emergence.toml` are the two that make bodies large. If predation is a
+    /// consequence of size, that is where it shows, and the mechanism would be geometric rather
+    /// than evolutionary: **a body of fifty cells presents fifty times the surface a body of one
+    /// does**, so mouths meet foreign tissue for reasons that have nothing to do with hunting.
+    ///
+    /// ⚠️ This measures how much predation *happens*, not whether it **pays**. A devorocyte still
+    /// prices −3.38 %/generation under Kleiber. A world in which mouths are fed by accident and
+    /// still lose money is a world where predation is an event and not yet a strategy, and the
+    /// distinction is the whole of what SPEC section 10 is waiting for.
+    ///
+    /// # ⚠️⚠️ Measured, and the size hypothesis is refuted
+    ///
+    /// Eight founders, seed 42, 60,000 ticks each:
+    ///
+    /// | profile | predated | harvested | **second-hand share** | living cells |
+    /// | --- | --- | --- | --- | --- |
+    /// | the shipped world | 469.3 | 1,438,307 | **0.000326** | 4,166 |
+    /// | `kleiber` 0.75 | 383.8 | 1,472,429 | **0.000261** | 5,649 |
+    /// | emergence: Kleiber + motors | 419.5 | 1,472,378 | **0.000285** | 5,420 |
+    ///
+    /// **Three parts in ten thousand, everywhere.** So the chronicle's sentence is true and it is
+    /// the whole of it: living tissue is eaten in this world, and it is a rounding error in the
+    /// world's accounts.
+    ///
+    /// ⭐ **And the shipped world is the highest of the three, which refutes the hypothesis this
+    /// test was written to check.** The argument was geometric and looked sound: Kleiber makes
+    /// bodies large, a body of fifty cells presents far more surface than a body of one, so mouths
+    /// should meet foreign tissue more often for reasons owing nothing to hunting. Kleiber has 36%
+    /// more living cells here and **less** predation. Whatever extra surface a large body has, it
+    /// is surface against **its own other cells** — which is round 7's finding arriving again from
+    /// a new direction: contact in this world is inherited, not encountered, and making a body
+    /// bigger buys it more of its own family rather than more strangers.
+    ///
+    /// **Do not retry "grow the bodies and predation will follow".**
+    #[test]
+    #[ignore = "three worlds ticked to 60,000; run deliberately with --ignored"]
+    fn how_much_of_what_a_body_eats_is_another_body() {
+        let profiles: [(&str, fn(&mut RawConfig)); 3] = [
+            ("the shipped world", |_| {}),
+            ("kleiber 0.75", |raw| {
+                raw.metabolism.scaling_exponent = 0.75;
+            }),
+            ("emergence: kleiber + motors", |raw| {
+                raw.metabolism.scaling_exponent = 0.75;
+                raw.physics.thrust = 40.0;
+            }),
+        ];
+
+        println!(
+            "profile                       | predated | harvested | second-hand share | cells"
+        );
+
+        let mut readings = Vec::new();
+        for (what, tune) in profiles {
+            let mut world = World::new(&config(tune));
+            genesis(&mut world, 8);
+            for _ in 0..60_000 {
+                world.tick();
+            }
+
+            let (predated, harvested) = (
+                world.ledger().predation_total(),
+                world.ledger().influx_total(),
+            );
+            let share = if harvested > 0.0 {
+                predated / harvested
+            } else {
+                0.0
+            };
+            let cells = world.living_cells().len();
+
+            println!("{what:29} | {predated:8.1} | {harvested:9.0} | {share:16.6} | {cells:5}");
+            readings.push((what, share, cells));
+        }
+
+        let shipped = readings[0].1;
+        let best = readings
+            .iter()
+            .map(|&(_, share, _)| share)
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        println!(
+            "\nPREDATION: the shipped world runs {shipped:.6} of its income second-hand; the \
+             most any profile manages is {best:.6}, a factor of {:.1}.",
+            if shipped > 0.0 { best / shipped } else { 0.0 }
+        );
+
+        // ⚠️ No direction asserted on the comparison. What is held is only that the instrument
+        // is reading at all — a predation total of exactly nothing everywhere would mean either
+        // that no mouth ever touched foreign tissue or that `Ledger::predate` is not being
+        // called, and those are very different problems with the same reading.
+        assert!(
+            best > 0.0,
+            "not one unit of energy moved from one body to another in any of the three \
+             profiles, over 60,000 ticks each. Either no devorocyte ever met foreign tissue, or \
+             nothing is calling `Ledger::predate`, and this test cannot tell those apart"
+        );
+    }
 }

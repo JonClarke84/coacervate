@@ -3862,4 +3862,119 @@ mod tests {
              size means the arms are not competing so much as taking turns to be lucky"
         );
     }
+
+    /// ⭐⭐⭐ Does a motor pay on a body big enough to afford one? The size sweep.
+    ///
+    /// **Every coefficient this project has ever taken on a specialisation was taken on a body of
+    /// two to five cells**, because `founder_with_a_third_cell` hangs the marginal cell on SPEC's
+    /// two-celled founder and because the hand-built arms in this round were five. That is not a
+    /// limit of the competition assay — it takes whatever founder genomes it is given — it is
+    /// simply what nobody had varied.
+    ///
+    /// It matters here more than anywhere else, because **a motor's cost is flat in body size and
+    /// the food its travel finds is not.** One flagellocyte costs 0.006 a tick whether it is
+    /// pushing four cells or twenty; what it earns is the fresher water it drags every photocyte
+    /// in the body into. So the coefficient should rise with size, and the only question is
+    /// whether it crosses zero anywhere a body can actually reach.
+    ///
+    /// ⚠️ Against a **sclerocyte** in the same slot, not against nothing: the cheapest, most inert
+    /// cell in the world, so the difference is what the motor *does* and not what a seventh cell
+    /// costs. Both arms carry the same `sensor_gain`, built by swapping one `child_kind` on the
+    /// motorised genome, so they are one mutation apart and the assay will accept them.
+    #[test]
+    #[ignore = "twelve 42,000-tick competition runs; run deliberately with --ignored"]
+    fn does_a_motor_pay_on_a_body_big_enough_to_afford_one() {
+        // A chain of photocytes, then the parts: a gonocyte to breed with, a sensocyte for the
+        // motor to hear, and the cell under test at the tail where its thrust does not push
+        // against the body's own other half.
+        let plan = |photocytes: usize| {
+            let mut plan = vec![CellKind::Photocyte; photocytes];
+            plan.push(CellKind::Gonocyte);
+            plan.push(CellKind::Sensocyte);
+            plan.push(CellKind::Flagellocyte);
+            plan
+        };
+
+        println!("cells | motor vs sclerocyte, %/gen (mean of 3) | spread | seeds");
+
+        let mut readings = Vec::new();
+        for photocytes in [2usize, 6, 10, 14] {
+            let plan = plan(photocytes);
+            let cells = plan.len() + 1;
+            let mut each = Vec::new();
+
+            for seed in [42u64, 43, 44] {
+                let config = seeded_world(seed, |raw| raw.physics.thrust = 40.0);
+                let motorised = swimmer(&config.limits, &plan, BEAT, -1.0);
+                let inert = {
+                    let mut genes = motorised.genes().to_vec();
+                    let last = genes.len() - 1;
+                    genes[last].child_kind = CellKind::Sclerocyte;
+                    coacervate_sim::genome::Genome::new(genes, &config.limits)
+                };
+
+                let outcome = assay(&config, [&inert, &motorised], WINDOW);
+                report(&format!("{cells} cells, seed {seed}"), &outcome);
+
+                // ⚠️ An arm that went extinct is not a coefficient, it is a body that could not
+                // live at this size. Recorded rather than asserted, because which sizes are
+                // viable is itself a thing worth learning.
+                each.push((outcome.per_generation() * 100.0, outcome.alive));
+            }
+
+            let values: Vec<f64> = each.iter().map(|&(value, _)| value).collect();
+            let mean = values.iter().sum::<f64>() / 3.0;
+            let spread = values.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                - values.iter().copied().fold(f64::INFINITY, f64::min);
+            let shown: Vec<String> = values.iter().map(|value| format!("{value:+.2}")).collect();
+            println!(
+                "{cells:5} | {mean:+38.3} | {spread:6.2} | {}",
+                shown.join(", ")
+            );
+            readings.push((cells, mean, spread, each));
+        }
+
+        println!("\nalive counts, [inert, motorised], per size and seed:");
+        for (cells, _, _, each) in &readings {
+            let alive: Vec<String> = each.iter().map(|&(_, a)| format!("{a:?}")).collect();
+            println!("  {cells:2} cells: {}", alive.join("  "));
+        }
+
+        let smallest = readings[0].1;
+        let biggest = readings[readings.len() - 1].1;
+        println!(
+            "\nSIZE: a motor is worth {smallest:+.3} %/generation on the smallest body in the \
+             sweep and {biggest:+.3} on the largest. The slope is {:+.3} over {} cells.",
+            biggest - smallest,
+            readings[readings.len() - 1].0 - readings[0].0
+        );
+
+        // ⚠️ Every arm has to have actually competed. An assay in which one side went extinct
+        // measures how quickly it did so, and this sweep is the first thing in the round to push
+        // hand-built bodies past the size anything has been shown to live at.
+        for (cells, _, _, each) in &readings {
+            for &(_, alive) in each {
+                assert!(
+                    alive[0] > 0 && alive[1] > 0,
+                    "at {cells} cells an arm finished with {alive:?} alive, so one side went \
+                     extinct and its coefficient is a death rate rather than a fitness. The \
+                     sweep has run past the size a hand-built body can live at, and the rows \
+                     above that point must not be read"
+                );
+            }
+        }
+
+        // ⚠️ No direction asserted. This is the open question of the round and it could honestly
+        // go either way; what is held is only that the seeds agree well enough to be read.
+        let worst_spread = readings
+            .iter()
+            .map(|&(_, _, spread, _)| spread)
+            .fold(0.0f64, f64::max);
+        assert!(
+            worst_spread < 6.0,
+            "the widest between-seed spread in the sweep is {worst_spread:.2} %/generation, \
+             which is too wide to read a trend through. The competition assay's floor is ±0.11 \
+             and its arms are meant to agree to within a few tenths"
+        );
+    }
 }
