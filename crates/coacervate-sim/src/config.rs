@@ -72,6 +72,7 @@ pub struct RawWorld {
 #[serde(deny_unknown_fields)]
 pub struct RawLight {
     pub influx: f64,
+    pub uptake: f64,
     pub cap: f64,
     pub gradient: f64,
     pub patchiness: f64,
@@ -191,6 +192,7 @@ pub fn spec_defaults() -> RawConfig {
         },
         light: RawLight {
             influx: 0.001,
+            uptake: 0.01,
             cap: 8.0,
             gradient: 0.75,
             patchiness: 0.5,
@@ -1101,6 +1103,36 @@ pub struct WorldConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LightConfig {
     pub influx: f32,
+
+    /// ⭐⭐⭐ What share of the energy in its tile a photocyte takes each tick.
+    ///
+    /// **A compiled-in constant for eleven rounds, absent from SPEC, and never once swept.**
+    /// `docs/PHASE4.md` records it being declined as a slider on the grounds that `influx` and
+    /// `metabolism.upkeep_scale` already span the balance space. They do not. Those two set how
+    /// much wealth the world has; **this sets its grain.**
+    ///
+    /// At 0.01 a photocyte draws its tile at `0.01 × what it holds`, while four neighbours refill
+    /// it through `diffusion` at `0.16 × the difference` — sixteen to one against depletion. A
+    /// lone body dents its own tile by about 6% and cannot dig a hole, and the field smooths out
+    /// over a length about four times wider than a body is. That is why the water is an even
+    /// wash, why there is no structure at the scale a body lives at, and — through those — why
+    /// arriving in the best water within a lifetime's swim is measured at **−0.01 %/generation**.
+    ///
+    /// ⭐ **Conservation does most of the work of making this safe to turn.** At equilibrium total
+    /// uptake equals total influx whatever this is set to, so it cannot change the world's
+    /// carrying capacity or a photocyte's mean income. It changes only *how far a tile is pulled
+    /// down to get there* — which is exactly the spatial structure a body could exploit, and
+    /// which, being dug by the organisms themselves, is by construction **not where anybody is
+    /// standing**. A fixed optimum can be occupied; a grazing shadow cannot.
+    /// ⚠️ **The one setting in this table kept at full precision, and the reason is arithmetic.**
+    /// Every other value here is narrowed to `f32` for consistency; this one multiplies the energy
+    /// ledger directly, once per photocyte per tick, and `f64::from(0.01f32)` is
+    /// 0.009999999776482582 rather than 0.01. Narrowing it moved every golden vector while
+    /// leaving every population count identical -- a re-baseline of the last two decimal digits
+    /// of a constant, for no gain whatever. It stays `f64` so that promoting a compiled-in
+    /// number to a configuration key changes nothing at all.
+    pub uptake: f64,
+
     pub cap: f32,
     pub gradient: f32,
     pub patchiness: f32,
@@ -1556,6 +1588,15 @@ impl RawConfig {
                 // May be nothing: a world with no light coming in is a legitimate, if
                 // short, experiment.
                 influx: non_negative("light.influx", self.light.influx)?,
+                // Bounded above at one: a photocyte cannot take more of a tile than the tile
+                // has. Below at nought, where a photocyte earns nothing and the world is dark
+                // whatever the light does.
+                uptake: {
+                    // Range-checked exactly as a fraction, then kept at the width it arrived
+                    // in. See the field.
+                    fraction("light.uptake", self.light.uptake)?;
+                    self.light.uptake
+                },
                 cap: positive("light.cap", self.light.cap)?,
                 // "0 = uniform, 1 = fully top-weighted", says the document itself.
                 gradient: fraction("light.gradient", self.light.gradient)?,
@@ -1806,6 +1847,7 @@ mod tests {
             ("world.height", raw.world.height),
             ("world.years_per_tick", raw.world.years_per_tick),
             ("light.influx", raw.light.influx),
+            ("light.uptake", raw.light.uptake),
             ("light.cap", raw.light.cap),
             ("light.gradient", raw.light.gradient),
             ("light.patchiness", raw.light.patchiness),
@@ -1875,8 +1917,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            34,
-            "SPEC section 3 has thirty-four decimal settings; this list has {}, so one has \
+            35,
+            "SPEC section 3 has thirty-five decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );

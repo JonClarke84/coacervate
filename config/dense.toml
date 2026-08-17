@@ -52,6 +52,12 @@ grid_rows = 36           # A quarter of 144, so a tile is still 8 by 8 world uni
 years_per_tick = 1000.0
 
 [light]
+# ⭐⭐⭐ `uptake` sets the GRAIN of the field, not its wealth. It was a compiled-in constant
+# for eleven rounds and was never swept. At equilibrium total uptake equals total influx
+# whatever it is, so it cannot change carrying capacity or a photocyte's mean income -- it
+# changes only how far a tile is pulled down to get there, which is the only spatial
+# structure a body could ever exploit. See config.rs's LightConfig::uptake.
+uptake = 0.01
 influx = 0.004           # ⭐ Four times the shipped 0.001, over a quarter as many tiles, so the
                          # world is offered **exactly the same total energy per tick** as the
                          # `default` profile: 9,216 tiles x 0.004 against 36,864 x 0.001. SPEC

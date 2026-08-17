@@ -112,6 +112,12 @@ grid_rows = 144
 years_per_tick = 1000.0
 
 [light]
+# ⭐⭐⭐ `uptake` sets the GRAIN of the field, not its wealth. It was a compiled-in constant
+# for eleven rounds and was never swept. At equilibrium total uptake equals total influx
+# whatever it is, so it cannot change carrying capacity or a photocyte's mean income -- it
+# changes only how far a tile is pulled down to get there, which is the only spatial
+# structure a body could ever exploit. See config.rs's LightConfig::uptake.
+uptake = 0.01
 influx = 0.008           # ⭐ **The first of the three.** Eight times the shipped 0.001. A tile
                          # regains eight times as much per tick, so a photocyte holding its tile
                          # at the same drawdown earns eight times as much per tick.

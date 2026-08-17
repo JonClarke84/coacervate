@@ -4557,4 +4557,105 @@ mod tests {
              so this sweep's control is not reading and none of the rows above mean anything"
         );
     }
+
+    /// ⭐⭐⭐ **THE GATE.** What is the most locomotion could possibly be worth in this world?
+    ///
+    /// Every round of this project has built an organelle and then discovered it did not pay.
+    /// This measures the **ceiling** instead, and it needs no motor, no muscle and no sensor: two
+    /// arms of the same founder, identical in every gene, and arm B's bodies are simply **placed**
+    /// in the best water within a lifetime's swim. Free. Instantaneous. Perfectly aimed. Omniscient.
+    ///
+    /// **Nothing that has to swim there can ever beat that number.** So if the ceiling is below
+    /// what a motor costs — about 7 %/generation, being a flagellocyte's 0.006 a tick against a
+    /// body's budget — then locomotion cannot pay in that world at any price, with any organelle,
+    /// at any scale, and there is no point building one. It is the cheapest test in the project
+    /// and it would have saved several rounds.
+    ///
+    /// ⭐ **And unlike a competition assay of a motor against a founder, it is immune to the
+    /// "everyone got poorer" confounder** that killed the `light.diffusion` round. Both arms live
+    /// in the *same* world, so anything that impoverishes that world impoverishes both and cancels
+    /// out of the difference. That makes it the right instrument for sweeping the world's economy,
+    /// which is exactly what nobody has done.
+    ///
+    /// # What is being swept, and why these two
+    ///
+    /// `light.uptake` was a compiled-in constant for eleven rounds and sets the **grain** of the
+    /// field — how deep a hole a body can eat before diffusion fills it in. `light.diffusion` is
+    /// what fills it in. Together they set the length scale over which the water is structured at
+    /// all, and the shipped pair puts that scale at about four times wider than a body is.
+    #[test]
+    #[ignore = "a competition assay per cell of the sweep; run deliberately with --ignored"]
+    fn what_is_the_ceiling_on_locomotion_worth_in_this_world() {
+        const SWIM: f32 = 16.6;
+
+        println!(
+            "the ceiling: what arriving in the best water free and perfectly aimed is worth\n"
+        );
+        println!("uptake | diffusion | ceiling %/gen | verdict");
+
+        let mut best = (0.0f64, 0.0f64, f64::NEG_INFINITY);
+        for uptake in [0.01f64, 0.10, 0.30, 0.60] {
+            for diffusion in [0.04f64, 0.01, 0.002] {
+                let config = seeded_world(42, |raw| {
+                    raw.light.uptake = uptake;
+                    raw.light.diffusion = diffusion;
+                });
+                let plain = founder_genome(&config.limits);
+
+                let control = package_assay(&config, [&plain, &plain], WINDOW);
+                let arrived = placed_assay(&config, [&plain, &plain], WINDOW, |side, world, at| {
+                    if side == 0 {
+                        at
+                    } else {
+                        best_water_near(world, at, SWIM)
+                    }
+                });
+                let ceiling = (arrived.per_generation() - control.per_generation()) * 100.0;
+
+                // A motor costs about 7 %/generation to own. Anything under that is a world in
+                // which locomotion is refuted before it is built.
+                let verdict = if ceiling > 7.0 {
+                    "⭐ CLEARS A MOTOR"
+                } else if ceiling > 1.0 {
+                    "moves, not enough"
+                } else {
+                    "nothing"
+                };
+                println!("{uptake:6.2} | {diffusion:9.3} | {ceiling:+13.3} | {verdict}");
+
+                if ceiling > best.2 {
+                    best = (uptake, diffusion, ceiling);
+                }
+            }
+        }
+
+        println!(
+            "\nBEST: uptake {:.2}, diffusion {:.3} gives a ceiling of {:+.3} %/generation. A \
+             motor needs about +7 to be worth owning.",
+            best.0, best.1, best.2
+        );
+
+        // ⚠️ The shipped world is the control this whole sweep is read against, and it is
+        // measured at −0.01 ± 0.09 %/generation. If it has moved, the instrument has changed and
+        // no row above it means anything.
+        let shipped = {
+            let config = seeded_world(42, |_| {});
+            let plain = founder_genome(&config.limits);
+            let control = package_assay(&config, [&plain, &plain], WINDOW);
+            let arrived = placed_assay(&config, [&plain, &plain], WINDOW, |side, world, at| {
+                if side == 0 {
+                    at
+                } else {
+                    best_water_near(world, at, SWIM)
+                }
+            });
+            (arrived.per_generation() - control.per_generation()) * 100.0
+        };
+        assert!(
+            shipped.abs() < 1.0,
+            "the shipped world's ceiling reads {shipped:+.3} %/generation and the recorded \
+             figure is −0.01 ± 0.09. The instrument has moved, so nothing in the sweep above is \
+             comparable to anything this project has measured before"
+        );
+    }
 }

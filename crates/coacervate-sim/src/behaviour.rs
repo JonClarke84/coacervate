@@ -101,6 +101,11 @@ const MIN_PARALLEL_RUN: usize = 256;
 /// Where it bites hardest is **competition**. Two organisms on one tile take shares in
 /// proportion to their rates, so exposure decides who gets the light exactly when the world is
 /// crowded - which is the moment it matters.
+/// ⚠️⚠️ **This is now `light.uptake` and this constant is only the shipped default.** It was a
+/// compiled-in number for eleven rounds and was never once swept; `docs/PHASE4.md` records it
+/// being declined as a slider on the grounds that `influx` and `upkeep_scale` already spanned the
+/// balance space. They span the world.s WEALTH. This spans its GRAIN, which is a different axis
+/// and is the one every locomotion result in this project turned out to depend on.
 const HARVEST_RATE: f64 = 0.01;
 
 /// How far apart two cells can be and still have anything to do with one another.
@@ -558,6 +563,11 @@ impl Neighbourhood {
 /// accounts for and CLAUDE.md's resident target of 2 GB.
 pub struct Behaviour {
     /// SPEC section 3's `metabolism.movement_cost`: what a unit of work costs to do.
+    /// SPEC.s `light.uptake`: what share of its tile a photocyte takes each tick. Read here
+    /// rather than in `grid.rs` because it is a property of the CELL doing the taking, and two
+    /// cells on one tile take shares in proportion to their rates.
+    uptake: f64,
+
     movement_cost: f64,
 
     /// SPEC section 3's `[behaviour]` table: how hard a muscle works with nothing telling it
@@ -676,6 +686,7 @@ impl Behaviour {
             .expect("a population cap fits in a machine word");
 
         Self {
+            uptake: config.light.uptake,
             movement_cost: f64::from(config.metabolism.movement_cost),
             resting_amplitude: config.behaviour.resting_amplitude,
             stroke: config.behaviour.stroke,
@@ -708,6 +719,7 @@ impl Behaviour {
     /// [`Neighbourhood`]'s buckets are laid out from [`REACH`] rather than from the depth and a
     /// search simply spans more of them. See [`crate::world::World::retune`].
     pub fn retune(&mut self, config: &Config) {
+        self.uptake = config.light.uptake;
         self.movement_cost = f64::from(config.metabolism.movement_cost);
         self.resting_amplitude = config.behaviour.resting_amplitude;
         self.stroke = config.behaviour.stroke;
@@ -789,6 +801,7 @@ impl Behaviour {
         let Self {
             width,
             shadow,
+            uptake,
             hash,
             drift,
             want,
@@ -821,7 +834,7 @@ impl Behaviour {
                 *want = if cell.kind == CellKind::Photocyte {
                     let tile = grid.tile_at(cell.pos);
 
-                    HARVEST_RATE * f64::from(grid.tiles()[tile]) * f64::from(shade(&around, index))
+                    *uptake * f64::from(grid.tiles()[tile]) * f64::from(shade(&around, index))
                 } else {
                     0.0
                 };
