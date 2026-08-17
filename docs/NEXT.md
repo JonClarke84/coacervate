@@ -1410,3 +1410,81 @@ into a break-even surface, and a body that arrives somewhere better eats it down
 That is a much stronger statement than the one I wrote, it was measurable a fortnight ago, and I
 built a broken sweep instead of reading it. **Five errors this round, and the fifth was reaching
 for a new instrument when the answer was already committed.**
+
+---
+
+# ⭐⭐⭐ ROUND 13: the world's economy, and the plan to get a worm in eight hours
+
+**The owner's target, stated:** leave it running for eight hours and see something worm-like.
+**The constraint, measured:** an overnight run is **4,156,206 individuals** across ~9,300
+generations at a mean population of 665. Earth ran ~10⁴⁰ cells through selection. *A teaspoon of
+seawater holds, at one instant, about as many individuals as our entire overnight run produced in
+total.* The gap is ~10³³ and **no amount of compute closes it.**
+
+⚠️ **`years_per_tick = 1000` is a label.** The flagellum run reached **11.4 Ga** — two and a half
+times the age of the Earth — and the standing motor count over that whole run trends **+0.17**.
+Simulated time is not the constraint and has not been for a long time.
+
+> **The design constraint that follows: with ~10⁴ generations, the FIRST mutation has to pay.**
+> Not the third. Everything below is chosen against that.
+
+## What is now measured about the world's economy
+
+| | |
+| --- | --- |
+| Value of arriving in the best water within a lifetime's swim, **free and perfectly aimed** | **−0.01 %/gen** |
+| ... a quarter of the world away | **−1.49 %/gen** |
+| Share of world income taken from **living tissue** | **0.000326** |
+| Share taken from **detritus** | **0.000098** |
+| What a body holds while alive | ~9–20 units |
+| What a 55-cell body's tissue is *worth* | ~220 units, **held nowhere** |
+
+**Both ways of eating reward standing still, and neither the living nor the dead are worth
+eating.** That is the whole of twelve rounds.
+
+## ⚠️ The instrument problem, and the fix
+
+A twelve-cell sweep of `light.uptake` × `light.diffusion` on the assay-based ceiling came back
+**non-monotone in both directions with adjacent cells 2.9 %/generation apart** — noise dominating,
+and its best cell was best-of-twelve on one seed. That is this project's recurring error, made a
+sixth time.
+
+⭐ So the ceiling is now measured **on the water itself**:
+`run.rs`'s `what_the_water_is_worth_at_a_distance` settles a world, then for every living cell
+compares the best tile within reach against the tile it is standing on, over sixteen bearings.
+**Deterministic, one number per world, no seeds, ~100× cheaper.** A ratio of 1.00 means locomotion
+is refuted in that world at that distance whatever it costs.
+
+## ⭐ The plan, in the order it will be executed
+
+**1. Sweep the water's grain.** `light.uptake` (now a config key; the promotion moved not one
+golden vector) × `light.diffusion` × reach. If the ratio clears about 1.1 anywhere, position is
+worth something and a motor has a gradient to climb.
+
+**2. If it does not — make tissue the larder.** This is the change the whole diagnosis points at,
+and it is cheaper than it looks because **bodies are laid out whole at birth**: there is no
+incremental growth to charge for. A newborn already receives `offspring_share × parent` energy,
+which is about its own construction cost. The change is to **lock `construction_energy` of a
+body's holdings into tissue** — unspendable, not payable as upkeep, released to detritus on
+death and drainable by a mouth.
+
+Three consequences, and the second is the one nobody proposed:
+
+- **Prey stop being poor.** A 55-cell mat becomes a 220-unit larder that cannot run away, against
+  a devorocyte's whole-life cost of 15.6 units. Four bites pays for the mouth for life.
+- **Growth stops being free.** Being big currently has no opportunity cost, which is why the world
+  converges on one strategy. Charge for tissue and there is a trade — large-rich-slow against
+  small-cheap-fast — and **that trade is the predator/prey axis**. Two trophic levels are
+  impossible in a world where one strategy is free.
+- **The exploitable structure stops being the light and becomes other organisms**, which die and
+  leave gaps. That is recolonisation, succession, and cycles — and a resource that cycles never
+  reaches the ideal free distribution that flattens the light field to break-even.
+
+⚠️ It re-derives SPEC section 6's whole price table, whose every entry was set against a
+continuous drain — the sclerocyte's 0.90 especially, whose justification is about a *rate* and
+does not survive a lump sum. Ship it behind an inert key, as four settings already do.
+
+**The one measurement:** `predated ÷ harvested` from `how_much_of_what_a_body_eats_is_another_body`,
+against an **uptake-matched control**, not against the shipped 0.000326. Pass: ≥ 0.02. Fail: under
+0.002. ⚠️ And the check with no coefficient in it — **mean cells per body must not collapse toward
+2 while mouths rise**, which is runaway self-cannibalism and looks identical in a census.
