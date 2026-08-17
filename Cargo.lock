@@ -217,6 +217,7 @@ dependencies = [
  "coacervate-render",
  "coacervate-sim",
  "rand 0.10.2",
+ "rayon",
  "toml",
 ]
 

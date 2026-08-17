@@ -64,6 +64,15 @@ pub struct Arguments {
     /// Stop when the world has taken this many ticks, instead of when the settings say.
     pub ticks: Option<u64>,
 
+    /// ⭐ Run the bench instead of a world: a comma-separated list of `field=value` overrides,
+    /// measured against the shipped world at every seed. See `bench.rs` for what it reports and
+    /// for why a bench exists at all.
+    pub bench: Option<String>,
+
+    /// How many seeds the bench runs. Defaults to three, which is what this project has learned
+    /// the hard way is the minimum that can tell a result from a lucky draw.
+    pub seeds: Option<u64>,
+
     /// Run the world, draw one frame of it here, and stop. See `main.rs`'s `DUMP_TICKS` for
     /// how long it runs first and why.
     pub dump_frame: Option<PathBuf>,
@@ -229,6 +238,14 @@ impl Arguments {
                 "--ticks" => {
                     once(&mut parsed.ticks, "--ticks")?;
                     parsed.ticks = Some(number(&mut line, "--ticks")?);
+                }
+                "--bench" => {
+                    once(&mut parsed.bench, "--bench")?;
+                    parsed.bench = Some(value(&mut line, "--bench")?);
+                }
+                "--seeds" => {
+                    once(&mut parsed.seeds, "--seeds")?;
+                    parsed.seeds = Some(number(&mut line, "--seeds")?);
                 }
                 flag if flag.starts_with('-') => {
                     return Err(ArgumentError::Unknown(word));

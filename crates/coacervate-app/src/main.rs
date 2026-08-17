@@ -32,6 +32,7 @@
 )]
 
 mod args;
+mod bench;
 // ⭐⭐ **Phase 7's Group L.** The competition assay: what a configuration is worth, measured in
 // forty minutes instead of a day. It is `#[cfg(test)]` because it is an instrument a person runs
 // deliberately - `cargo test --release -- --ignored --nocapture assay` - rather than something a
@@ -126,6 +127,25 @@ fn main() -> ExitCode {
 
     if arguments.help {
         println!("{}", args::HELP);
+        return ExitCode::SUCCESS;
+    }
+
+    // ⭐ The bench runs instead of a world, not beside one. See `bench.rs`: it is the answer to a
+    // project that has written thirteen rounds of bespoke measurement and got the statistic wrong
+    // seven times in one night.
+    if let Some(spec) = arguments.bench.clone() {
+        let change = match bench::overrides(&spec) {
+            Ok(change) => change,
+            Err(problem) => {
+                eprintln!("That is not a bench: {problem}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let seeds: Vec<u64> = (0..arguments.seeds.unwrap_or(3)).map(|n| 42 + n).collect();
+        let rows = bench::run(&seeds, &change);
+        bench::report(&spec, &seeds, &rows);
+
         return ExitCode::SUCCESS;
     }
 

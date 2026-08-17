@@ -10,6 +10,11 @@ edition.workspace = true
 coacervate-sim = { workspace = true }
 coacervate-render = { workspace = true }
 toml = { workspace = true }
+# ⭐ For `bench.rs`, which runs one world per seed and the seeds are independent by
+# construction: each has its own `world.seed` and shares nothing. SPEC section 2.s per-organism
+# streams are what make that true. Sixteen cores against a bench that used to run its seeds one
+# after another is the difference between a question costing twenty minutes and costing two.
+rayon = { workspace = true }
 
 # Test-only. `the_bundled_config_seeds_the_world_rng` has to actually draw numbers from
 # the generator the config produced, and drawing needs rand's `Rng` trait in scope. The
