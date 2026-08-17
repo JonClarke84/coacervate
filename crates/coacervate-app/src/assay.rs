@@ -4326,4 +4326,100 @@ mod tests {
              it. If that has changed, re-read every result in docs/NEXT.md section 8"
         );
     }
+
+    /// ⭐⭐⭐ Is a mouth worth more to a body that already carries a motor? The ladder from the
+    /// other end.
+    ///
+    /// Ten rounds established that predation is out of reach because a body cannot get to anything
+    /// — nought establishments out of thirty-six introductions, and 99.9% of a devorocyte's
+    /// contacts being its own descendants. The obvious repair was to build a motor first and hang
+    /// a mouth on it afterwards, and this round built the motor and measured it into the ground:
+    /// a running motor goes extinct in a settled world, nought of twelve.
+    ///
+    /// **This asks the question the other way round.** Not *does a motor pay so that a mouth can
+    /// follow*, but *is a mouth worth more on a body that already has one*. If it is, then the
+    /// pair is worth more than the sum and there is a combination to find even though neither
+    /// half pays alone — which is what an exaptation ladder actually looks like from the inside.
+    /// If it is not, then the motor buys a devorocyte nothing at all and the two are simply two
+    /// separate losses.
+    ///
+    /// Both arms are five-celled bodies **one `child_kind` mutation apart**: two photocytes, a
+    /// gonocyte, a flagellocyte, and a fifth cell that is either a sclerocyte or a devorocyte. The
+    /// motor is on in both, at `BEAT`, so what is measured is the mouth and not the motor.
+    ///
+    /// ⚠️ Compared against the same pair **without** a motor — a sclerocyte where the flagellocyte
+    /// was — so that what comes out is a *difference of differences*: what a mouth is worth with a
+    /// motor, minus what it is worth without one. A bare figure would be the mouth's own price,
+    /// which round 4 already measured at −4.26 to −6.29 %/generation.
+    #[test]
+    #[ignore = "four 42,000-tick competition runs per seed; run deliberately with --ignored"]
+    fn is_a_mouth_worth_more_on_a_body_that_already_has_a_motor() {
+        let plan = |engine: CellKind, tail: CellKind| {
+            vec![
+                CellKind::Photocyte,
+                CellKind::Photocyte,
+                CellKind::Gonocyte,
+                engine,
+                tail,
+            ]
+        };
+
+        println!("seed | mouth WITH a motor | mouth WITHOUT | the difference");
+
+        let mut readings = Vec::new();
+        for seed in [42u64, 43, 44] {
+            let config = seeded_world(seed, |raw| raw.physics.thrust = 40.0);
+
+            // What a mouth is worth on a body whose fourth cell is a motor, and on the same body
+            // whose fourth cell is inert. Each pair is one `child_kind` apart in the LAST gene.
+            let priced = |engine: CellKind| {
+                let with = swimmer(
+                    &config.limits,
+                    &plan(engine, CellKind::Devorocyte),
+                    BEAT,
+                    0.0,
+                );
+                let without = swimmer(
+                    &config.limits,
+                    &plan(engine, CellKind::Sclerocyte),
+                    BEAT,
+                    0.0,
+                );
+                assay(&config, [&without, &with], WINDOW).per_generation() * 100.0
+            };
+
+            let driven = priced(CellKind::Flagellocyte);
+            let inert = priced(CellKind::Sclerocyte);
+
+            println!(
+                "{seed:4} | {driven:+18.3} | {inert:+13.3} | {:+.3}",
+                driven - inert
+            );
+            readings.push((driven, inert));
+        }
+
+        let gain: Vec<f64> = readings.iter().map(|&(a, b)| a - b).collect();
+        let mean = gain.iter().sum::<f64>() / 3.0;
+        let worst = gain.iter().copied().fold(f64::INFINITY, f64::min);
+        let best = gain.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+
+        println!(
+            "\nTHE LADDER: a mouth is worth {mean:+.3} %/generation more on a body that carries \
+             a motor than on one that does not, meaned over three seeds (weakest {worst:+.3}, \
+             strongest {best:+.3}). The competition assay's floor is ±0.11."
+        );
+
+        // ⚠️ No direction asserted. This is a genuinely open question — every prior reading in
+        // this round has been a null, and a positive here would be the first evidence that any
+        // two specialisations in this world are worth more together than apart. What is held is
+        // that the seeds agree well enough to be read at all.
+        assert!(
+            best - worst < 6.0,
+            "the three seeds spread {:.3} %/generation around a mean of {mean:+.3}: {gain:?}. \
+             That is too wide to read either way, and a difference of differences carries the \
+             noise of both halves, so it needs the arms to be genuinely competing rather than \
+             taking turns to be lucky",
+            best - worst
+        );
+    }
 }

@@ -493,18 +493,32 @@ impl CellKind {
             Self::Sclerocyte => 0.002,
             Self::Sensocyte => 0.006,
             Self::Gonocyte => 0.005,
-            // Dearer than the myocyte it is one mutation from, and dearer than the photocyte
-            // paying for it - which is the constraint the myocyte's own note above spends most
-            // of its length arguing, because a motor cheaper to own than the cell funding it is
-            // where neutral bloat starts. It is set above the muscle rather than level with it
-            // because a flagellocyte works *every tick whether or not it is asked to*: a
-            // myocyte on a body with nothing to push against is charged for the distance it
-            // actually moves its springs, and can idle at nearly nothing, while a motor is
-            // always running. The standing charge should reflect the standing burden.
+            // Dearer than the photocyte paying for it, which is the constraint the myocyte's own
+            // note above spends most of its length arguing: a cell cheaper to own than the cell
+            // funding it is where neutral bloat starts.
             //
-            // ⚠️ This is the price of *owning* one. What it costs to *run* is separate, is
-            // charged through `movement_cost` on force times distance, and is what makes going
-            // fast expensive rather than merely being able to.
+            // ⚠️⚠️ **But the reason it sits ABOVE the myocyte's 0.005 is a claim this code
+            // contradicts, and it should be re-priced.** The argument was that a flagellocyte
+            // works *every tick whether or not it is asked to*, where a myocyte is charged for
+            // the distance it actually moves its springs and can idle at nearly nothing. That is
+            // false. `behaviour.rs`'s `propel` computes `force = thrust × osc_freq × amplitude`
+            // and returns early on `force <= 0.0`, so **a motor whose gene carries an `osc_freq`
+            // of nought costs exactly nothing to run** — it idles as freely as a muscle does, and
+            // an audit found three whole experiments that had accidentally measured precisely
+            // that cell.
+            //
+            // So the standing charge is carrying an argument the running charge already carries,
+            // and 0.005 — level with the myocyte, which is the same kind of tissue driven by the
+            // same gene field — is the defensible figure. It has not been changed here because
+            // `CellKind::upkeep` moves every golden vector and every recorded coefficient in the
+            // project, and that is a re-baseline to be done deliberately rather than folded into
+            // a round about something else. **It is the first item in `docs/NEXT.md`'s list of
+            // what is left**, and it is worth about 17% of a gap measured at a factor of two, so
+            // nobody should expect it to rescue the organelle on its own.
+            //
+            // What it costs to *run* is separate, is charged through `movement_cost` on force
+            // times distance, and is what makes going fast expensive rather than merely being
+            // able to.
             Self::Flagellocyte => 0.006,
         }
     }
