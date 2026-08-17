@@ -4800,15 +4800,37 @@ mod tests {
              The best grainy world is {best_what} at {best:+.3}. A motor costs about 7."
         );
 
-        // ⚠️ Held as the finding rather than as a hope. If graininess does not move the ceiling,
-        // then the field's structure is not what limits locomotion and the field is spent as a
-        // lever — which would leave only a resource that is not in equilibrium at all.
+        // ⚠️⚠️⚠️ **THE ANSWER IS NO, AND IT IS ASSERTED AS A NULL.** Measured, three seeds:
+        //
+        //   shipped: uptake 0.01, diff 0.04  |  +0.013  |  −0.22, +0.63, −0.37
+        //   grainy:  uptake 0.30, diff 0.002 |  −0.384  |  +1.51, −1.32, −1.34
+        //   grainy:  uptake 0.90, diff 0.002 |  +0.439  |  +0.40, −1.17, +2.09
+        //
+        // Every row is nothing, with between-seed spreads of one to three dwarfing every mean.
+        // **Graininess does not move the ceiling**, and the field-based gate's claim that moving
+        // is worth five hundred times more in a grainy world is refuted where it counts.
+        //
+        // ⭐ The reconciliation is **stock against flow**. `behaviour.rs` says a photocyte draws
+        // its tile down until what it takes equals what the light puts back, so its steady income
+        // is the influx and nothing else. A fuller tile is therefore a *one-off draw-down of a
+        // stock* rather than a higher income — worth about 5.7 units once, against a motor
+        // costing 10.4 over a lifetime — and in a population every other body is drawing the same
+        // tiles down too.
+        //
+        // ⚠️⚠️ **This is the ideal free distribution arriving empirically.** A resource that
+        // renews in place, consumed by things that settle where they are born, equalises: at
+        // equilibrium every occupied position gives the same fitness, and spatial variance in
+        // *value* is competed away however much variance there is in *stock*. **No setting of a
+        // renewable-in-place field escapes that**, which is why twelve rounds of tuning one never
+        // have. What is left is a resource that is not in equilibrium at all.
         assert!(
-            best - shipped > 1.0,
+            (best - shipped).abs() < 1.0,
             "the grainiest world's ceiling is {best:+.3} %/generation against the shipped \
-             world's {shipped:+.3}, a difference of {:+.3}. **The field-based gate says the \
-             prize is five hundred times larger in that world**, so if the calibrated instrument \
-             cannot see it, the two disagree and the field statistic is wrong for a third time",
+             world's {shipped:+.3}, a difference of {:+.3}, which now BEATS the spread. **This \
+             test asserts a null and the null has broken** — graininess would be moving the \
+             ceiling after all, and that reopens the whole field as a lever. Check the \
+             between-seed spreads before believing it: the measured ones are one to three against \
+             means of 0.4",
             best - shipped
         );
     }

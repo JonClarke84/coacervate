@@ -1488,3 +1488,87 @@ does not survive a lump sum. Ship it behind an inert key, as four settings alrea
 against an **uptake-matched control**, not against the shipped 0.000326. Pass: ≥ 0.02. Fail: under
 0.002. ⚠️ And the check with no coefficient in it — **mean cells per body must not collapse toward
 2 while mouths rise**, which is runaway self-cannibalism and looks identical in a census.
+
+---
+
+## ⭐⭐⭐ Result 13: the field is spent as a lever, and now we know the theorem why
+
+### The field gate said the prize was 560× larger in a grainy world
+
+`run.rs`'s `what_moving_is_worth_per_tick`, after two of its own errors were corrected — the
+income a body would gain by being in the best water within reach, in the same energy-per-tick as a
+flagellocyte's 0.006 upkeep:
+
+| `uptake` | `diffusion` | reach 88 | mean tile |
+| --- | --- | --- | --- |
+| **0.01 / 0.04** ships | | **0.0092** | 2.22 |
+| 0.01 / 0.002 | | 0.0402 | 3.27 |
+| 0.30 / 0.002 | | 1.674 | 1.06 |
+| **0.90 / 0.002** | | **5.135** | 1.03 |
+
+Monotone in both directions, over 800× a motor's keep at the top.
+
+### The calibrated instrument says it is worth nothing
+
+`assay.rs`'s `does_a_grainy_world_have_somewhere_worth_going` — the same placed-arm ceiling that
+has been used since Phase 7, **at reach 88**, which is what a flagellocyte at `thrust = 40`
+actually travels rather than the 16.6 every earlier ceiling was quoted at (that figure being a
+*muscle's*, set before motors existed). Three seeds:
+
+| world | ceiling %/gen | the three seeds |
+| --- | --- | --- |
+| shipped | +0.013 | −0.22, +0.63, −0.37 |
+| grainy 0.30 / 0.002 | −0.384 | +1.51, −1.32, −1.34 |
+| grainy 0.90 / 0.002 | +0.439 | +0.40, −1.17, +2.09 |
+
+**Every row is nothing**, with between-seed spreads of one to three dwarfing every mean. A motor
+costs about 7.
+
+### ⭐ The reconciliation: stock is not flow
+
+`behaviour.rs` has said it all along — *a photocyte draws its tile down until what it takes equals
+what the light puts back, so its steady income is the influx and nothing else.*
+
+**A fuller tile is a one-off draw-down of a stock, not a higher income.** Worth about 5.7 units
+once, against a motor costing 10.4 over a lifetime — and in a population every other body is
+drawing the same tiles down. The field gate measured an instantaneous rate that decays and called
+it an income. That was its **third** error in one statistic, after a ratio with a vanishing
+denominator and an uncorrected max-of-sixteen bias.
+
+### ⚠️⚠️ And the theorem underneath, which closes off a whole class of levers
+
+> **A resource that renews in place, consumed by organisms that settle where they are born,
+> equalises.** At equilibrium every occupied position gives the same fitness, and spatial variance
+> in *value* is competed away however much variance there is in *stock*.
+
+That is the **ideal free distribution**, and it is not a bug — it is what a well-behaved ecology
+does. It explains, in one sentence, why twelve rounds of tuning the light field have all returned
+nothing:
+
+- widening the shadow — refuted
+- lowering diffusion — refuted, twice, on two instruments
+- raising uptake to make bodies dig holes — refuted here
+- currents, seasons, patch drift, density, dispersal — all refuted
+
+**No setting of a renewable-in-place field escapes it.** The field is spent, and it is spent for a
+reason rather than by exhaustion.
+
+### ⭐⭐⭐ What is left, stated as a design constraint rather than a candidate
+
+> **The resource must not be in equilibrium.**
+
+Three ways to break one, and only one of them is cheap:
+
+1. **The location of production moves faster than a population can settle onto it.** ⚠️ Not
+   `patch_drift`, which moves each tile's *ceiling* and therefore spills energy — which is exactly
+   why it is bounded at 0.005, or about 8.7 units in a lifetime. What is needed is the **influx
+   itself** delivered as moving blooms while the ceiling stays uniform: the same total energy, no
+   spillage, and the *place it arrives* changing faster than a generation.
+2. **The resource is alive and cycles.** Blocked — `tissue_share` tried it and the world's fixed
+   energy budget absorbed it into fewer, richer bodies.
+3. **Consumers cannot settle.** Refuted as dispersal, which buys strangers by destroying contact.
+
+**Candidate 1 is the round.** And the reason it should produce a single-mutation payoff, which is
+the binding constraint at 10⁴ generations: a body in a dead zone that moves at all has some chance
+of finding a bloom, and a body that stays put certainly starves. **Blind motility pays** — no
+sensor, no wiring, no gradient-following required first.
