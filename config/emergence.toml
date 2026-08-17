@@ -176,13 +176,19 @@ movement_cost = 0.0008   # ⭐ **The fourth, and it was the one rate left behind
                          # in, and a motor would spread at this tempo for a reason that is an
                          # artefact of the tempo.
                          #
-                         # The previous comment on this line said exactly that, and said it
-                         # changed no conclusion because nothing had yet made movement pay at
-                         # any price. That stopped being true: `assay.rs`'s
-                         # `what_a_motor_is_worth_where_there_is_somewhere_to_go` measures a
-                         # third flagellocyte invading at +2.0 %/generation at a thrust of 40.
-                         # So it is scaled now, and this profile is a time scaling again rather
-                         # than a time scaling with one price quietly moved.
+                         # The previous comment on this line said exactly that and excused itself
+                         # on the grounds that nothing had ever made movement pay at any price.
+                         #
+                         # ⚠️ It then cited a +2.0 %/generation invasion reading as having changed
+                         # that. **That figure is retracted twice over** — three seeds gave -10.3,
+                         # -7.2 and -15.2, and the arm was a flagellocyte whose gene carried an
+                         # `osc_freq` of nought, so it never ran at all. Nothing has yet made
+                         # movement pay.
+                         #
+                         # It is scaled anyway, because the excuse was never a good one. A price
+                         # wrong by a factor of eight is wrong whether or not anything currently
+                         # notices, and this profile is a time scaling again rather than a time
+                         # scaling with one price quietly moved.
 reproduction_threshold = 2.2
 offspring_share = 0.45
 

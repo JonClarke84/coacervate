@@ -16,14 +16,23 @@
 #
 # ⚠️⚠️ **AND FITNESS IS A NULL. A MOTOR HAS NOT BEEN SHOWN TO PAY.**
 #
-# The first two readings are deterministic and hold. The third one does not exist. A single seed
-# of `what_a_motor_is_worth_where_there_is_somewhere_to_go` came back at +2.0 %/generation for a
-# motorised invader against −19.9 for one that could not push, which read as the first
-# specialisation other than a photocyte ever measured positive here. **Three seeds killed it**:
-# the means are −10.3, −7.2 and −15.2 at thrusts of 0, 40 and 100, and the between-seed spread is
-# 17 to 24 against a between-thrust difference of 3. The +2.0 was one seed out of nine.
+# The first two readings are deterministic and hold. The third does not exist, and it was
+# retracted **twice**.
 #
-# A motor also prices −2.5 %/generation in the competition assay, which measures empty water.
+# First, a single seed of `what_a_motor_is_worth_where_there_is_somewhere_to_go` came back at +2.0
+# %/generation for a motorised invader against −19.9 for one that could not push, which read as
+# the first specialisation other than a photocyte ever measured positive here. Three seeds killed
+# it: the means are −10.3, −7.2 and −15.2, against a between-seed spread of 17 to 24.
+#
+# Then an audit found that **the arm was never switched on at all**. `founder_with_a_third_cell`
+# gave the third cell's gene an `osc_freq` of nought, and `behaviour.rs`'s `propel` returns early
+# on `force <= 0.0` — so the flagellocyte was a sclerocyte with a dearer upkeep, and the sweep of
+# `physics.thrust` was a sweep of a number the arm could not feel. Every founder-based reading of
+# this organelle is void; the `swimmer`-built ones (travel and income, above) are not.
+#
+# With a motor that runs, the competition assay in empty water gives −2.458 at thrust 0, then
+# −2.672, −4.285, −7.612, and extinction at 250: **monotone, and pure cost**, which is what empty
+# water should give.
 #
 # So what this profile switches on is an organelle that **demonstrably moves a body and
 # demonstrably finds it more food**, and which nothing has yet shown a lineage is better off

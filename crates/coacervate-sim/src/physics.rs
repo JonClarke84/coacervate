@@ -1182,6 +1182,8 @@ impl Physics {
 mod tests {
     use super::*;
     use crate::config::{Config, RawConfig, spec_defaults};
+    use crate::genome::{Action, Gene, Genome, SensorTarget, State};
+    use crate::world::World;
     use proptest::prelude::*;
 
     /// SPEC's default configuration with some of it changed, checked and ready to build a
@@ -3284,6 +3286,112 @@ mod tests {
             "an unattached flagellocyte moved itself by {}, so a lone cell can swim — and a \
              lineage gets locomotion without ever having to become multicellular",
             (loose[0].pos - began).length()
+        );
+    }
+
+    /// ⭐⭐⭐ A world with no thrust in it is the world that was there before, bit for bit.
+    ///
+    /// **`Physics::propel`'s documentation promised this test by name and the test did not
+    /// exist.** It was found by an adversarial audit reading the code against its own claims, and
+    /// the gap mattered: `physics.thrust` ships at nought, and *every* selection coefficient in
+    /// this project — three hundred of them — was measured in a world where it is nought. A
+    /// setting that ships inert has to be **shown** inert, or the claim protecting all of them is
+    /// a comment.
+    ///
+    /// # Why it has two halves
+    ///
+    /// The first pins that a shipped world is unchanged. On its own that would pass just as
+    /// happily against a program where `physics.thrust` did nothing at *any* value — a
+    /// configuration key nobody can tell is there — which is the failure `run.rs`'s
+    /// `a_world_with_no_current_is_the_world_that_was_there_before` documents having spent a whole
+    /// round hiding behind. So the second half turns the thrust up and requires the world to come
+    /// back somewhere else.
+    ///
+    /// ⚠️ The second half needs a body with a **driven** flagellocyte on it, and a world seeded
+    /// with SPEC's founder has none until mutation makes one. Hence the hand-built pair: a chain
+    /// with a motor at its tail, at an `osc_freq` that is not nought. A version of this test that
+    /// seeded the plain founder would pass its second half only by accident, whenever a mutation
+    /// happened to land, and would silently stop testing anything the day the mutation rates
+    /// changed.
+    #[test]
+    fn a_world_with_no_thrust_is_the_world_that_was_there_before() {
+        let motorised = |thrust: f64| {
+            let world = config(|raw| {
+                raw.physics.thrust = thrust;
+                raw.limits.max_organisms = 4;
+            });
+
+            // A five-celled chain with the motor at the tail, built by hand for the reason the
+            // documentation above gives.
+            let genes: Vec<Gene> = [
+                CellKind::Photocyte,
+                CellKind::Photocyte,
+                CellKind::Gonocyte,
+                CellKind::Flagellocyte,
+            ]
+            .iter()
+            .enumerate()
+            .map(|(step, kind)| {
+                let step = u8::try_from(step).expect("a four-gene genome");
+                Gene {
+                    trigger_state: State::new(step),
+                    min_step: step,
+                    max_step: step,
+                    action: Action::Divide,
+                    angle: if step % 2 == 0 { 1.287 } else { -1.287 },
+                    adhere: true,
+                    child_state: State::new(step + 1),
+                    child_kind: *kind,
+                    rest_length: 10.0,
+                    stiffness: 10.0,
+                    new_kind: CellKind::Photocyte,
+                    new_state: State::ZERO,
+                    osc_freq: 3.0,
+                    osc_phase: 0.0,
+                    sensor_gain: 0.0,
+                    sensor_target: SensorTarget::Light,
+                }
+            })
+            .collect();
+
+            let mut world = World::new(&world);
+            for _ in 0..2_000 {
+                world.tick();
+            }
+            let slot = world
+                .seed(
+                    Genome::new(genes, &world.config().limits.clone()),
+                    Vec2::new(1_000.0, 576.0),
+                    5.0,
+                )
+                .expect("a lit world has room for one body");
+            for _ in 0..1_500 {
+                world.tick();
+            }
+
+            world
+                .cells_of(slot)
+                .iter()
+                .map(|cell| (cell.pos.x.to_bits(), cell.pos.y.to_bits()))
+                .collect::<Vec<_>>()
+        };
+
+        let (off, also_off) = (motorised(0.0), motorised(0.0));
+        assert_eq!(
+            off, also_off,
+            "the same world twice is not the same world, so nothing below this line can mean \
+             anything"
+        );
+
+        // ⭐ And the setting is a real force rather than a key nobody reads.
+        let on = motorised(40.0);
+        assert_ne!(
+            on, off,
+            "a body carrying a driven flagellocyte finished in exactly the same place with \
+             `physics.thrust` at 40 as with it at nought, so the setting is one a person can \
+             turn and a world that cannot feel it. ⚠️ The most likely cause is the one an audit \
+             already found once: a gene whose `osc_freq` is nought makes a motor that
+             `Behaviour::propel` skips before it charges anything"
         );
     }
 }

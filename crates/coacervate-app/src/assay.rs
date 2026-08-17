@@ -834,8 +834,12 @@ fn founder_with_a_third_cell(limits: &LimitsConfig, kind: CellKind) -> Genome {
     // additionally pays `movement_cost` on the work it does, so the conclusion there can only get
     // firmer. An inert flagellocyte is a loss for the same reason and a working one **earns
     // food**, so that conclusion was never tested at all.
-    let driven = matches!(kind, CellKind::Myocyte | CellKind::Flagellocyte);
-
+    // ⚠️ **Given to every kind, not only the two that read it**, and the guard caught the version
+    // that did not. `one_mutation_apart` counts the gene fields two arms differ in, and setting
+    // the frequency conditionally made a myocyte arm differ from a photocyte arm in `child_kind`
+    // *and* `osc_freq` — two steps, which `assay` refuses, and rightly. `osc_freq` is read by
+    // exactly two kinds' behaviour and is inert on the other five, so handing it to all of them
+    // costs nothing and leaves the arms exactly one mutation apart.
     genes.push(Gene {
         trigger_state: State::ZERO,
         min_step: 1,
@@ -851,7 +855,7 @@ fn founder_with_a_third_cell(limits: &LimitsConfig, kind: CellKind) -> Genome {
         new_state: State::ZERO,
         // `BEAT` is the frequency every hand-built driven body in this module uses, so a third
         // myocyte and a third flagellocyte are worked exactly as hard here as they are there.
-        osc_freq: if driven { BEAT } else { 0.0 },
+        osc_freq: BEAT,
         osc_phase: 0.0,
         // ⚠️ Left at nought deliberately. A gain is a *wiring* to a sensocyte, this body has no
         // sensocyte to be wired to, and `is_a_steered_motor_steering_or_switching_itself_off`
@@ -3203,8 +3207,11 @@ mod tests {
     /// to confound it. If the answer is no here it is no everywhere, because a crowd only makes
     /// the water it moves into worse.
     ///
-    /// Gross harvest, from [`earns`], which is `Δbiomass + Δdissipated` and is an identity rather
-    /// than an estimate. Net income would conflate what a motor found with what it cost.
+    /// Net income, from [`earns`], which is the change in `Ledger::biomass` and so is exactly what
+    /// this one body ended up holding. ⚠️ An earlier version of this line said `earns` returned
+    /// `Δbiomass + Δdissipated` and called that an identity for gross harvest; it is not, because
+    /// `Ledger::overflow` credits `dissipated` with every unit drained from a tile too full to
+    /// hold the light, across the whole field. See [`earns`].
     #[test]
     #[ignore = "a handful of whole lifetimes; run deliberately with --ignored"]
     fn does_moving_find_more_food_than_staying_put() {
@@ -3297,9 +3304,14 @@ mod tests {
         // long random walk in a world where most directions are darker than where it started.
         // Slow travel samples fresh water near the light; fast travel leaves the light behind.
         //
-        // That is a genuine optimum arriving out of two settings that were not chosen together,
-        // and it is what makes the invasion reading legible: +2.0 %/generation at thrust 40 and
-        // −30.8 at 100.
+        // That is a genuine optimum arriving out of two settings that were not chosen together.
+        //
+        // ⚠️⚠️ It was once said to make an invasion reading legible — +2.0 %/generation at thrust
+        // 40 against −30.8 at 100. **Both of those figures are retracted twice over**: three
+        // seeds gave −10.3, −7.2 and −15.2, and the arm they were taken on was in any case a
+        // flagellocyte whose gene carried an `osc_freq` of nought, so it never ran at all. See
+        // the two retractions in `docs/NEXT.md` §8. This test's own numbers are unaffected — it
+        // builds its bodies with `swimmer`, which does drive a motor.
         let (_, _, still, _) = readings[0];
         let (thrust, gross, _, travel) = readings
             .iter()

@@ -2495,7 +2495,8 @@ mod tests {
     #[test]
     #[ignore = "three worlds ticked to 60,000; run deliberately with --ignored"]
     fn how_much_of_what_a_body_eats_is_another_body() {
-        let profiles: [(&str, fn(&mut RawConfig)); 3] = [
+        type Profile = (&'static str, fn(&mut RawConfig));
+        let profiles: [Profile; 3] = [
             ("the shipped world", |_| {}),
             ("kleiber 0.75", |raw| {
                 raw.metabolism.scaling_exponent = 0.75;

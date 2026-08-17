@@ -849,80 +849,6 @@ impl Behaviour {
             });
     }
 
-    /// Myocytes work their springs, and their organisms pay for the work.
-    ///
-    /// SPEC section 9's controller, applied once per spring rather than once per myocyte,
-    /// because a spring has only one rest length and can have a muscle on both ends. Where it
-    /// does, the two contractions are **averaged** - which is order-independent, and which
-    /// means two muscles pulling against each other cancel rather than one of them winning by
-    /// being looked at second.
-    ///
-    /// # ⭐⭐ Where a myocyte's rhythm comes from: **the gene that built it**
-    ///
-    /// `osc_freq`, `osc_phase` and `sensor_gain` live on a *gene*, and a cell is not a gene.
-    /// SPEC section 7 never says in as many words which gene a grown cell's behaviour comes
-    /// from, but it puts those three fields, and `sensor_target`, in **the same fixed record**
-    /// as `child_kind` and `new_kind`. The natural reading of one record is that it describes
-    /// one thing: a gene that divides a parent into a myocyte says how that myocyte oscillates.
-    /// So a cell carries the position of the gene that made it what it is - see
-    /// [`crate::development::develop`] - and this reads it.
-    ///
-    /// **Phase 4 decided the other way and the evidence is that it connected almost nothing.**
-    /// It looked a cell's behaviour up by matching its `state` against `trigger_state`, which
-    /// is development's own first-match-wins rule with the step window taken off, on the
-    /// grounds that a state is what a genome uses to say what a cell *is*. Measured over
-    /// 120,000 ticks of the shipped world, over every cell of every body except the seed cell
-    /// it started as: **0.05% were in a state their own genome named.** Not one myocyte,
-    /// devorocyte or sclerocyte in the population was. A state is one of 64, a genome of that
-    /// age holds about three genes, `trigger_state` is not where mutation spends its time, and
-    /// development scatters daughters across the whole range through `child_state` - so a
-    /// muscle was overwhelmingly likely to be grown into a state nothing in its own genome was
-    /// listening to. **Anatomically present and behaviourally disconnected**: a muscle with no
-    /// nerve to it. Three separate changes to what movement was *worth* - the anisotropic
-    /// water, the drifting light and the stroke - all came back null against a code path the
-    /// world took about once in every two hundred thousand spring-ticks.
-    ///
-    /// What the old rule offered and this one does not is that a duplicated gene could take
-    /// over an existing cell's behaviour by naming its state. What this one keeps is the thing
-    /// duplication is actually for: duplicate a dividing gene, point the copy at another state,
-    /// and the new body part it grows arrives **with its own rhythm** - because the rhythm
-    /// travels with the gene instead of being looked up afterwards. Gene order still decides
-    /// which gene builds a cell, so order still carries information.
-    ///
-    /// A cell no gene speaks for has no behaviour at all: no frequency, no gain. It must not
-    /// fall back on some default rhythm, or a lineage would be swimming to a tune nobody
-    /// selected. Under this rule that case is **unreachable in a grown body** - only a seed
-    /// cell can lack a gene and a seed cell is always a photocyte, which
-    /// `development.rs`'s `a_cell_with_no_gene_is_the_seed_cell_and_needs_none` proves - so
-    /// the fallback is a rule about a case rather than the ordinary path it used to be.
-    ///
-    /// # What the work is
-    ///
-    /// **Force through distance**: the tension already in the spring, times how far this
-    /// tick's contraction moved its rest length. SPEC section 6 says the cost is
-    /// `movement_cost × work done` and leaves work undefined, and the definition matters more
-    /// than the constant: a flat charge per myocyte would be indistinguishable from upkeep and
-    /// would select on how many muscles a body had rather than on what it did with them.
-    ///
-    /// A muscle that is not moving therefore pays exactly nothing, and one working against a
-    /// stiffer spring pays proportionally more.
-    ///
-    /// ⭐⭐ **The distance is *remembered* rather than worked out from the controller, and Group
-    /// L is that change.** The rest length looks like a closed-form function of the time, so
-    /// last tick's looked like a subtraction rather than a number anything had to store — and
-    /// that reading is wrong, because the controller also reads a **sensor**. Evaluating it a
-    /// tick back with *this* tick's sensor reading cancels the sensor out of the subtraction
-    /// entirely: a myocyte whose signal changed moved its spring for free, by up to
-    /// `base × stroke` in one tick, and with `osc_freq` at nought — 87% of myocyte spring-ticks
-    /// — the charge was **exactly** nought. In SPEC section 8's water that is free displacement.
-    /// See [`Cell::contraction`].
-    ///
-    /// ⚠️ **And the tension is taken at the rest length the spring was already at**, not the one
-    /// this tick has just moved it to. Taken after the jump the tension contains the jump as
-    /// well, and the charge goes as its **square** — which matters because a sensocyte reads a
-    /// light field quantised on eight-unit tiles and steps discontinuously at every boundary
-    /// crossing. Force through distance means the force that was opposing the movement when it
-    /// began; `no_single_tick_can_charge_a_muscle_more_than_the_body_holds` is the bound.
     /// What every cell hears from the sensocytes it is joined to.
     ///
     /// SPEC section 9's "mean of connected Sensocyte outputs, or 0 if none" - the summing half of
@@ -1073,6 +999,80 @@ impl Behaviour {
         }
     }
 
+    /// Myocytes work their springs, and their organisms pay for the work.
+    ///
+    /// SPEC section 9's controller, applied once per spring rather than once per myocyte,
+    /// because a spring has only one rest length and can have a muscle on both ends. Where it
+    /// does, the two contractions are **averaged** - which is order-independent, and which
+    /// means two muscles pulling against each other cancel rather than one of them winning by
+    /// being looked at second.
+    ///
+    /// # ⭐⭐ Where a myocyte's rhythm comes from: **the gene that built it**
+    ///
+    /// `osc_freq`, `osc_phase` and `sensor_gain` live on a *gene*, and a cell is not a gene.
+    /// SPEC section 7 never says in as many words which gene a grown cell's behaviour comes
+    /// from, but it puts those three fields, and `sensor_target`, in **the same fixed record**
+    /// as `child_kind` and `new_kind`. The natural reading of one record is that it describes
+    /// one thing: a gene that divides a parent into a myocyte says how that myocyte oscillates.
+    /// So a cell carries the position of the gene that made it what it is - see
+    /// [`crate::development::develop`] - and this reads it.
+    ///
+    /// **Phase 4 decided the other way and the evidence is that it connected almost nothing.**
+    /// It looked a cell's behaviour up by matching its `state` against `trigger_state`, which
+    /// is development's own first-match-wins rule with the step window taken off, on the
+    /// grounds that a state is what a genome uses to say what a cell *is*. Measured over
+    /// 120,000 ticks of the shipped world, over every cell of every body except the seed cell
+    /// it started as: **0.05% were in a state their own genome named.** Not one myocyte,
+    /// devorocyte or sclerocyte in the population was. A state is one of 64, a genome of that
+    /// age holds about three genes, `trigger_state` is not where mutation spends its time, and
+    /// development scatters daughters across the whole range through `child_state` - so a
+    /// muscle was overwhelmingly likely to be grown into a state nothing in its own genome was
+    /// listening to. **Anatomically present and behaviourally disconnected**: a muscle with no
+    /// nerve to it. Three separate changes to what movement was *worth* - the anisotropic
+    /// water, the drifting light and the stroke - all came back null against a code path the
+    /// world took about once in every two hundred thousand spring-ticks.
+    ///
+    /// What the old rule offered and this one does not is that a duplicated gene could take
+    /// over an existing cell's behaviour by naming its state. What this one keeps is the thing
+    /// duplication is actually for: duplicate a dividing gene, point the copy at another state,
+    /// and the new body part it grows arrives **with its own rhythm** - because the rhythm
+    /// travels with the gene instead of being looked up afterwards. Gene order still decides
+    /// which gene builds a cell, so order still carries information.
+    ///
+    /// A cell no gene speaks for has no behaviour at all: no frequency, no gain. It must not
+    /// fall back on some default rhythm, or a lineage would be swimming to a tune nobody
+    /// selected. Under this rule that case is **unreachable in a grown body** - only a seed
+    /// cell can lack a gene and a seed cell is always a photocyte, which
+    /// `development.rs`'s `a_cell_with_no_gene_is_the_seed_cell_and_needs_none` proves - so
+    /// the fallback is a rule about a case rather than the ordinary path it used to be.
+    ///
+    /// # What the work is
+    ///
+    /// **Force through distance**: the tension already in the spring, times how far this
+    /// tick's contraction moved its rest length. SPEC section 6 says the cost is
+    /// `movement_cost × work done` and leaves work undefined, and the definition matters more
+    /// than the constant: a flat charge per myocyte would be indistinguishable from upkeep and
+    /// would select on how many muscles a body had rather than on what it did with them.
+    ///
+    /// A muscle that is not moving therefore pays exactly nothing, and one working against a
+    /// stiffer spring pays proportionally more.
+    ///
+    /// ⭐⭐ **The distance is *remembered* rather than worked out from the controller, and Group
+    /// L is that change.** The rest length looks like a closed-form function of the time, so
+    /// last tick's looked like a subtraction rather than a number anything had to store — and
+    /// that reading is wrong, because the controller also reads a **sensor**. Evaluating it a
+    /// tick back with *this* tick's sensor reading cancels the sensor out of the subtraction
+    /// entirely: a myocyte whose signal changed moved its spring for free, by up to
+    /// `base × stroke` in one tick, and with `osc_freq` at nought — 87% of myocyte spring-ticks
+    /// — the charge was **exactly** nought. In SPEC section 8's water that is free displacement.
+    /// See [`Cell::contraction`].
+    ///
+    /// ⚠️ **And the tension is taken at the rest length the spring was already at**, not the one
+    /// this tick has just moved it to. Taken after the jump the tension contains the jump as
+    /// well, and the charge goes as its **square** — which matters because a sensocyte reads a
+    /// light field quantised on eight-unit tiles and steps discontinuously at every boundary
+    /// crossing. Force through distance means the force that was opposing the movement when it
+    /// began; `no_single_tick_can_charge_a_muscle_more_than_the_body_holds` is the bound.
     fn contract(
         &mut self,
         cells: &mut [Cell],
