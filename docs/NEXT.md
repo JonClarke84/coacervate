@@ -748,3 +748,58 @@ needs an instrument that does not yet exist.
    of 0.237, at the one thrust that kills a body outright. A fluke. It is recorded in the test's
    own documentation rather than quietly rewritten, because an assertion that passes on noise
    converts *"we did not measure this"* into *"we measured it and it was fine"*.
+
+### ⭐⭐⭐ Result 4: the arithmetic behind every null, and the one lever that moves it
+
+Every null this round produced is one ratio, showing up in four instruments.
+
+> **A flagellocyte costs 0.006 a tick to own — 9.0 over a 1,500-tick window — and the travel it
+> buys finds 4.7. The organelle earns about half its keep.**
+
+There are exactly two ways out and only one is honest.
+
+**Make the cell cheaper.** It would have to cost under 0.0031 a tick, which is *below the
+photocyte's 0.004*. `CellKind::upkeep`'s own note spends most of its length arguing why that is
+the line: it was measured for the myocyte, and at 0.002 a tick myocytes rise steadily through a
+run and reach 2.4% of bodies **while mean displacement falls to the lowest reading in the
+sweep**. That is a motor spreading because it is cheap, not because it moves anything, and in a
+census it would be indistinguishable from the result this round is looking for.
+
+**⭐⭐⭐ Make moving find more — and this is measured.** `assay.rs`'s
+`what_the_field_has_to_be_like_for_moving_to_pay`, sweeping `light.diffusion` at thrust 40:
+
+| `light.diffusion` | gross gain | **as a share of the 9.0 it costs** | travel |
+| --- | --- | --- | --- |
+| 0.000 | +39.14 | **435 %** | 76.2 |
+| 0.005 | +17.71 | **197 %** | 76.2 |
+| 0.010 | +10.27 | **114 %** | 76.2 |
+| 0.020 | +5.92 | 66 % | 76.2 |
+| **0.040** ships | **+4.70** | **52 %** | 76.2 |
+| 0.080 | +5.47 | 61 % | 76.2 |
+
+**The crossover is at a diffusion of about 0.011.** Below it a motor earns more than it costs;
+at the shipped 0.04 it earns half. Travel is identical in every row, so this is the *field*
+changing and not the organelle.
+
+⭐ **And the mechanism is the one from real biology.** `light.diffusion` is how fast a hole a
+body eats is refilled by its neighbours. At 0.04 the water fills the hole faster than a body can
+deepen it, so there is nothing to outrun and staying put is free. Slow it and a body sits in a
+depletion zone of its own making — which is exactly why motility pays for real plankton, and why
+diffusion limitation is the standard explanation for it.
+
+⚠️ **Lowering diffusion changes the whole world's economy, not just the motor's income**, because
+the field also becomes worse at spreading light from where it fell. So it has to be measured
+against a plain founder *in the same altered world*.
+
+### What is left to do
+
+1. **`does_a_motor_pay_for_itself_once_the_water_stops_mixing`** — the competition assay at
+   diffusion 0.04, 0.02, 0.01 and 0.005, with a third photocyte in every run as the control that
+   catches "everything got better". Its ±0.11 %/generation floor is forty times tighter than the
+   invasion assay's variance on a crashing arm. **This is the decisive reading of the round.**
+2. **`is_a_motor_worth_having_on_a_body_that_can_afford_one`** — two seven-celled arms differing
+   only in whether the seventh cell is a sclerocyte or a flagellocyte, because every coefficient
+   this project has ever taken on a specialisation put that cell on the *smallest body in the
+   world*.
+3. If 1 reads positive, the shipped `light.diffusion` is the change, and it wants its own
+   profile and its own re-recorded golden vectors.

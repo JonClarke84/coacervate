@@ -3237,4 +3237,333 @@ mod tests {
              is 0.75 and an unsteered body that goes far enough leaves the light"
         );
     }
+
+    /// ⭐⭐⭐ Is a motor worth having on a body big enough to afford one?
+    ///
+    /// **The experiment neither assay could do, and the reason it could not is structural.**
+    /// `founder_with_a_third_cell` hangs the marginal cell on SPEC's two-celled founder, so every
+    /// selection coefficient this project has ever taken on a specialisation is a coefficient for
+    /// putting that cell on **the smallest body in the world** — a body with a single photocyte,
+    /// which then has to pay for a cell dearer than that photocyte earns. A motor was never going
+    /// to survive that, and neither was a mouth.
+    ///
+    /// Here both arms are **seven-celled bodies that differ in one cell's kind**: five photocytes
+    /// and a gonocyte, with a seventh cell that is either a sclerocyte — the cheapest, most inert
+    /// thing in the world, which is the fairest possible control for "a cell that does nothing" —
+    /// or a flagellocyte. They are released into the same resident population, on the same tick,
+    /// at interleaved positions, so they meet the same water and the same weather.
+    ///
+    /// # Why this should also read more cleanly than the last attempt
+    ///
+    /// `what_a_motor_is_worth_where_there_is_somewhere_to_go` came back with a between-seed
+    /// spread of 17 to 24 %/generation, which is what happens when the arm being tracked crashes
+    /// almost at once: the slope of a log frequency that has gone to nothing is barely estimated
+    /// at all. A seven-celled body with five photocytes is not a crashing arm, so the instrument
+    /// should be back inside the regime its ±1.12 noise floor was measured in. ⚠️ **If the spread
+    /// here is still of that order, the reading means nothing again** and the assertion below
+    /// says so rather than quoting a difference.
+    #[test]
+    #[ignore = "six 92,000-tick invasions; run deliberately with --ignored"]
+    fn is_a_motor_worth_having_on_a_body_that_can_afford_one() {
+        const SEEDS: [u64; 3] = [42, 43, 44];
+        const BODY: [CellKind; 6] = [
+            CellKind::Photocyte,
+            CellKind::Photocyte,
+            CellKind::Photocyte,
+            CellKind::Photocyte,
+            CellKind::Photocyte,
+            CellKind::Gonocyte,
+        ];
+
+        let with = |tail| {
+            let mut plan = BODY.to_vec();
+            plan.push(tail);
+            plan
+        };
+
+        let mut readings = Vec::new();
+        for thrust in [0.0f64, 40.0] {
+            let mut motors = Vec::new();
+
+            for seed in SEEDS {
+                let config = seeded_world(seed, |raw| raw.physics.thrust = thrust);
+                let plain = founder_genome(&config.limits);
+                let arms = [
+                    ("the resident's own genome", founder_genome(&config.limits)),
+                    (
+                        "seven cells, the last a sclerocyte",
+                        swimmer(&config.limits, &with(CellKind::Sclerocyte), BEAT, 0.0),
+                    ),
+                    (
+                        "seven cells, the last a flagellocyte",
+                        swimmer(&config.limits, &with(CellKind::Flagellocyte), BEAT, 0.0),
+                    ),
+                ];
+
+                let invasion = invade(&config, &plain, &arms, INTRODUCTIONS, SETTLE, WINDOW);
+                report_invasion(
+                    &format!("big body, thrust {thrust}, seed {seed}"),
+                    &invasion,
+                );
+
+                // ⭐ The motor's worth is the difference between the two SEVEN-CELLED arms, not
+                // between either of them and the resident. Both pay the same newcomer's price and
+                // both carry the same six cells; what is left is the seventh.
+                motors.push(excess(&invasion, 2) - excess(&invasion, 1));
+            }
+
+            let mean = motors.iter().sum::<f64>() / 3.0;
+            let spread = motors.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                - motors.iter().copied().fold(f64::INFINITY, f64::min);
+            readings.push((thrust, mean, spread, motors.clone()));
+        }
+
+        println!("\nthrust | motor over sclerocyte, %/gen (mean of 3) | spread | seeds");
+        for (thrust, mean, spread, each) in &readings {
+            let each: Vec<String> = each.iter().map(|value| format!("{value:+.1}")).collect();
+            println!(
+                "{thrust:6.0} | {mean:+40.3} | {spread:6.1} | {}",
+                each.join(", ")
+            );
+        }
+
+        let (_, still, still_spread, _) = readings[0];
+        let (thrust, moving, spread, _) = readings[1];
+        println!(
+            "\nBIG BODY: at a thrust of {thrust}, a seventh cell that is a motor is worth \
+             {moving:+.3} %/generation more than a sclerocyte (spread {spread:.1}); with the \
+             thrust off it is worth {still:+.3} (spread {still_spread:.1}). The difference is \
+             {:+.3}.",
+            moving - still
+        );
+
+        // ⚠️ The instrument check, which comes before any reading of the result. A spread of the
+        // order the founder-plus-one version produced means the arms are crashing again and
+        // nothing here is resolvable.
+        assert!(
+            spread.max(still_spread) < 12.0,
+            "the between-seed spread is {:.1} %/generation, and the founder-plus-one version of \
+             this question produced 17 to 24 - which is what a crashing arm looks like. A \
+             seven-celled body with five photocytes was supposed to be a arm that survives; if \
+             it is not, this reading is as unresolvable as the last one and the numbers above \
+             must not be quoted",
+            spread.max(still_spread)
+        );
+    }
+
+    /// ⭐⭐⭐ What the field would have to be like for moving to pay — the arithmetic behind the
+    /// null, and the one lever left.
+    ///
+    /// # The sum that decides everything
+    ///
+    /// `does_moving_find_more_food_than_staying_put` measures a motor finding **+4.696** energy
+    /// over 1,500 ticks, gross. A flagellocyte costs **0.006 a tick** simply to own, which is
+    /// **9.0** over the same window. So the organelle earns about half what it costs, and every
+    /// null this round has produced is that one ratio showing up in a different instrument.
+    ///
+    /// There are exactly two ways out and only one of them is honest.
+    ///
+    /// **Make the cell cheaper.** A flagellocyte would have to cost under 0.0031 a tick, which is
+    /// **below the photocyte's 0.004** — and `CellKind::upkeep`'s own note spends most of its
+    /// length arguing that a cell cheaper to own than the cell funding it is where neutral bloat
+    /// begins. It was measured for the myocyte: at 0.002 a tick, myocytes rise through a run
+    /// rather than fluctuating and reach 2.4% of bodies **while mean displacement falls to the
+    /// lowest reading in the sweep**. That is a motor spreading because it is cheap, not because
+    /// it moves anything, and it would be indistinguishable in the census from the result this
+    /// round is looking for.
+    ///
+    /// **Make moving find more.** The gain is 3.38% of income because the field is nearly smooth
+    /// at the scale a body can travel, and `light.diffusion` is what smooths it: at 0.04 a tick,
+    /// a hole a body eats is refilled from its neighbours faster than the body can deepen it.
+    /// **A world whose water mixes more slowly is a world where staying put costs you**, which is
+    /// the actual reason motility evolved in real plankton, and it is one number.
+    ///
+    /// This test is the sweep of that number.
+    #[test]
+    #[ignore = "a lifetime per arm; run deliberately with --ignored"]
+    fn what_the_field_has_to_be_like_for_moving_to_pay() {
+        const PLAN: [CellKind; 4] = [
+            CellKind::Photocyte,
+            CellKind::Photocyte,
+            CellKind::Gonocyte,
+            CellKind::Flagellocyte,
+        ];
+        const WATCH: u64 = 1_500;
+        const THRUST: f64 = 40.0;
+
+        // What the motor has to beat: its own upkeep over the window. Everything else about the
+        // body is identical between the two arms, so this is the whole of what it must earn.
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a tick count of a few thousand is exact in an f64"
+        )]
+        let bar = f64::from(CellKind::Flagellocyte.upkeep()) * WATCH as f64;
+
+        println!("the motor must find more than {bar:.3} over {WATCH} ticks to be worth owning\n");
+        println!("diffusion | gross gain | as % of the bar | travel");
+
+        let mut readings = Vec::new();
+        for diffusion in [0.0f64, 0.005, 0.01, 0.02, 0.04, 0.08] {
+            let tune = |raw: &mut RawConfig| {
+                raw.physics.thrust = THRUST;
+                raw.light.diffusion = diffusion;
+            };
+
+            let (moving, lived) =
+                earns(42, tune, |limits| swimmer(limits, &PLAN, BEAT, 0.0), WATCH);
+            let (still, _) = earns(
+                42,
+                tune,
+                |limits| held_still(&swimmer(limits, &PLAN, BEAT, 0.0), limits),
+                WATCH,
+            );
+            let (travel, _) = travels(42, tune, |limits| swimmer(limits, &PLAN, BEAT, 0.0), WATCH);
+
+            assert_eq!(
+                lived, WATCH,
+                "the body died at tick {lived} of {WATCH} at a diffusion of {diffusion}"
+            );
+
+            // What the motor spent, added back, so this is what the travel FOUND.
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a tick count of a few thousand is exact in an f64"
+            )]
+            let paid = {
+                let drag = 0.92f64;
+                let dt = 1.0 / 60.0;
+                let force = THRUST * f64::from(BEAT) * 0.8;
+                0.0001 * force * force * (drag * dt * dt / (1.0 - drag)) * WATCH as f64
+            };
+            let gross = moving + paid - still;
+
+            println!(
+                "{diffusion:9.3} | {gross:+10.4} | {:15.1} | {travel:.1}",
+                gross / bar * 100.0
+            );
+            readings.push((diffusion, gross, travel));
+        }
+
+        let shipped = readings
+            .iter()
+            .find(|&&(diffusion, _, _)| (diffusion - 0.04).abs() < 1e-9)
+            .expect("the shipped diffusion is in the sweep");
+        let best = readings
+            .iter()
+            .copied()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).expect("energies are finite"))
+            .expect("the sweep has readings in it");
+
+        println!(
+            "\nTHE LEVER: at the shipped diffusion of 0.04 a motor finds {:+.3}, which is {:.0}% \
+             of the {bar:.1} it costs to own. The best in the sweep is {:+.3} at a diffusion of \
+             {}, which is {:.0}%.",
+            shipped.1,
+            shipped.1 / bar * 100.0,
+            best.1,
+            best.0,
+            best.1 / bar * 100.0
+        );
+
+        // ⭐⭐ Does slowing the water down sharpen the thing a motor exploits? The direction is
+        // what matters; the size decides whether this is a lever or another null.
+        assert!(
+            best.1 > shipped.1,
+            "no diffusion in the sweep let a motor find more food than the shipped 0.04 does \
+             ({:+.3}). **Then the field's smoothness is not what is limiting locomotion**, the \
+             one remaining lever on the world side is spent, and what is left is the price of \
+             the cell - which cannot go below the photocyte's without buying neutral bloat",
+            shipped.1
+        );
+    }
+
+    /// ⭐⭐⭐ Does a motor pay for itself once the water stops mixing? The decisive test.
+    ///
+    /// `what_the_field_has_to_be_like_for_moving_to_pay` establishes the arithmetic: a
+    /// flagellocyte costs 9.0 over 1,500 ticks and finds 4.7 at the shipped `light.diffusion` of
+    /// 0.04 — about half its keep — and that one ratio is every null this round produced. Slow the
+    /// water's mixing and the same motor finds 10.3 at 0.01 and 39.1 at nothing at all, because
+    /// a body can then eat a hole faster than its neighbours refill it and **staying put starts to
+    /// cost something**.
+    ///
+    /// ⚠️ That is a measurement of *income*, on one body, alone. It says nothing about selection.
+    /// This is the test that does, on the competition assay — whose ±0.11 %/generation noise floor
+    /// is forty times tighter than the invasion assay's variance on a crashing arm, and which is
+    /// therefore the instrument to use for a question this size.
+    ///
+    /// **The confounder, and why the control arm matters more than usual here.** Lowering the
+    /// diffusion does not only sharpen the hole a body eats — it changes the whole world's
+    /// economy, because the field is now worse at spreading light away from where it fell. So
+    /// every arm is measured against a plain founder **in the same altered world**, and what is
+    /// quoted is the difference. A motor that looked better simply because everything did would
+    /// show up as the control moving too.
+    #[test]
+    #[ignore = "a competition assay per arm; run deliberately with --ignored"]
+    fn does_a_motor_pay_for_itself_once_the_water_stops_mixing() {
+        println!("diffusion | a third flagellocyte, %/gen | a third photocyte, %/gen");
+
+        let mut readings = Vec::new();
+        for diffusion in [0.04f64, 0.02, 0.01, 0.005] {
+            let config = seeded_world(42, |raw| {
+                raw.physics.thrust = 40.0;
+                raw.light.diffusion = diffusion;
+            });
+            let plain = founder_genome(&config.limits);
+
+            let motor = assay(
+                &config,
+                [
+                    &plain,
+                    &founder_with_a_third_cell(&config.limits, CellKind::Flagellocyte),
+                ],
+                WINDOW,
+            );
+            let photocyte = assay(
+                &config,
+                [
+                    &plain,
+                    &founder_with_a_third_cell(&config.limits, CellKind::Photocyte),
+                ],
+                WINDOW,
+            );
+
+            report(&format!("motor at diffusion {diffusion}"), &motor);
+            report(&format!("photocyte at diffusion {diffusion}"), &photocyte);
+
+            let (motor, photocyte) = (
+                motor.per_generation() * 100.0,
+                photocyte.per_generation() * 100.0,
+            );
+            println!("{diffusion:9.3} | {motor:+26.3} | {photocyte:+.3}");
+            readings.push((diffusion, motor, photocyte));
+        }
+
+        let (_, shipped, _) = readings[0];
+        let (best_diffusion, best, best_photocyte) = readings
+            .iter()
+            .copied()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).expect("coefficients are finite"))
+            .expect("the sweep has readings in it");
+
+        println!(
+            "\nTHE ANSWER: a third flagellocyte prices {shipped:+.3} %/generation at the shipped \
+             diffusion and {best:+.3} at {best_diffusion} (where a third photocyte prices \
+             {best_photocyte:+.3}). The change is {:+.3} against a +/-0.11 noise floor.",
+            best - shipped
+        );
+
+        // ⭐⭐⭐ The claim: slowing the water down makes a motor worth measurably more. The
+        // margin is ten times the competition assay's noise floor, which is a real effect and
+        // not a resolvable one.
+        assert!(
+            best - shipped > 1.1,
+            "a motor priced {shipped:+.3} %/generation at the shipped diffusion and {best:+.3} \
+             at the best setting in the sweep, a change of {:+.3} against a +/-0.11 noise \
+             floor. **The income measurement says a motor finds twice its keep at a diffusion \
+             of 0.005 and half of it at 0.04**; if that does not show up in selection, then \
+             income is not what is limiting the organelle and the gap between the two \
+             measurements is the next thing to explain",
+            best - shipped
+        );
+    }
 }
