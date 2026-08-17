@@ -4730,4 +4730,86 @@ mod tests {
             best.0
         );
     }
+
+    /// ⭐⭐⭐ **THE DECISIVE READING.** Does a grainy world have somewhere worth going?
+    ///
+    /// The field-based gate says moving is worth 5.14 a tick at `uptake = 0.9, diffusion = 0.002`
+    /// against 0.0092 in the shipped world — a factor of **five hundred and sixty**. ⚠️ That
+    /// instrument is new, has been wrong twice already, and disagrees with the calibrated one
+    /// about the shipped world. **So this asks the calibrated one.**
+    ///
+    /// Two arms of the same founder, identical in every gene, and arm B's bodies are **placed** in
+    /// the best water within 88 units — which is what a flagellocyte at `thrust = 40` actually
+    /// travels in a lifetime, and not the 16.6 that every ceiling in this project has been quoted
+    /// at, that figure being a *muscle's*.
+    ///
+    /// Three seeds, because a single one has misled this project twice tonight.
+    ///
+    /// ⚠️ **A high ceiling here is necessary and not sufficient.** It says the prize exists while
+    /// everyone else stands still. It does not say the prize survives a population that can all
+    /// reach it, and it does not say a motor is affordable — those are the next two questions and
+    /// they are separate.
+    #[test]
+    #[ignore = "twelve 42,000-tick competition runs; run deliberately with --ignored"]
+    fn does_a_grainy_world_have_somewhere_worth_going() {
+        const REACH: f32 = 88.0;
+        const SEEDS: [u64; 3] = [42, 43, 44];
+
+        println!("world                          | ceiling %/gen (mean of 3) | the three seeds");
+
+        let mut readings = Vec::new();
+        for (what, uptake, diffusion) in [
+            ("shipped: uptake 0.01, diff 0.04", 0.01f64, 0.04f64),
+            ("grainy: uptake 0.30, diff 0.002", 0.30, 0.002),
+            ("grainy: uptake 0.90, diff 0.002", 0.90, 0.002),
+        ] {
+            let mut each = Vec::new();
+            for seed in SEEDS {
+                let settings = seeded_world(seed, |raw| {
+                    raw.light.uptake = uptake;
+                    raw.light.diffusion = diffusion;
+                });
+                let plain = founder_genome(&settings.limits);
+
+                let control = package_assay(&settings, [&plain, &plain], WINDOW);
+                let arrived =
+                    placed_assay(&settings, [&plain, &plain], WINDOW, |side, world, at| {
+                        if side == 0 {
+                            at
+                        } else {
+                            best_water_near(world, at, REACH)
+                        }
+                    });
+                each.push((arrived.per_generation() - control.per_generation()) * 100.0);
+            }
+
+            let mean = each.iter().sum::<f64>() / 3.0;
+            let shown: Vec<String> = each.iter().map(|v| format!("{v:+.2}")).collect();
+            println!("{what:30} | {mean:+25.3} | {}", shown.join(", "));
+            readings.push((what, mean, each));
+        }
+
+        let (_, shipped, _) = &readings[0];
+        let (best_what, best, _) = readings
+            .iter()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).expect("coefficients are finite"))
+            .expect("the sweep has rows");
+
+        println!(
+            "\n⭐ The shipped world's ceiling at a motor's reach is {shipped:+.3} %/generation. \
+             The best grainy world is {best_what} at {best:+.3}. A motor costs about 7."
+        );
+
+        // ⚠️ Held as the finding rather than as a hope. If graininess does not move the ceiling,
+        // then the field's structure is not what limits locomotion and the field is spent as a
+        // lever — which would leave only a resource that is not in equilibrium at all.
+        assert!(
+            best - shipped > 1.0,
+            "the grainiest world's ceiling is {best:+.3} %/generation against the shipped \
+             world's {shipped:+.3}, a difference of {:+.3}. **The field-based gate says the \
+             prize is five hundred times larger in that world**, so if the calibrated instrument \
+             cannot see it, the two disagree and the field statistic is wrong for a third time",
+            best - shipped
+        );
+    }
 }

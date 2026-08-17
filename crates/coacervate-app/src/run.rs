@@ -2564,45 +2564,47 @@ mod tests {
         );
     }
 
-    /// ⭐⭐⭐ **What the water is worth at a distance.** The ceiling on locomotion, measured on the
-    /// field itself rather than through evolution.
+    /// ⭐⭐⭐ **What moving is worth, per tick, in the same units a motor costs.** The gate.
     ///
-    /// # Why this exists, and why it should have existed first
+    /// # Two errors in the first version of this, both mine, both instructive
     ///
-    /// Every ceiling this project has quoted came from a 42,000-tick competition assay: two arms
-    /// of one founder, arm B **placed** in the best water within reach. That works, and it is
-    /// ruinously blunt for sweeping a world. A twelve-cell sweep of `light.uptake` against
-    /// `light.diffusion` came back non-monotone in both directions with adjacent cells 2.9
-    /// %/generation apart — **noise dominating signal**, and the best cell in it was
-    /// best-of-twelve on a single seed, which is the error this project has made five times.
+    /// It reported `best tile within reach ÷ tile the body is standing on`, meaned over every
+    /// living cell, and came back with **2,100×** at high uptake. Both halves of that were wrong.
     ///
-    /// The ceiling is not really a fact about evolution. **It is a fact about the water.** So ask
-    /// the water directly: run a world to equilibrium, then for every living cell, compare the
-    /// best tile within reach against the tile it is standing on. No arms, no seeds, no assay, no
-    /// noise floor — one deterministic number per world, in one run, about a hundred times
-    /// cheaper.
+    /// **A ratio explodes when its denominator does not.** At `uptake = 0.9` a body eats its own
+    /// tile to nearly nothing, so `here` goes to about 0.004 while `light.cap` bounds `best` at
+    /// 8.0 — and 8.0 ÷ 0.004 is two thousand. A mean of ratios is then dominated by whichever
+    /// cells happen to be sitting on the emptiest water. It was not a two-thousand-fold prize; it
+    /// was a division.
     ///
-    /// # How to read it
+    /// **And max-of-sixteen is biased upward even with no structure at all.** The best of sixteen
+    /// samples beats the middle one by construction, so **1.000 was never the null** and the
+    /// shipped world duly read 1.149 against an assay-based ceiling of −0.01 %/generation. The
+    /// control assertion caught exactly that and is the only reason this is being rewritten
+    /// rather than believed.
     ///
-    /// The figure is a **ratio**. 1.00 means the best water within reach is exactly the water you
-    /// are already in, and **locomotion is refuted in that world at that distance before anything
-    /// is built** — no organelle, no price and no scale can beat a prize of nothing. 1.50 means
-    /// moving that far finds half again as much light, which is worth a great deal more than a
-    /// motor costs.
+    /// # What it measures now
     ///
-    /// ⚠️ It is an upper bound twice over, which is the point: it assumes a body knows where the
-    /// best tile is, gets there instantly, free, and finds it undiminished when it arrives.
-    /// Nothing that has to swim can do better. **What it cannot say is whether the prize survives
-    /// being taken** — a body that arrives eats the tile down, and if everybody can reach
-    /// everywhere the prize is competed away. A high ratio is necessary and not sufficient.
+    /// The **absolute income a body would gain, per tick, by being in the best water within reach
+    /// instead of where it is** — which is `light.uptake × (best − here)`, because that is
+    /// `behaviour.rs`'s harvest, and it is denominated in the same energy-per-tick that a
+    /// flagellocyte's **0.006 a tick** upkeep is. So the gate reads directly:
+    ///
+    /// > **If moving cannot earn 0.006 a tick, a motor cannot pay for itself in that world, at any
+    /// > price, with any organelle, at any scale.**
+    ///
+    /// No ratio, no division, no seeds, no assay, and one settled world per row rather than one
+    /// per cell.
     #[test]
     #[ignore = "a settled world per row; run deliberately with --ignored"]
-    fn what_the_water_is_worth_at_a_distance() {
-        // Sixteen bearings, so a body is credited with the best of a full circle rather than of
-        // one lucky direction.
+    fn what_moving_is_worth_per_tick() {
         const BEARINGS: usize = 16;
+        const REACHES: [f32; 4] = [16.6, 88.0, 232.0, 500.0];
 
-        let worth = |uptake: f64, diffusion: f64, reach: f32| -> (f64, f64) {
+        // What a flagellocyte costs to own, per tick. The whole point of the units.
+        let bar = f64::from(coacervate_sim::cell::CellKind::Flagellocyte.upkeep());
+
+        let row = |uptake: f64, diffusion: f64| -> ([f64; 4], f64) {
             let settings = config(|raw| {
                 raw.light.uptake = uptake;
                 raw.light.diffusion = diffusion;
@@ -2615,91 +2617,87 @@ mod tests {
 
             let (width, height) = (settings.world.width, settings.world.height);
             let grid = world.grid();
-            let (mut total, mut counted, mut drawdown) = (0.0f64, 0u32, 0.0f64);
+            let mut gain = [0.0f64; 4];
+            let mut here_total = 0.0f64;
+            let mut counted = 0u32;
 
             for cell in world.living_cells() {
                 let here = f64::from(grid.tiles()[grid.tile_at(cell.pos)]);
-                if here <= 0.0 {
-                    continue;
-                }
+                here_total += here;
+                counted += 1;
 
-                let mut best = here;
-                for step in 0..BEARINGS {
-                    #[expect(
-                        clippy::cast_precision_loss,
-                        reason = "sixteen bearings is exact in an f32"
-                    )]
-                    let angle = step as f32 * std::f32::consts::TAU / {
+                for (slot, reach) in REACHES.iter().enumerate() {
+                    let mut best = here;
+                    for step in 0..BEARINGS {
+                        #[expect(
+                            clippy::cast_precision_loss,
+                            reason = "sixteen bearings is exact in an f32"
+                        )]
+                        let turn = step as f32;
                         #[expect(
                             clippy::cast_precision_loss,
                             reason = "sixteen is exact in an f32"
                         )]
                         let bearings = BEARINGS as f32;
-                        bearings
-                    };
-                    let (sin, cos) = angle.sin_cos();
-                    let there = Vec2::new(
-                        cell.pos.x.mul_add(1.0, cos * reach).rem_euclid(width),
-                        cell.pos.y.mul_add(1.0, sin * reach).clamp(0.0, height),
-                    );
-                    best = best.max(f64::from(grid.tiles()[grid.tile_at(there)]));
+                        let (sin, cos) = (turn * std::f32::consts::TAU / bearings).sin_cos();
+                        let there = Vec2::new(
+                            cell.pos.x.mul_add(1.0, cos * reach).rem_euclid(width),
+                            cell.pos.y.mul_add(1.0, sin * reach).clamp(0.0, height),
+                        );
+                        best = best.max(f64::from(grid.tiles()[grid.tile_at(there)]));
+                    }
+                    // ⭐ The income a photocyte would gain per tick by being there instead of
+                    // here. `behaviour.rs`: harvest is `uptake × what the tile holds × exposure`,
+                    // and exposure is the same wherever the body is, so it cancels out of a
+                    // difference.
+                    gain[slot] += uptake * (best - here);
                 }
-
-                total += best / here;
-                drawdown += here;
-                counted += 1;
             }
 
-            (
-                total / f64::from(counted.max(1)),
-                drawdown / f64::from(counted.max(1)),
-            )
+            let n = f64::from(counted.max(1));
+            (gain.map(|total| total / n), here_total / n)
         };
 
-        println!(
-            "how much better is the best water within reach than the water a body is standing \
-             in?\n"
-        );
+        println!("what moving earns per tick, against the {bar:.3} a flagellocyte costs to own\n");
         println!("uptake | diffusion | reach 17 | reach  88 | reach 232 | reach 500 | mean tile");
 
-        let mut best = (0.0f64, 0.0f64, 0.0f32, 1.0f64);
+        let mut best = (0.0f64, 0.0f64, 0.0f32, 0.0f64);
         for uptake in [0.01f64, 0.10, 0.30, 0.60, 0.90] {
             for diffusion in [0.04f64, 0.01, 0.002] {
-                let mut row = Vec::new();
-                for reach in [16.6f32, 88.0, 232.0, 500.0] {
-                    let (ratio, held) = worth(uptake, diffusion, reach);
-                    row.push((reach, ratio, held));
-                    if ratio > best.3 {
-                        best = (uptake, diffusion, reach, ratio);
+                let (gain, tile) = row(uptake, diffusion);
+                println!(
+                    "{uptake:6.2} | {diffusion:9.3} | {:8.5} | {:9.5} | {:9.5} | {:9.5} | {tile:9.4}",
+                    gain[0], gain[1], gain[2], gain[3]
+                );
+                for (slot, earned) in gain.iter().enumerate() {
+                    if *earned > best.3 {
+                        best = (uptake, diffusion, REACHES[slot], *earned);
                     }
                 }
-                println!(
-                    "{uptake:6.2} | {diffusion:9.3} | {:8.3} | {:9.3} | {:9.3} | {:9.3} | {:9.4}",
-                    row[0].1, row[1].1, row[2].1, row[3].1, row[0].2
-                );
             }
         }
 
         println!(
-            "\n⭐ BEST: uptake {:.2}, diffusion {:.3}, reach {:.0} — the best water within reach \
-             holds {:.3}x what a body is standing in.",
-            best.0, best.1, best.2, best.3
-        );
-        println!(
-            "A ratio of 1.000 means locomotion is refuted in that world at that distance, \
-             whatever it costs."
+            "\n⭐ BEST: uptake {:.2}, diffusion {:.3}, reach {:.0} earns {:.5} a tick by moving, \
+             against {bar:.3} to own the motor — {:.1}x its keep.",
+            best.0,
+            best.1,
+            best.2,
+            best.3,
+            best.3 / bar
         );
 
-        // ⚠️ The shipped world is the control. It has to come back at essentially nothing, or
-        // this instrument disagrees with the −0.01 %/generation the assay-based ceiling has
-        // measured for that world and one of the two is wrong.
-        let (shipped, _) = worth(0.01, 0.04, 16.6);
+        // ⚠️ The shipped world is the control, and it is the assertion that caught the first
+        // version of this test being wrong. Its assay-based ceiling is −0.01 %/generation, so
+        // moving in it must earn essentially nothing — well under a tenth of what a motor costs.
+        let (shipped, _) = row(0.01, 0.04);
         assert!(
-            shipped < 1.05,
-            "the shipped world says the best water within a muscle's reach holds {shipped:.3}x \
-             what a body is standing in. The assay-based ceiling for that world is −0.01 \
-             %/generation, which is nothing, so a ratio much above one here means these two \
-             instruments disagree and neither can be trusted until they are reconciled"
+            shipped[0] < bar * 0.1,
+            "in the shipped world, moving a muscle's reach earns {:.5} a tick against the \
+             {bar:.3} a motor costs. The assay-based ceiling for that world is −0.01 \
+             %/generation, which is nothing, so anything approaching a motor's keep here means \
+             these two instruments disagree and neither can be trusted until they are reconciled",
+            shipped[0]
         );
     }
 
