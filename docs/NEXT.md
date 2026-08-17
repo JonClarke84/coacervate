@@ -1687,3 +1687,35 @@ re-run at six. **Nothing here should be quoted until it is.**
 But the direction is the first thing in fourteen rounds to point up on the observable that
 matters, and the mechanism is one sentence: **take away the single best place, and going somewhere
 stops being a mistake.**
+
+### ⚠️ Result 15, held back: the gradient sweep is not monotone, and a wall may explain it
+
+Result 15 above reported motor retention rising 4.5× when `light.gradient` goes to nought. It is
+**not confirmed and should not be quoted**, for two reasons found immediately after.
+
+**It is not monotone.** Sweeping the gradient at `thrust = 40`, four seeds, against a same-seed
+control of 0.00704:
+
+| `light.gradient` | motors kept |
+| --- | --- |
+| 0.75 — ships | 0.00137 |
+| 0.50 | 0.00201 |
+| 0.25 | 0.00066 |
+| 0.10 | 0.00072 |
+
+No trend, and **every row below the inert control**. If the gradient were the mechanism, retention
+should climb smoothly as it falls. A jump from 0.0007 at 0.10 to 0.031 at 0.00 is a discontinuity,
+not a response.
+
+**And there is a wall in the way.** `alive` climbs 1,846 → 2,728 → 3,227 → 3,560 against
+`limits.max_organisms = 4000`. The gradient-free worlds — the ones that showed the effect — are
+exactly the ones large enough to hit it. **A censored population inflates the between-seed spread
+and can manufacture the effect**, which is also why that reading's spread was 0.044 against a
+change of 0.024.
+
+⚠️ **Two sweeps were also run against different builds** — one at a flagellocyte upkeep of 0.006
+and one at 0.003 — because the price was a constant in a table and changing it meant a rebuild.
+Nothing in either output said so. `metabolism.motor_upkeep` exists now so that cannot recur.
+
+**Being re-run with `limits.max_organisms = 16000`.** If the effect survives uncapped and comes
+back monotone it is real; if it vanishes, Result 15 was a wall and is retracted like the other two.
