@@ -63,6 +63,27 @@ does the body actually move?*
 round priced an organelle with its one steering input nailed shut, and that is what the five
 nulls had in common.
 
+### ⚠️⚠️⚠️ The error that voided three experiments, and how it was found
+
+`founder_with_a_third_cell` pushed a gene with **`osc_freq: 0.0`**. `behaviour.rs`'s `propel`
+computes `force = thrust × osc_freq × amplitude` and returns early on `force <= 0.0`, so **every
+founder-based "third flagellocyte" was a sclerocyte with a dearer upkeep** — never charged, never
+pushed, unable to feel `physics.thrust` at any value. It voids the empty-water price, the nine
+92,000-tick invasions, and the diffusion sweep's motor arm.
+
+⚠️ It re-baselines the **myocyte** too: `osc_freq = 0` is a muscle that never contracts, so every
+third-myocyte coefficient in this project's history was taken on a muscle at rest.
+
+**Found by an adversarial audit** — four agents reading the code against its own claims, each
+finding put to an independent refuter, 19 of 32 surviving. **Nothing else would have found it:**
+every instrument agreed with every other, because they were all wired to the same dead cell. The
+audit also found a test cited by name in `Physics::propel` that **did not exist** — the one
+guaranteeing `thrust = 0.0` ships inert, which protects ~300 recorded coefficients. It exists now.
+
+With a motor that runs: empty water gives −2.458 → −7.612 → extinct, monotone; and in a settled
+world a motorised invader manages **0 establishments out of 12** while a third photocyte invades
+10 of 12 at +4.66 %/gen in the same water on the same tick.
+
 ### ⚠️ Refuted in this round — do not retry
 
 - **A motor pays as a founder's third cell.** −2.5 %/gen in competition; invasion means −10.3,
