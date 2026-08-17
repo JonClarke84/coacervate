@@ -485,6 +485,7 @@ mod tests {
     use crate::founding::genesis;
     // ⚠️ `census` was this crate's own module until Phase 6. See `main.rs` for why it moved.
     use coacervate_render::census::Census;
+    use coacervate_sim::cell::Vec2;
     use coacervate_sim::config::{Config, RawConfig, RunConfig, spec_defaults};
     use coacervate_sim::species::{self, Taxonomy};
     use std::time::Instant;
@@ -2555,6 +2556,145 @@ mod tests {
             "not one unit of energy moved from one body to another in any of the three \
              profiles, over 60,000 ticks each. Either no devorocyte ever met foreign tissue, or \
              nothing is calling `Ledger::predate`, and this test cannot tell those apart"
+        );
+    }
+
+    /// ⭐⭐⭐ **What the water is worth at a distance.** The ceiling on locomotion, measured on the
+    /// field itself rather than through evolution.
+    ///
+    /// # Why this exists, and why it should have existed first
+    ///
+    /// Every ceiling this project has quoted came from a 42,000-tick competition assay: two arms
+    /// of one founder, arm B **placed** in the best water within reach. That works, and it is
+    /// ruinously blunt for sweeping a world. A twelve-cell sweep of `light.uptake` against
+    /// `light.diffusion` came back non-monotone in both directions with adjacent cells 2.9
+    /// %/generation apart — **noise dominating signal**, and the best cell in it was
+    /// best-of-twelve on a single seed, which is the error this project has made five times.
+    ///
+    /// The ceiling is not really a fact about evolution. **It is a fact about the water.** So ask
+    /// the water directly: run a world to equilibrium, then for every living cell, compare the
+    /// best tile within reach against the tile it is standing on. No arms, no seeds, no assay, no
+    /// noise floor — one deterministic number per world, in one run, about a hundred times
+    /// cheaper.
+    ///
+    /// # How to read it
+    ///
+    /// The figure is a **ratio**. 1.00 means the best water within reach is exactly the water you
+    /// are already in, and **locomotion is refuted in that world at that distance before anything
+    /// is built** — no organelle, no price and no scale can beat a prize of nothing. 1.50 means
+    /// moving that far finds half again as much light, which is worth a great deal more than a
+    /// motor costs.
+    ///
+    /// ⚠️ It is an upper bound twice over, which is the point: it assumes a body knows where the
+    /// best tile is, gets there instantly, free, and finds it undiminished when it arrives.
+    /// Nothing that has to swim can do better. **What it cannot say is whether the prize survives
+    /// being taken** — a body that arrives eats the tile down, and if everybody can reach
+    /// everywhere the prize is competed away. A high ratio is necessary and not sufficient.
+    #[test]
+    #[ignore = "a settled world per row; run deliberately with --ignored"]
+    fn what_the_water_is_worth_at_a_distance() {
+        // Sixteen bearings, so a body is credited with the best of a full circle rather than of
+        // one lucky direction.
+        const BEARINGS: usize = 16;
+
+        let worth = |uptake: f64, diffusion: f64, reach: f32| -> (f64, f64) {
+            let settings = config(|raw| {
+                raw.light.uptake = uptake;
+                raw.light.diffusion = diffusion;
+            });
+            let mut world = World::new(&settings);
+            genesis(&mut world, 8);
+            for _ in 0..60_000 {
+                world.tick();
+            }
+
+            let (width, height) = (settings.world.width, settings.world.height);
+            let grid = world.grid();
+            let (mut total, mut counted, mut drawdown) = (0.0f64, 0u32, 0.0f64);
+
+            for cell in world.living_cells() {
+                let here = f64::from(grid.tiles()[grid.tile_at(cell.pos)]);
+                if here <= 0.0 {
+                    continue;
+                }
+
+                let mut best = here;
+                for step in 0..BEARINGS {
+                    #[expect(
+                        clippy::cast_precision_loss,
+                        reason = "sixteen bearings is exact in an f32"
+                    )]
+                    let angle = step as f32 * std::f32::consts::TAU / {
+                        #[expect(
+                            clippy::cast_precision_loss,
+                            reason = "sixteen is exact in an f32"
+                        )]
+                        let bearings = BEARINGS as f32;
+                        bearings
+                    };
+                    let (sin, cos) = angle.sin_cos();
+                    let there = Vec2::new(
+                        cell.pos.x.mul_add(1.0, cos * reach).rem_euclid(width),
+                        cell.pos.y.mul_add(1.0, sin * reach).clamp(0.0, height),
+                    );
+                    best = best.max(f64::from(grid.tiles()[grid.tile_at(there)]));
+                }
+
+                total += best / here;
+                drawdown += here;
+                counted += 1;
+            }
+
+            (
+                total / f64::from(counted.max(1)),
+                drawdown / f64::from(counted.max(1)),
+            )
+        };
+
+        println!(
+            "how much better is the best water within reach than the water a body is standing \
+             in?\n"
+        );
+        println!("uptake | diffusion | reach 17 | reach  88 | reach 232 | reach 500 | mean tile");
+
+        let mut best = (0.0f64, 0.0f64, 0.0f32, 1.0f64);
+        for uptake in [0.01f64, 0.10, 0.30, 0.60, 0.90] {
+            for diffusion in [0.04f64, 0.01, 0.002] {
+                let mut row = Vec::new();
+                for reach in [16.6f32, 88.0, 232.0, 500.0] {
+                    let (ratio, held) = worth(uptake, diffusion, reach);
+                    row.push((reach, ratio, held));
+                    if ratio > best.3 {
+                        best = (uptake, diffusion, reach, ratio);
+                    }
+                }
+                println!(
+                    "{uptake:6.2} | {diffusion:9.3} | {:8.3} | {:9.3} | {:9.3} | {:9.3} | {:9.4}",
+                    row[0].1, row[1].1, row[2].1, row[3].1, row[0].2
+                );
+            }
+        }
+
+        println!(
+            "\n⭐ BEST: uptake {:.2}, diffusion {:.3}, reach {:.0} — the best water within reach \
+             holds {:.3}x what a body is standing in.",
+            best.0, best.1, best.2, best.3
+        );
+        println!(
+            "A ratio of 1.000 means locomotion is refuted in that world at that distance, \
+             whatever it costs."
+        );
+
+        // ⚠️ The shipped world is the control. It has to come back at essentially nothing, or
+        // this instrument disagrees with the −0.01 %/generation the assay-based ceiling has
+        // measured for that world and one of the two is wrong.
+        let (shipped, _) = worth(0.01, 0.04, 16.6);
+        assert!(
+            shipped < 1.05,
+            "the shipped world says the best water within a muscle's reach holds {shipped:.3}x \
+             what a body is standing in. The assay-based ceiling for that world is −0.01 \
+             %/generation, which is nothing, so a ratio much above one here means these two \
+             instruments disagree and neither can be trusted until they are reconciled"
         );
     }
 }

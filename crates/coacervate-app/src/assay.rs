@@ -4658,4 +4658,76 @@ mod tests {
              comparable to anything this project has measured before"
         );
     }
+
+    /// ⭐⭐⭐ The ceiling at the reach a **motor** actually has, not the reach a muscle had.
+    ///
+    /// ⚠️ **`SWIMMING_REACH` is 16.6 units, and that number is a muscle's.** It was set when the
+    /// only thing that could move a body was a myocyte, and it is what a hand-built
+    /// travelling-wave undulator covered in a 2,000-tick lifetime. Every ceiling this project has
+    /// ever quoted — including the −0.01 %/generation that has been read as *locomotion is
+    /// refuted* — was measured at that reach.
+    ///
+    /// **A flagellocyte at `thrust = 40` travels 88 units.** At `thrust = 100` it travels 232. So
+    /// the ceiling has never been measured at the reach of the organelle the whole round was
+    /// about, and a world can be flat at 16 units and structured at 200.
+    ///
+    /// This sweeps the reach against the two settings that decide the field's grain, at the best
+    /// pair `what_is_the_ceiling_on_locomotion_worth_in_this_world` found.
+    #[test]
+    #[ignore = "a competition assay per cell of the sweep; run deliberately with --ignored"]
+    fn what_is_the_ceiling_at_the_reach_a_motor_has() {
+        println!("what arriving in the best water free and perfectly aimed is worth, by reach\n");
+        println!("reach | uptake | diffusion | ceiling %/gen | verdict");
+
+        let mut best = (0.0f32, 0.0f64, 0.0f64, f64::NEG_INFINITY);
+        for reach in [16.6f32, 88.0, 232.0, 500.0] {
+            for (uptake, diffusion) in [(0.01f64, 0.04f64), (0.01, 0.002), (0.30, 0.002)] {
+                let config = seeded_world(42, |raw| {
+                    raw.light.uptake = uptake;
+                    raw.light.diffusion = diffusion;
+                });
+                let plain = founder_genome(&config.limits);
+
+                let control = package_assay(&config, [&plain, &plain], WINDOW);
+                let arrived = placed_assay(&config, [&plain, &plain], WINDOW, |side, world, at| {
+                    if side == 0 {
+                        at
+                    } else {
+                        best_water_near(world, at, reach)
+                    }
+                });
+                let ceiling = (arrived.per_generation() - control.per_generation()) * 100.0;
+
+                let verdict = if ceiling > 7.0 {
+                    "⭐⭐⭐ CLEARS A MOTOR"
+                } else if ceiling > 1.0 {
+                    "moves, not enough"
+                } else {
+                    "nothing"
+                };
+                println!(
+                    "{reach:5.0} | {uptake:6.2} | {diffusion:9.3} | {ceiling:+13.3} | {verdict}"
+                );
+
+                if ceiling > best.3 {
+                    best = (reach, uptake, diffusion, ceiling);
+                }
+            }
+        }
+
+        println!(
+            "\nBEST: reach {:.0}, uptake {:.2}, diffusion {:.3} gives {:+.3} %/generation. A \
+             motor costs about 7 to own, and a flagellocyte at thrust 40 reaches 88 units.",
+            best.0, best.1, best.2, best.3
+        );
+
+        // ⚠️ The ceiling has to rise with reach, in every column. If going further is not worth
+        // more, the field has no structure at any scale and the sweep is measuring noise.
+        assert!(
+            best.0 > 16.6,
+            "the best ceiling in the sweep was at the shortest reach, {:.0} units. Going further \
+             should be worth more in any world with structure in it; if it is not, this is noise",
+            best.0
+        );
+    }
 }
