@@ -497,7 +497,22 @@ fn composition(census: &Census) -> String {
         "sclerocytes",
         "sensocytes",
         "gonocytes",
+        "flagellocytes",
     ];
+
+    // ⚠️ **A `zip` of two lists of different lengths is silent**, and this one was: the
+    // flagellocyte arrived, `Census::kinds` counted it correctly because it is sized from
+    // `CellKind::ALL`, and this list still had six names in it - so every run reported six kinds
+    // out of seven and the one kind the whole round was about was the one missing. It was found
+    // by reading a run's output rather than by anything failing. Hence the assertion.
+    assert_eq!(
+        names.len(),
+        census.kinds.len(),
+        "the closing report knows {} names for {} kinds of cell, so a kind is being counted and \
+         not said",
+        names.len(),
+        census.kinds.len()
+    );
 
     let mut said = format!("Of {cells} living cells:");
     for (name, count) in names.iter().zip(census.kinds) {
@@ -1150,9 +1165,30 @@ mod tests {
              extra light spills instead of being eaten"
         );
 
-        // Three numbers changed, and nothing else whatever.
+        // ⭐⭐ **And the fourth, which was left behind until a motor existed.**
+        // `metabolism.movement_cost` prices work done — by a myocyte's contraction, and since the
+        // flagellocyte arrived, by thrust. Left at the shipped figure while upkeep and income
+        // both went up eightfold, a motor's bill would be an *eighth* of its body's in relative
+        // terms, so movement would be cheap here in a way it is not in the world every
+        // coefficient was measured in, and a motor spreading at this tempo would be an artefact
+        // of the tempo.
+        //
+        // ⚠️ `config/tempo.toml`'s own comment used to say precisely this, and said it changed no
+        // conclusion because nothing had ever made movement pay at any price. That stopped being
+        // true: `assay.rs`'s `what_a_motor_is_worth_where_there_is_somewhere_to_go` measures a
+        // third flagellocyte invading a settled world at +2.0 %/generation at a thrust of 40.
+        assert_eq!(
+            tempo.metabolism.movement_cost,
+            shipped.metabolism.movement_cost * factor,
+            "the tempo profile speeds a body's income and its upkeep up by {factor} and leaves \
+             the price of WORK where it was, so movement is {factor} times cheaper here than in \
+             the world it claims to be a faster copy of"
+        );
+
+        // Four numbers changed, and nothing else whatever.
         let mut restored = tempo;
         restored.metabolism.upkeep_scale = shipped.metabolism.upkeep_scale;
+        restored.metabolism.movement_cost = shipped.metabolism.movement_cost;
         restored.light.influx = shipped.light.influx;
         restored.light.cap = shipped.light.cap;
         assert_eq!(

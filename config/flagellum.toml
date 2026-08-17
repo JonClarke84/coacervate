@@ -1,0 +1,242 @@
+# The `flagellum` profile: the shipped world with the motors switched on.
+#
+# ⭐⭐⭐ **Everything below is `default.toml` with ONE number changed: `physics.thrust`, from 0.0
+# to 40.0.** That is the whole profile, and 40 is not a round number picked for looking sensible
+# — it is where three independent measurements agree, which is the only reason it is here.
+#
+#   * TRAVEL. `assay.rs`'s `what_a_motor_buys_in_travel`: a four-celled body with one motor at its
+#     tail covers 88.8 world units in a lifetime, against 2.1 for the identical body with the
+#     motor off. Round 7 measured 60 to 88 units to the nearest unrelated body. **The reach gap
+#     closes at exactly this setting.**
+#
+#   * INCOME. `does_moving_find_more_food_than_staying_put`: at 40 the travel finds **+3.38% more
+#     food**, gross, with everything the motor spent added back. ⚠️ At 100 it finds **8% LESS** —
+#     `light.gradient` is 0.75, nothing steers a motor, and a body that goes far enough walks out
+#     of the light. There is an optimum, and it is near here.
+#
+#   * FITNESS. `what_a_motor_is_worth_where_there_is_somewhere_to_go`: released as a rare invader
+#     into a settled, drawn-down population, a third flagellocyte invades at **+2.0 %/generation**
+#     at this thrust, against −19.9 for one that cannot push and −30.8 at a thrust of 100.
+#
+# ⚠️ A motor still prices **−2.5 %/generation in the competition assay**, and that is not a
+# contradiction. The competition assay measures empty water, where there is nowhere worth going.
+# The two readings together are the finding: **what a motor is worth depends on the state of the
+# world**, which is the first time in this project any specialisation's value has.
+#
+# The `default` profile's own documentation follows, unchanged.
+#
+# Every value here is read at startup and copied verbatim into the replay log, so a
+# recording of a run always carries the settings that produced it. The comments are part
+# of the document: they are where the units and the meanings of these numbers are written
+# down.
+
+[world]
+seed = 42
+width = 2048.0
+height = 1152.0
+grid_cols = 256          # resource field resolution
+grid_rows = 144
+years_per_tick = 1000.0
+
+[light]
+influx = 0.001           # energy per grid tile per tick. Measured in Phase 4, not guessed:
+                         # at the 0.012 SPEC was first written with, the population fills
+                         # `limits.max_organisms` in 20,000 ticks and sits there with the
+                         # field 1.6% down, so the arena binds and nothing is ever scarce.
+                         # At 0.001 it settles near 2,200 with the field half eaten. SPEC 3.
+cap = 8.0                # max energy a tile can hold
+gradient = 0.75          # 0 = uniform, 1 = fully top-weighted
+patchiness = 0.5         # spatial noise amplitude. Enters `relight` exactly linearly, so at
+                         # 0.5 a tile's ceiling runs +-67% of what its depth alone would give
+                         # it and there is something worth crossing the world for. Raised from
+                         # the 0.15 SPEC was first written with in Phase 7, because a field
+                         # drifting under a population is worth nothing if the field is nearly
+                         # flat. SPEC 4.
+patch_drift = 0.0006     # world units per tick the blotches slide sideways. Measured window,
+                         # not guessed: budding disperses a lineage at 0.0003, a tile refills
+                         # over its own width at 0.001, and an anisotropic swimmer manages
+                         # 0.0005 to 0.0025 - so a drift between the first two is followable
+                         # by a body that can swim and not by one that can only bud. That is
+                         # the whole design. It is a coordinate offset and never a reseed:
+                         # the blotches keep their shape and move. Bounded at 0.005, where the
+                         # drift destroys more energy per tick than the light delivers. SPEC 4.
+diffusion = 0.04         # lateral spread per tick
+season_period = 21000    # ticks for one whole rise and fall of `influx`. Measured window, not
+                         # guessed: the floor is 8,000 = `cap / influx`, the time a tile takes to
+                         # fill from empty, below which the light changes and the water does not;
+                         # the ceiling is ~50,500, the median species lifetime, above which a
+                         # lineage lives entirely inside one half cycle. 21,000 is 12.0
+                         # generations - six per half cycle - 2.4 cycles inside a median species
+                         # life, and coprime enough with the project's 25,000-tick checkpoints
+                         # (gcd 1,000) that they walk 21 distinct phases instead of four. SPEC 4.
+season_amplitude = 0.0   # how deep that rise and fall goes, as a fraction of `influx`: the light
+                         # runs between `1 - a` and `1 + a` times its stated value. ⚠️ **It ships
+                         # at nought**, so this world is bit-for-bit the world every figure in
+                         # docs/PHASE7.md was measured on; `config/seasonal.toml` is the same
+                         # world with 0.25. Bounded at 0.5, which is where the measurements stop
+                         # and nowhere else - a seasoned world does not collapse, it carries more
+                         # and smaller bodies on the same energy. SPEC 4.
+shadow_depth = 27.2      # how far below a cell its shadow still reaches at all, in world units.
+                         # SPEC gives no occlusion model whatever — the whole of it, this number
+                         # included, was chosen in Phase 4 — so this is the first time the
+                         # document's silence has been made adjustable rather than a deviation
+                         # from it. **It ships at 27.2, which is 2 x genome::MAX_REST_LENGTH**,
+                         # twice the longest limb a genome can grow: shorter than one limb and a
+                         # daughter placed directly below its parent is already in clear water,
+                         # so occlusion discriminates between nothing; very much longer and a
+                         # photocyte's income is decided by whatever is drifting through the
+                         # water column above it rather than by the shape of its own body. ⚠️ It
+                         # and `shadow_spread` are the only two numbers in this file that
+                         # multiply the *work* of a tick: the shade search is a box
+                         # `2 x depth x (1 + spread)` wide by `depth` tall around every
+                         # photocyte. Refused at nought, because the fade divides by it.
+shadow_spread = 0.0      # how much wider that shadow is at the bottom of its reach than at the
+                         # cell casting it, as a multiple of the cell's own width. Nought is a
+                         # column, which is what a disc casts in light falling straight down.
+                         #
+                         # ⚠️ **SHIPS INERT, and 0.0 is bit-for-bit the world every figure in
+                         # this project was measured on** — `Shadow::width` multiplies by exactly
+                         # 1.0 there and hands the two radii back untouched. It exists to ask one
+                         # question: **does raising *inter-body* shading make bodies bigger?**
+                         # Shade is the one strictly zero-sum resource in this world, since a
+                         # photon intercepted above a cell never reaches it — but a column
+                         # mostly shades a body's *own* descendants, which is sub-linear in body
+                         # size, while a cone reaches sideways and shades neighbours, which is
+                         # an increasing return. See SPEC section 6 and docs/NEXT.md.
+
+[physics]
+drag = 0.92              # velocity retained per tick (high — viscous regime)
+drag_anisotropy = 2.0    # the power `drag` is raised to across a cell's own body axis, so
+                         # the water resists a slender body sideways harder than lengthways.
+                         # 1.0 is isotropic water and is what this project shipped with until
+                         # Phase 7 — in which a free body's total velocity is a conserved
+                         # quantity of the integrator and nothing can swim at all. 2.0 makes a
+                         # cell about 2.1x as mobile along its axis as across it, which is
+                         # what a long thin thing in water actually is. Capped at 3.0: the
+                         # arithmetic produced NaN there at a collision stiffness of 5,000.
+                         # SPEC 8.
+collision_stiffness = 40.0
+spring_damping = 0.35
+current = 0.0            # a sideways force on every cell, running one way at the surface and
+                         # the other at the floor: `current × (1 - 2 × depth / height)`, added
+                         # beside buoyancy so it goes through the same drag. A cell settles at
+                         # `current × drag × dt / (1 - drag)` units a second, which is
+                         # `current / 313` units a TICK.
+                         #
+                         # **SHIPS INERT, and 0.0 is bit-for-bit the world every figure in this
+                         # project was measured on.** It was built to ask one question — can
+                         # bodies be made to pass one another without thinning the world out? —
+                         # because at equilibrium there are about 23 world units between
+                         # neighbouring cells, two cells touch at 6, and a body covers about 8
+                         # in a whole lifetime, so 99.96% of what a mouth touches is its own
+                         # family. ⚠️ The answer was NO: the stranger share does not leave a
+                         # thousandth until the water runs nine times faster than detritus
+                         # sinks, and by then the population has fallen 42% and the contact
+                         # fraction from 0.4723 to 0.3105. `config/current.toml` is the live
+                         # profile and carries the whole sweep. SPEC 8.
+thrust = 40.0            # ⭐⭐⭐ how hard ONE FLAGELLOCYTE pushes on the water, per unit of its
+                         # gene's `osc_freq`. Applied along the vector from the mean of the
+                         # cells it is adhered to, to itself — outward, along geometry
+                         # development already chose. A cell settles at `thrust / 313` units a
+                         # tick as `current` does, but divided by how many cells the body has,
+                         # because the thrust is one cell's and the drag is all of them: SPEED
+                         # GOES AS THE FRACTION OF A BODY THAT IS MOTOR, not as the count.
+                         #
+                         # The point of the outward direction is that a SYMMETRIC BODY GOES
+                         # NOWHERE — motors round a rosette cancel, motors on one side do not —
+                         # so what evolution has to find is where to put them. Nothing here
+                         # reads the light, a neighbour or the field: a motor is permitted and
+                         # a tactic is not. `sensor_gain` scales the magnitude only, so a body
+                         # with motors on two sides driving them unequally turns, and taxis is
+                         # assembled rather than given.
+                         #
+                         # Costs `movement_cost × force² × drag × dt² / (1 - drag)` — force
+                         # times the distance it drives water through, which is the myocyte's
+                         # own price with the distance derived rather than observed, and is the
+                         # square law drag power obeys everywhere in biology.
+                         #
+                         # ⚠️ **PROVISIONAL 0.0 — this is NOT a recorded negative.** `current`
+                         # and `light.shadow_spread` above ship inert because they were measured
+                         # and refuted. This ships inert only so that the one difference between
+                         # this build and the last is the seventh cell kind's effect on the
+                         # mutation stream. See `docs/NEXT.md` §8.
+
+[behaviour]
+resting_amplitude = 0.8  # how hard a myocyte contracts with nothing telling it otherwise —
+                         # SPEC section 9's `clamp(resting_amplitude + sensor_gain × signal)`.
+                         # This is what a lineage's *first* myocyte is worth, before it has a
+                         # sensocyte to drive it, so it is the number selection has to see
+                         # first. Raised from the 0.3 SPEC was first written with in Phase 7:
+                         # at 0.3 an unsensed undulator covered 0.3 world units in a whole
+                         # lifetime, a twentieth of one of its own cells. The price is that a
+                         # sensor now has 0.2 of room above and 0.8 below — deliberate, since
+                         # `sensor_gain` is signed and a body with one side inhibited is a
+                         # turn, which is what a swimmer needs. SPEC 9.
+stroke = 1.0             # how much of its rest length a myocyte at full amplitude works
+                         # through, either way. Measured in Phase 7, not guessed: a body's
+                         # speed goes as roughly the CUBE of this and as the square root of
+                         # every other lever, so at the 0.4 SPEC was first written with a
+                         # perfect undulator covered 4 world units in a 2,000-tick lifetime
+                         # against a field drifting 1.2, and nothing found that margin in
+                         # 310,000 ticks. At 1.0 the same body covers about 41. Bounded at
+                         # 1.0, which is exactly where the shortest a spring asks to be —
+                         # `base × (1 - stroke)` — reaches nought; above it the rest length
+                         # is negative, the spring pulls at every phase instead of
+                         # oscillating, and a body hauls itself through its own cells. SPEC 9.
+
+[metabolism]
+upkeep_scale = 1.0       # global multiplier on all cell upkeep ("temperature")
+scaling_exponent = 1.0   # the power a body's *summed* upkeep is raised to as it grows: a body of
+                         # n cells pays `(sum of its cells' upkeeps) × n^(exponent - 1)`. Real
+                         # metabolic rate goes as mass^0.75 — Kleiber's law — rather than
+                         # linearly, so a larger organism spends less energy per unit of itself;
+                         # West, Brown and Enquist derive the exponent from a distribution network
+                         # that is a space-filling fractal, `d / (d + 1)`, and cells joined by
+                         # springs sharing one energy store are such a network.
+                         #
+                         # ⚠️ **SHIPS INERT, and 1.0 is bit-for-bit the world every figure in this
+                         # project was measured on** — the multiplier is `n^0`, which is exactly
+                         # 1.0 at every body size. It exists to ask the one question ten rounds of
+                         # measurement have circled: **total living tissue in this world is
+                         # `light.influx ÷ upkeep per cell`, so nothing about body shape can move
+                         # it while upkeep is linear in cell count.** This is the only setting in
+                         # the file that changes an exponent rather than a price, and every price
+                         # ever tried here was absorbed by the water re-forming around it.
+                         #
+                         # ⚠️ The per-kind table is untouched: the multiplier applies to the body's
+                         # *sum*, so a sclerocyte still costs a fifth of a devorocyte inside the
+                         # same body. Bounded at 0.5..=1.0 — one is linear and there is nothing
+                         # past it, and a half is `d / (d + 1)` in one dimension, the flattest
+                         # exponent any network geometry gives. `config/kleiber.toml` is this world
+                         # at 0.75. SPEC 3, 6 and 10.
+gene_cost = 0.0001       # per gene, per tick — keeps genomes off the max_genes ceiling so
+                         # duplication stays available. Not a brake on bloat; see SPEC 7.
+movement_cost = 0.0001   # energy per unit of work done by contraction. Measured in Phase 7,
+                         # not guessed: at the 0.15 SPEC was first written with, one tick of
+                         # an ordinary myocyte's work costs about a thousand times what
+                         # crossing a whole tile is worth, so swimming can never pay for
+                         # itself whatever it finds. Break-even for a one-tile hop is ~3e-4.
+                         # SPEC 3.
+reproduction_threshold = 2.2   # × body construction cost
+offspring_share = 0.45   # fraction of parent energy passed to offspring
+
+[mutation]
+point_rate = 0.06        # per gene, per reproduction
+point_sigma = 0.12       # gaussian magnitude on numeric fields
+duplication_rate = 0.02  # per genome
+deletion_rate = 0.02
+insertion_rate = 0.01
+reorder_rate = 0.02      # swap two adjacent genes; order carries information
+genome_duplication_rate = 0.0008
+
+[limits]
+max_organisms = 4000
+max_cells_per_organism = 64
+max_genes = 128
+max_dev_steps = 16
+
+[run]
+max_wall_clock_hours = 12.0
+max_ticks = 0            # 0 = unbounded
+max_ticks_per_second = 0 # 0 = uncapped. The `slow` profile's only lever.
+reseed_on_extinction = false

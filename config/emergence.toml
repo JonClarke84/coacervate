@@ -1,4 +1,32 @@
-# The `tempo` profile: the shipped world, living its life in eight times fewer ticks.
+# The `emergence` profile: everything this project has found, switched on at once.
+#
+# ⭐⭐⭐ **This is the one to leave running.** It is `tempo.toml` — eight times fewer ticks to a
+# generation — with the two findings that changed what a body can be:
+#
+#   * `metabolism.scaling_exponent = 0.75`. Kleiber's law. Total living tissue rose ×4.8 and the
+#     population rose with it, the first time in this project's history that total structure
+#     moved rather than being redivided. Body size went from 9.6 ± 3.0 cells to 10.5 ± 12.2 —
+#     the mean barely moved and **the spread quadrupled**, which is several body plans coexisting
+#     rather than one.
+#   * `physics.thrust = 40.0`. The motors on, at the setting where travel, income and invasion
+#     fitness all three agree. See `flagellum.toml`, which is that change alone.
+#
+# ⚠️⚠️ **THREE CHANGES AT ONCE, AND THEY HAVE NOT BEEN MEASURED TOGETHER.** Every other profile in
+# this directory changes one thing so that what it does is attributable. This one does not, and it
+# is therefore **not evidence for anything** — no coefficient may be quoted from it, and a result
+# seen here has to be reproduced in a profile that isolates the cause before it means anything.
+# It exists because the owner asked for a world worth watching overnight rather than a control.
+#
+# ⚠️ Two known hazards, both from `tempo.toml`, both inherited here:
+#
+#   * The unexplained body-size step — 8.17 to 3.87 cells between k=1 and k=2, falling oddly
+#     between two settings rather than spreading. **Do not read a body-size result off this
+#     profile** until somebody finds it. It is why `kleiber.toml` exists separately.
+#   * `movement_cost` is scaled to 0.0008 here, which `tempo.toml` did not do until a motor
+#     existed. If a motor spreads in this profile and not in `flagellum.toml`, that scaling is
+#     the first thing to suspect.
+#
+# The `tempo` profile's own documentation follows, unchanged.
 #
 # ⭐⭐⭐ **This exists because a generation costs 1,225 ticks and nothing had ever tried to make
 # it cost fewer.** Evolutionary output is generations × population, and a twelve-hour run of the
@@ -117,7 +145,7 @@ drag_anisotropy = 2.0
 collision_stiffness = 40.0
 spring_damping = 0.35
 current = 0.0
-thrust = 0.0
+thrust = 40.0
 
 [behaviour]
 resting_amplitude = 0.8
@@ -137,7 +165,7 @@ upkeep_scale = 8.0       # ⭐ **The third, and the one that does most of the wo
                          # self-cancelling here is that `light.influx` rises with it, so the
                          # water is not poorer - both sides of every body's books are multiplied
                          # and the balance between them is exactly what it was.
-scaling_exponent = 1.0
+scaling_exponent = 0.75
 gene_cost = 0.0001       # Inside `upkeep_scale`'s multiplication, so it is already at tempo.
 movement_cost = 0.0008   # ⭐ **The fourth, and it was the one rate left behind until a motor
                          # existed.** It prices work done by contraction and, since the
