@@ -1,0 +1,264 @@
+# The `frontier` profile: every lever this project has measured, turned on together.
+#
+# ⚠️⚠️⚠️ **NOT EVIDENCE FOR ANYTHING.** Six settings differ from the shipped world and they have
+# never been measured together. No coefficient may be quoted from it and anything seen here has to
+# be reproduced in a profile that isolates the cause. It exists because the owner asked for a world
+# worth leaving running, and because after fifteen rounds the honest thing to do with a set of
+# individually-inconclusive levers is to try them at once and look.
+#
+# What is in it and why, each measured with `--bench`:
+#
+#   gradient = 0.0        the world is top-weighted, photocytes float, and every body already sits
+#                         on the single best place -- so moving is downhill and no price makes it
+#                         pay. ⚠️ The sweep that says removing it helps is NON-MONOTONE with a
+#                         spread larger than its effect. This is the one setting here that is a
+#                         guess rather than a finding.
+#   thrust = 40.0         where travel, gross income and the reach to a stranger all agree.
+#   bloom = 1.0           the light.s SUPPLY had no horizontal structure at all: `regrow` indexed
+#                         its offer by row alone and all the patchiness was in a ceiling that a
+#                         65%-drawn-down world never touches.
+#   patch_drift = 0.05    the good places move 87 units a lifetime, which is what a body travels.
+#                         The old bound of 0.005 was derived for a FULL tile and this world is not
+#                         full; the real tax is 0.4% of throughput.
+#   motor_upkeep = 0.004  level with the photocyte that funds it. A motor that costs nothing to RUN
+#                         is still shed, so the standing charge is the lever; 0.004 is the lowest
+#                         it can go before `CellKind::upkeep`'s own note says bloat begins.
+#   scaling_exponent      Kleiber, 0.75. The one thing that ever raised total living tissue.
+#
+# The `emergence` profile's own documentation follows.
+#
+# ⭐⭐⭐ **This is the one to leave running.** It is `tempo.toml` — eight times fewer ticks to a
+# generation — with the two findings that changed what a body can be:
+#
+#   * `metabolism.scaling_exponent = 0.75`. Kleiber's law. Total living tissue rose ×4.8 and the
+#     population rose with it, the first time in this project's history that total structure
+#     moved rather than being redivided. Body size went from 9.6 ± 3.0 cells to 10.5 ± 12.2 —
+#     the mean barely moved and **the spread quadrupled**, which is several body plans coexisting
+#     rather than one.
+#   * `physics.thrust = 40.0`. The motors on, at the setting where travel, income and invasion
+#     fitness all three agree. See `flagellum.toml`, which is that change alone.
+#
+# ⚠️⚠️ **THREE CHANGES AT ONCE, AND THEY HAVE NOT BEEN MEASURED TOGETHER.** Every other profile in
+# this directory changes one thing so that what it does is attributable. This one does not, and it
+# is therefore **not evidence for anything** — no coefficient may be quoted from it, and a result
+# seen here has to be reproduced in a profile that isolates the cause before it means anything.
+# It exists because the owner asked for a world worth watching overnight rather than a control.
+#
+# ⚠️ Two known hazards, both from `tempo.toml`, both inherited here:
+#
+#   * The unexplained body-size step — 8.17 to 3.87 cells between k=1 and k=2, falling oddly
+#     between two settings rather than spreading. **Do not read a body-size result off this
+#     profile** until somebody finds it. It is why `kleiber.toml` exists separately.
+#   * `movement_cost` is scaled to 0.0008 here, which `tempo.toml` did not do until a motor
+#     existed. If a motor spreads in this profile and not in `flagellum.toml`, that scaling is
+#     the first thing to suspect.
+#
+# The `tempo` profile's own documentation follows, unchanged.
+#
+# ⭐⭐⭐ **This exists because a generation costs 1,225 ticks and nothing had ever tried to make
+# it cost fewer.** Evolutionary output is generations × population, and a twelve-hour run of the
+# shipped world is about 20,000 generations. Every earlier attempt to buy more of them went at the
+# *cost* of a tick — worth doing, and it bought 1.4x. This one goes at the *number* of ticks a
+# generation takes, and it buys eight.
+#
+# # The lever, and why it is three numbers rather than `dt`
+#
+# ⚠️ **`dt` is not this lever and the difference is worth being exact about.** `physics.rs`'s `DT`
+# is read by the integrator, by the speed detritus sinks at, and by the clock a myocyte's
+# oscillation is phased against. It is read by **nothing** in `metabolism.rs`, `reproduction.rs`,
+# `ledger.rs`, `grid.rs` or `organism.rs`. Upkeep is charged per tick; income arrives per tick; a
+# body ages one tick per tick and SPEC section 10's lifespan is a tick count. Measured, at the
+# shipped configuration, seed 42, 100,000 ticks — `run.rs`'s `what_dt_does_to_a_generation`:
+#
+#      DT   | mean age of the living | alive | cells | biomass
+#   --------+------------------------+-------+-------+---------
+#    1 / 60 |                    881 | 1,913 | 4,588 |  31,407
+#    4 / 60 |                    893 | 1,368 | 4,915 |  33,414
+#    8 / 60 |                    956 |   379 | 4,893 |  31,574
+#
+# **An eightfold `dt` moved the length of a generation by 8%**, and the wrong way. What it moved
+# was the *ecology* — the same tissue in a fifth of the bodies — because bodies travel eight times
+# further per tick. `dt` is a lever on travel per lifetime, which is what `docs/NEXT.md`'s
+# candidate 2 wants it for. It is not a lever on generations per hour.
+#
+# What *is* the lever is running the **economy** faster: multiply every per-tick rate by `k` and
+# leave every stock alone, and the same world happens in `k` times fewer ticks.
+#
+#   * `metabolism.upkeep_scale = k` — SPEC section 10 charges `(Σ cells' upkeep) × upkeep_scale`
+#     and `metabolism.rs` applies the same scale to `gene_cost`, so the whole outgoing side moves
+#     together. Lifespan is `LIFETIME_UPKEEP × body ÷ cost per tick`, so it divides by `k` with
+#     nothing else being asked for.
+#   * `light.influx = 0.001 × k` — the incoming side. `behaviour.rs` is explicit that a
+#     photocyte's steady income is not `HARVEST_RATE` but the influx: it draws its tile down until
+#     what it takes equals what the tile regains.
+#   * `light.cap = 8.0 × k` — because a tile cannot regain `k` times more per tick while holding
+#     the same ceiling. Income is `HARVEST_RATE × what the tile holds`, so the ceiling has to rise
+#     with the flow or the water saturates and the extra light spills.
+#
+# Everything else is a **stock** and is deliberately untouched: construction cost,
+# `reproduction_threshold`, `offspring_share`, every mutation rate per reproduction.
+#
+# ⭐⭐ **The measurement.** Seed 42, eight founders, each arm run for `200,000 ÷ k` ticks past its
+# dawn so that every arm has lived the same amount of its own history and been through about the
+# same number of generations — `run.rs`'s `what_a_generation_costs_in_ticks`:
+#
+#      k | alive | cells | biomass | births/1k ticks | mean age | cells/body
+#   -----+-------+-------+---------+-----------------+----------+-----------
+#      1 |   641 | 5,236 |  33,182 |           356.0 |      928 |       8.17
+#      2 | 1,380 | 4,887 |  32,009 |         1,568.0 |      442 |       3.54
+#      4 | 1,503 | 4,687 |  31,592 |         3,423.0 |      224 |       3.12
+#      8 | 1,316 | 5,089 |  32,472 |         6,021.0 |      109 |       3.87
+#
+# **Mean age divides by `k` to within a few per cent** — 928, 442, 224, 109 against a perfect
+# 928, 464, 232, 116 — and twice the mean age of the living is the mean lifetime for a stable age
+# distribution, so a body at `k = 8` lives 218 ticks against SPEC's 1,753.9. The per-capita birth
+# rate multiplies by `k` to match: 0.56, 1.14, 2.28, 4.58 births per thousand ticks per body.
+#
+# ⭐ **And the energy economy does not notice.** Biomass is 33,182 / 32,009 / 31,592 / 32,472 and
+# total living cells 5,236 / 4,887 / 4,687 / 5,089 across an eightfold change. The world holds the
+# same amount of life; it just turns it over eight times faster. The ledger balances throughout —
+# nothing here goes near SPEC section 5's invariant.
+#
+# ⚠️⚠️ **What it is not is the same world, and this is the price.** The population roughly doubles
+# and the mean body halves: 641 bodies of 8.17 cells at `k = 1` against 1,316 of 3.87 at `k = 8`.
+# The same tissue, differently divided. The step is between `k = 1` and `k = 2` rather than spread
+# across the range — 8.17 to 3.54, then flat — which reads like a discretisation threshold being
+# crossed rather than a slope. **Nobody has yet found out which.** Anyone reading a body-size
+# result off this profile should find out first.
+#
+# ⚠️ **No coefficient recorded in SPEC or docs/PHASE7.md was taken in this world**, and no golden
+# vector pins it. They were all measured at `k = 1`, which is what `config/default.toml` still
+# ships. Three numbers below differ from `default.toml`; read that file for what the rest mean.
+
+[world]
+seed = 42
+width = 2048.0
+height = 1152.0
+grid_cols = 256
+grid_rows = 144
+years_per_tick = 1000.0
+
+[light]
+# ⭐⭐⭐ `uptake` sets the GRAIN of the field, not its wealth. It was a compiled-in constant
+# for eleven rounds and was never swept. At equilibrium total uptake equals total influx
+# whatever it is, so it cannot change carrying capacity or a photocyte's mean income -- it
+# changes only how far a tile is pulled down to get there, which is the only spatial
+# structure a body could ever exploit. See config.rs's LightConfig::uptake.
+uptake = 0.01
+# ⭐⭐⭐ `bloom` puts light.patchiness into the light's SUPPLY rather than only its ceiling.
+# Until it existed the light arrived uniformly at every tile of a given depth, so the world had
+# no horizontal structure in supply at all. Ships at nought. See config.rs's LightConfig::bloom.
+bloom = 1.0
+influx = 0.008           # ⭐ **The first of the three.** Eight times the shipped 0.001. A tile
+                         # regains eight times as much per tick, so a photocyte holding its tile
+                         # at the same drawdown earns eight times as much per tick.
+cap = 64.0               # ⭐ **The second.** Eight times the shipped 8.0, and it is not
+                         # decoration: income is `HARVEST_RATE × what the tile holds`, so a
+                         # ceiling left at 8.0 would saturate and spill the extra light rather
+                         # than let anything eat it.
+gradient = 0.0            # ⭐⭐⭐ NO VERTICAL OPTIMUM. Every measurement in this project says a motor is shed
+                         # because moving is downhill: the world is top-weighted, photocytes float,
+                         # and every body already sits on the single best place. Take the gradient
+                         # away and going somewhere stops being a mistake. ⚠️ UNRESOLVED -- the
+                         # bench sweep is non-monotone and its spread is larger than its effect.
+patchiness = 0.5
+patch_drift = 0.05        # the light's good places move 87 units a lifetime, which is what a body travels
+                         # The patches slide sideways in world units *per tick*, so at this tempo
+                         # they cross the world eight times more slowly in the world's own
+                         # lifetimes. Nothing measured turns on it here - the run above holds its
+                         # biomass either way - but a study of what drifting light is worth
+                         # should scale it to 0.0048 first.
+diffusion = 0.04         # ⚠️ Left alone, and here it has to be: `config.rs` refuses anything at
+                         # or past 0.25 as a stability limit of the explicit stencil, so this
+                         # rate cannot be multiplied by eight. The field therefore mixes less per
+                         # unit of economic time than the shipped world's does. The measurement
+                         # above was taken exactly like this.
+season_period = 21000    # A tick count, so it is a stock's worth of ticks rather than a rate.
+                         # A season here is eight times longer in the world's own lifetimes.
+                         # Inert at `season_amplitude = 0`.
+season_amplitude = 0.0
+shadow_depth = 27.2
+shadow_spread = 0.0
+
+[physics]
+drag = 0.92
+drag_anisotropy = 2.0
+collision_stiffness = 40.0
+spring_damping = 0.35
+current = 0.0
+thrust = 40.0
+
+[behaviour]
+resting_amplitude = 0.8
+stroke = 1.0
+
+[metabolism]
+# ⭐⭐⭐ `tissue_share` locks this fraction of a body's construction cost into its tissue at
+# birth: unspendable, unreachable by upkeep, released to detritus when it dies and drainable
+# by a mouth. Ships at nought. See config.rs's MetabolismConfig::tissue_share.
+tissue_share = 0.0
+# ⭐⭐ `motor_upkeep` is what a flagellocyte costs per tick, overriding SPEC section 6's table
+# for that one kind. It is the only lever ever measured to move motor retention. Ships at the
+# table's own 0.006. See config.rs's MetabolismConfig::motor_upkeep.
+motor_upkeep = 0.004      # level with the photocyte that funds it, which is the lowest a cell can go
+                         # before CellKind::upkeep's own note says neutral bloat begins
+upkeep_scale = 8.0       # ⭐ **The third, and the one that does most of the work.** SPEC section
+                         # 3 calls this the world's temperature and section 10 charges
+                         # `(Σ cells' upkeep) × n^(k-1) × upkeep_scale`; `metabolism.rs` puts
+                         # `gene_cost` inside the same multiplication. So the whole outgoing side
+                         # moves at once, and lifespan - `LIFETIME_UPKEEP × body ÷ cost per
+                         # tick` - divides by eight without anything else being written.
+                         #
+                         # ⚠️ On its own this is the lever docs/NEXT.md section 3 records as
+                         # self-cancelling, and that record stands: raising it alone makes life
+                         # dearer and the equilibrium re-forms in poorer water. What stops it
+                         # self-cancelling here is that `light.influx` rises with it, so the
+                         # water is not poorer - both sides of every body's books are multiplied
+                         # and the balance between them is exactly what it was.
+scaling_exponent = 0.75
+gene_cost = 0.0001       # Inside `upkeep_scale`'s multiplication, so it is already at tempo.
+movement_cost = 0.0008   # ⭐ **The fourth, and it was the one rate left behind until a motor
+                         # existed.** It prices work done by contraction and, since the
+                         # flagellocyte arrived, thrust as well. Left at the shipped 0.0001 while
+                         # upkeep and income both went up eightfold, a motor's bill would be an
+                         # EIGHTH of its body's in relative terms — so movement would be cheap
+                         # here in a way it is not in the world every coefficient was measured
+                         # in, and a motor would spread at this tempo for a reason that is an
+                         # artefact of the tempo.
+                         #
+                         # The previous comment on this line said exactly that and excused itself
+                         # on the grounds that nothing had ever made movement pay at any price.
+                         #
+                         # ⚠️ It then cited a +2.0 %/generation invasion reading as having changed
+                         # that. **That figure is retracted twice over** — three seeds gave -10.3,
+                         # -7.2 and -15.2, and the arm was a flagellocyte whose gene carried an
+                         # `osc_freq` of nought, so it never ran at all. Nothing has yet made
+                         # movement pay.
+                         #
+                         # It is scaled anyway, because the excuse was never a good one. A price
+                         # wrong by a factor of eight is wrong whether or not anything currently
+                         # notices, and this profile is a time scaling again rather than a time
+                         # scaling with one price quietly moved.
+reproduction_threshold = 2.2
+offspring_share = 0.45
+
+[mutation]
+point_rate = 0.06        # Per reproduction rather than per tick, so these are already at tempo:
+point_sigma = 0.12       # eight times the reproductions in the same wall clock is eight times
+duplication_rate = 0.02  # the mutation supply, which is the whole point of the profile.
+deletion_rate = 0.02
+insertion_rate = 0.01
+reorder_rate = 0.02
+genome_duplication_rate = 0.0008
+
+[limits]
+max_organisms = 4000
+max_cells_per_organism = 64
+max_genes = 128
+max_dev_steps = 16
+
+[run]
+max_wall_clock_hours = 12.0
+max_ticks = 0
+max_ticks_per_second = 0
+reseed_on_extinction = false
