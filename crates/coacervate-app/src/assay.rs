@@ -1159,6 +1159,123 @@ fn wrapped_distance(from: Vec2, to: Vec2, width: f32) -> f32 {
     Vec2::new(across, to.y - from.y).length()
 }
 
+/// ⭐⭐⭐ Like [`placed_assay`], but arm B is carried into the best water **for the whole run**
+/// rather than once at its founding.
+///
+/// ⚠️⚠️ **This is the correction to every ceiling this project has quoted.** `placed_assay` calls
+/// its `put` closure inside the founding loop and never again, so no descendant is ever placed:
+/// what it measures is *one free relocation per lineage, diluted over thirty-four generations*.
+/// That is not what a motor does. A motor relocates continually, and until this existed the
+/// instrument built to bound locomotion could not express the thing it was bounding.
+///
+/// Every `POLL_EVERY` ticks, every living body of arm B is carried to the best water within
+/// `reach` — free, instant, perfectly aimed, omniscient, and repeated for the length of the run.
+/// **Nothing that has to swim there can beat it.**
+fn carried_assay(config: &Config, arms: [&Genome; ARMS], ticks: u64, reach: f32) -> Outcome {
+    let (width, height) = (config.world.width, config.world.height);
+    let mut world = World::new(config);
+    dawn(&mut world);
+
+    let mut side_of: HashMap<u64, Option<u8>> = HashMap::new();
+    let mut outcome = Outcome {
+        ticks,
+        alive: [0; ARMS],
+        born: [0; ARMS],
+        cells: [0; ARMS],
+        energy: [0.0; ARMS],
+        refused: 0,
+        unattributed: 0,
+        checkpoints: Vec::new(),
+    };
+
+    for founder in 0..FOUNDERS {
+        let side = u8::try_from(founder % 2).expect("an arm number is nought or one");
+        let at = place(founder, FOUNDERS, width, height);
+
+        match world.seed(arms[usize::from(side)].clone(), at, FOUNDER_ENERGY) {
+            Ok(slot) => {
+                let seeded = world.organisms()[slot]
+                    .as_ref()
+                    .expect("a seeding that was accepted put an organism in that slot");
+                outcome.energy[usize::from(side)] += seeded.energy();
+                side_of.insert(seeded.serial(), Some(side));
+                outcome.born[usize::from(side)] += 1;
+            }
+            Err(_) => outcome.refused += 1,
+        }
+    }
+
+    let started = world.ticks();
+    while world.ticks() < started + ticks {
+        world.tick();
+
+        if (world.ticks() - started).is_multiple_of(POLL_EVERY) {
+            let (fresh, lost) = attribute(&world, &mut side_of);
+            outcome.born[0] += fresh[0];
+            outcome.born[1] += fresh[1];
+            outcome.unattributed += lost;
+            outcome.checkpoints.push(fresh);
+
+            // ⭐ And the carrying, which is the whole difference from `placed_assay`. Arm B only:
+            // arm A is the same genome in the same water and is what the difference is taken
+            // against.
+            let carry: Vec<(usize, Vec2)> = world
+                .organisms()
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, held)| {
+                    let serial = held.as_ref()?.serial();
+                    if side_of.get(&serial).copied().flatten() != Some(1) {
+                        return None;
+                    }
+                    let at = world.cells_of(slot).first()?.pos;
+                    Some((slot, best_water_near(&world, at, reach)))
+                })
+                .collect();
+
+            for (slot, to) in carry {
+                world.carry_to(slot, to);
+            }
+        }
+    }
+
+    for organism in world.organisms().iter().flatten() {
+        if let Some(Some(side)) = side_of.get(&organism.serial()) {
+            outcome.alive[usize::from(*side)] += 1;
+            outcome.cells[usize::from(*side)] += organism.cells();
+        }
+    }
+
+    outcome
+}
+/// The richest tile within `reach` of here, searched on a ring of directions.
+///
+/// A search rather than a scan of the grid, because what is wanted is *where a body could
+/// have swum to*, which is a disc around where it started and not the best tile in the
+/// world.
+fn best_water_near(world: &World, at: Vec2, reach: f32) -> Vec2 {
+    let grid = world.grid();
+    let (width, height) = (world.config().world.width, world.config().world.height);
+    let mut best = (f64::from(grid.tiles()[grid.tile_at(at)]), at);
+
+    for step in 1..=16u8 {
+        let angle = f32::from(step) * std::f32::consts::TAU / 16.0;
+        for away in [reach * 0.5, reach] {
+            let (sin, cos) = angle.sin_cos();
+            let here = Vec2::new(
+                (at.x + cos * away).rem_euclid(width),
+                (at.y + sin * away).clamp(0.0, height),
+            );
+            let held = f64::from(grid.tiles()[grid.tile_at(here)]);
+            if held > best.0 {
+                best = (held, here);
+            }
+        }
+    }
+
+    best.1
+}
+
 /// SPEC's shipped world, at the seed this run of the assay is being taken on.
 fn seeded_world(seed: u64, change: impl FnOnce(&mut RawConfig)) -> Config {
     let mut raw = spec_defaults();
@@ -1173,9 +1290,9 @@ fn seeded_world(seed: u64, change: impl FnOnce(&mut RawConfig)) -> Config {
 mod tests {
     use super::{
         ARMS, BEAT, FOUNDER_ENERGY, FOUNDERS, GENERATION, INTRODUCTIONS, Invader, Invasion,
-        Outcome, POLL_EVERY, SEGMENT, SETTLE, assay, dawn, earns, founder_genome,
-        founder_with_a_third_cell, held_still, invade, one_mutation_apart, package_assay, place,
-        placed_assay, seeded_world, spreads, swimmer, travels,
+        Outcome, POLL_EVERY, SEGMENT, SETTLE, assay, best_water_near, carried_assay, dawn, earns,
+        founder_genome, founder_with_a_third_cell, held_still, invade, one_mutation_apart,
+        package_assay, place, placed_assay, seeded_world, spreads, swimmer, travels,
     };
     use coacervate_sim::cell::{CellKind, Vec2};
     use coacervate_sim::config::{Config, RawConfig};
@@ -1976,34 +2093,6 @@ mod tests {
             best_gain / samples,
             blind_gain / samples
         );
-    }
-
-    /// The richest tile within `reach` of here, searched on a ring of directions.
-    ///
-    /// A search rather than a scan of the grid, because what is wanted is *where a body could
-    /// have swum to*, which is a disc around where it started and not the best tile in the
-    /// world.
-    fn best_water_near(world: &World, at: Vec2, reach: f32) -> Vec2 {
-        let grid = world.grid();
-        let (width, height) = (world.config().world.width, world.config().world.height);
-        let mut best = (f64::from(grid.tiles()[grid.tile_at(at)]), at);
-
-        for step in 1..=16u8 {
-            let angle = f32::from(step) * std::f32::consts::TAU / 16.0;
-            for away in [reach * 0.5, reach] {
-                let (sin, cos) = angle.sin_cos();
-                let here = Vec2::new(
-                    (at.x + cos * away).rem_euclid(width),
-                    (at.y + sin * away).clamp(0.0, height),
-                );
-                let held = f64::from(grid.tiles()[grid.tile_at(here)]);
-                if held > best.0 {
-                    best = (held, here);
-                }
-            }
-        }
-
-        best.1
     }
 
     /// Print one outcome, so a run of these tests is a measurement and not only a pass.
@@ -4921,6 +5010,114 @@ mod tests {
             "the widest between-seed spread in the sweep is {worst:.2} %/generation, which is too \
              wide to read a trend through. The competition assay's floor is ±0.11 and these arms \
              are the same genome in the same water"
+        );
+    }
+
+    /// ⭐⭐⭐ **THE CEILING, MEASURED PROPERLY AT LAST.** What continual relocation is worth.
+    ///
+    /// ⚠️⚠️⚠️ **Every ceiling this project has quoted measured one relocation per LINEAGE.**
+    /// `placed_assay` calls its `put` closure inside the founding loop and never again — no
+    /// descendant was ever placed. So the famous −0.01 %/generation, which has been read for
+    /// several rounds as *locomotion has nowhere to go*, is the value of **a single free move,
+    /// diluted over thirty-four generations**. A motor is a thing that relocates *continually*.
+    /// The instrument could not express the quantity it was built to bound.
+    ///
+    /// This one re-places **every living body of arm B, every `POLL_EVERY` ticks, for the whole
+    /// run** — free, instant, perfectly aimed, omniscient. It is a strict upper bound on what any
+    /// organelle could ever earn by moving, and nothing that has to swim can beat it.
+    ///
+    /// # Read it against the bill
+    ///
+    /// A flagellocyte costs **0.006 a tick** — about 7 %/generation of a founder's budget. If this
+    /// number is below that, locomotion is refuted in that world whatever it costs to build.
+    ///
+    /// ⚠️ And it is still only necessary, not sufficient: it prices the prize **while everyone
+    /// else stands still**. A world where every body can reach the good water is a world where the
+    /// good water is competed away, which is Result 13's theorem arriving through a second door.
+    #[test]
+    #[ignore = "sixteen 42,000-tick competition runs; run deliberately with --ignored"]
+    fn what_continual_relocation_is_worth() {
+        const REACH: f32 = 88.0;
+        const SEEDS: [u64; 2] = [42, 43];
+
+        println!("world                                   | ceiling %/gen | the seeds");
+
+        let mut readings = Vec::new();
+        for (what, tune) in [
+            (
+                "shipped",
+                &(|_: &mut RawConfig| {}) as &dyn Fn(&mut RawConfig),
+            ),
+            ("drift 0.05", &|raw: &mut RawConfig| {
+                raw.light.patch_drift = 0.05
+            }),
+            ("bloom 1.0", &|raw: &mut RawConfig| raw.light.bloom = 1.0),
+            ("bloom 1.0 + drift 0.05", &|raw: &mut RawConfig| {
+                raw.light.bloom = 1.0;
+                raw.light.patch_drift = 0.05;
+            }),
+        ] {
+            let mut each = Vec::new();
+            for seed in SEEDS {
+                let settings = seeded_world(seed, tune);
+                let plain = founder_genome(&settings.limits);
+
+                let control = package_assay(&settings, [&plain, &plain], WINDOW);
+                let carried = carried_assay(&settings, [&plain, &plain], WINDOW, REACH);
+                each.push((carried.per_generation() - control.per_generation()) * 100.0);
+            }
+
+            let mean = each.iter().sum::<f64>() / 2.0;
+            let shown: Vec<String> = each.iter().map(|v| format!("{v:+.2}")).collect();
+            println!("{what:39} | {mean:+13.3} | {}", shown.join(", "));
+            readings.push((what, mean));
+        }
+
+        let (_, shipped) = readings[0];
+        let (best_what, best) = readings
+            .iter()
+            .copied()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).expect("coefficients are finite"))
+            .expect("the sweep has rows");
+
+        println!(
+            "\n⭐ Continually relocating is worth {shipped:+.3} %/generation in the shipped world \
+             and {best:+.3} in the best ({best_what}). A motor costs about 7."
+        );
+
+        // ⚠️⚠️⚠️ **AND IT IS NEGATIVE. Measured, two seeds each:**
+        //
+        //   shipped                |  −4.293  |  −5.31, −3.27
+        //   drift 0.05             |  −3.986  |  −4.47, −3.50
+        //   bloom 1.0              |  −5.272  |  −5.12, −5.42
+        //   bloom 1.0 + drift 0.05 |  −3.816  |  −3.39, −4.25
+        //
+        // Being carried into the best water within 88 units — free, instantly, perfectly aimed,
+        // every poll, for a whole run — makes a lineage **about four per cent a generation WORSE
+        // OFF** than standing still. Consistently, across every world and both seeds.
+        //
+        // ⭐ The likeliest mechanism is an artefact of the *policy* rather than a fact about the
+        // world: `best_water_near` is greedy and omniscient, so **neighbouring bodies choose the
+        // same tile**. An arm that all moves to the best water converges on it, and an arm
+        // converging on one tile is an arm competing with itself — while the control, scattered
+        // where `founding.rs` put it, is not.
+        //
+        // ⚠️ **So this does not prove that no policy could pay.** What it proves is narrower and
+        // still worth having: *chasing the richest water is a losing strategy in this world even
+        // when it is free.* Which is Result 13 arriving through another door — stock is not value,
+        // and water is rich exactly because nobody is in it yet.
+        //
+        // It is asserted as the negative it is. A change that made free relocation **pay** would
+        // be the first evidence this project has that position carries value, and it must not
+        // arrive silently.
+        assert!(
+            shipped < 0.0,
+            "continually relocating every body of an arm, free and perfectly aimed, for a whole \
+             run, is worth {shipped:+.3} %/generation in the shipped world. **This test asserts a \
+             negative and the negative has broken.** The measured figures are −4.29 in the \
+             shipped world and −3.82 to −5.27 across four worlds at two seeds each; a positive \
+             here would be the first evidence this project has that position carries value, and \
+             it is worth stopping for"
         );
     }
 }

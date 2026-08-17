@@ -147,7 +147,7 @@ use crate::metabolism::{Metabolism, Mortal};
 use crate::organism::{
     Organism, cell_slot, cells_per_slot, founding_marker, lay_out, spring_slot, springs_per_slot,
 };
-use crate::physics::{Physics, Spring, cell_capacity};
+use crate::physics::{Physics, Spring, cell_capacity, wrapped};
 use crate::reproduction::{Fertile, Reproduction};
 use crate::rng::WorldRng;
 
@@ -777,6 +777,46 @@ impl World {
         let count = self.organisms[slot].as_ref().map_or(0, Organism::cells);
 
         &self.cells[first..first + count]
+    }
+
+    /// ⭐⭐⭐ Carry the body in this slot to a new place, keeping its shape exactly.
+    ///
+    /// Every cell is translated by the same offset, so the body arrives in the same shape, at the
+    /// same internal spacing, carrying the same velocities. Nothing else about it changes.
+    ///
+    /// # Why this exists, and it is not for the simulation
+    ///
+    /// Nothing in a tick calls it and nothing ever should: a body that could be put somewhere
+    /// better by fiat is a body that has not had to swim there, which is the whole question this
+    /// project exists to ask. It is here for `assay.rs`.s **ceiling** -- the measurement that
+    /// hands a body the best water for nothing in order to price the most locomotion could
+    /// possibly be worth, so that an organelle is not built for a prize that is not there.
+    ///
+    /// ⚠️⚠️ **That instrument has been measuring one relocation per LINEAGE.** `placed_assay`
+    /// placed an arm.s founders and then never touched a descendant, so a ceiling of -0.01
+    /// %/generation was the value of a single free move diluted over thirty-four generations --
+    /// and a motor is a thing that relocates continually. Without this method the instrument
+    /// could not express the thing it was built to bound.
+    ///
+    /// # Panics
+    ///
+    /// If there is no such slot in this world.
+    pub fn carry_to(&mut self, slot: usize, to: Vec2) {
+        let first = cell_slot(slot, &self.config.limits).start;
+        let Some(count) = self.organisms[slot].as_ref().map(Organism::cells) else {
+            return;
+        };
+
+        // From the seed cell, which is what `assay.rs` follows and what `World::seed` places.
+        let from = self.cells[first].pos;
+        let (width, height) = (self.config.world.width, self.config.world.height);
+
+        for cell in &mut self.cells[first..first + count] {
+            cell.pos = Vec2::new(
+                wrapped(cell.pos.x + (to.x - from.x), width),
+                (cell.pos.y + (to.y - from.y)).clamp(0.0, height),
+            );
+        }
     }
 
     /// The adhesions of the organism in this slot, with their endpoints numbered from that

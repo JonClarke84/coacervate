@@ -58,6 +58,10 @@ years_per_tick = 1000.0
 # changes only how far a tile is pulled down to get there, which is the only spatial
 # structure a body could ever exploit. See config.rs's LightConfig::uptake.
 uptake = 0.01
+# ⭐⭐⭐ `bloom` puts light.patchiness into the light's SUPPLY rather than only its ceiling.
+# Until it existed the light arrived uniformly at every tile of a given depth, so the world had
+# no horizontal structure in supply at all. Ships at nought. See config.rs's LightConfig::bloom.
+bloom = 0.0
 influx = 0.004           # ⭐ Four times the shipped 0.001, over a quarter as many tiles, so the
                          # world is offered **exactly the same total energy per tick** as the
                          # `default` profile: 9,216 tiles x 0.004 against 36,864 x 0.001. SPEC

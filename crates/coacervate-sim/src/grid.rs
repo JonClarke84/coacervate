@@ -432,6 +432,10 @@ pub struct Grid {
     /// How deep the blotches are, `light.patchiness`, at the width the arithmetic runs at.
     patchiness: f64,
 
+    /// SPEC.s `light.bloom`: how much of the light.s SUPPLY follows the drifting noise, rather
+    /// than only its ceiling. See [`Grid::regrow`].
+    bloom: f64,
+
     /// How far the blotches move each tick, in *lattice cells*.
     ///
     /// `light.patch_drift` is in world units per tick, which is what a person can compare
@@ -531,6 +535,7 @@ impl Grid {
             noise: PatchNoise::new(config.world.seed, cols_across, rows_down),
             ceilings: vec![0.0; rows],
             patchiness: 0.0,
+            bloom: 0.0,
             drift_per_tick: 0.0,
             drifted: 0.0,
             since_retarget: 0,
@@ -582,6 +587,7 @@ impl Grid {
         }
 
         self.patchiness = f64::from(light.patchiness);
+        self.bloom = f64::from(light.bloom);
 
         // `light.patch_drift` is world units per tick, because that is what a person can hold
         // beside a swimming speed. The noise is read in lattice cells, so the conversion
@@ -966,14 +972,45 @@ impl Grid {
         // retarget, no target moving down under a full tile, no spill shed to `dissipated`. See
         // [`Grid::season`] and `a_season_moves_no_ceiling`.
         let season = self.season();
+        let (bloom, drifted) = (self.bloom, self.drifted);
 
         for row in 0..self.rows {
-            let offered = narrowed(f64::from(self.regrowth[row]) * season);
-            let across = row * self.cols..(row + 1) * self.cols;
+            let offered = f64::from(self.regrowth[row]) * season;
+            let down = u32::try_from(row).expect("a grid row fits in the type it was counted in");
 
-            for tile in across {
+            for col in 0..self.noise.cols {
+                let across = usize::try_from(col).expect("a grid column fits in a machine word");
+                let tile = row * self.cols + across;
+
+                // ⭐⭐⭐ **Where the light ARRIVES, not just how full a tile may get.**
+                //
+                // ⚠️ Until this existed, `regrowth` was indexed by ROW ALONE: every tile at a
+                // given depth was offered exactly the same light, and all of `light.patchiness`
+                // went into the CEILING. Since the field runs about 65% drawn down, almost
+                // nothing is ever near its ceiling, so the patchiness was very nearly invisible
+                // in what the water actually held. **The supply had no horizontal structure at
+                // all**, which is why twelve rounds of spatial levers -- shadow spread, currents,
+                // diffusion, uptake, dispersal, density -- all came back null: there was nothing
+                // spatial there to exploit.
+                //
+                // `light.bloom` moves that patchiness onto the supply. The noise is the same
+                // field the ceilings use and it already drifts with `light.patch_drift`, so the
+                // good water both varies and MOVES -- which is the one thing an ideal free
+                // distribution cannot flatten, because a population can never finish settling
+                // onto it.
+                //
+                // ⚠️ It is centred, not scaled: `noise.at` is mean-zero across the field, so the
+                // row.s total offer is conserved and this moves light about rather than making
+                // any. Clamped at nought because a tile cannot be offered negative light.
+                let lit = if bloom > 0.0 {
+                    (offered * (1.0 + bloom * self.noise.at(col, down, drifted))).max(0.0)
+                } else {
+                    offered
+                };
+                let lit = narrowed(lit);
+
                 let before = self.tiles[tile];
-                let after = (before + offered).min(self.targets[tile]).max(before);
+                let after = (before + lit).min(self.targets[tile]).max(before);
                 self.tiles[tile] = after;
                 realised += f64::from(after) - f64::from(before);
             }

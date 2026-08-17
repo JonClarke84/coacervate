@@ -61,6 +61,10 @@ years_per_tick = 1000.0
 # changes only how far a tile is pulled down to get there, which is the only spatial
 # structure a body could ever exploit. See config.rs's LightConfig::uptake.
 uptake = 0.01
+# ⭐⭐⭐ `bloom` puts light.patchiness into the light's SUPPLY rather than only its ceiling.
+# Until it existed the light arrived uniformly at every tile of a given depth, so the world had
+# no horizontal structure in supply at all. Ships at nought. See config.rs's LightConfig::bloom.
+bloom = 0.0
 influx = 0.001
 cap = 8.0
 gradient = 0.75

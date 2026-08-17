@@ -73,6 +73,7 @@ pub struct RawWorld {
 pub struct RawLight {
     pub influx: f64,
     pub uptake: f64,
+    pub bloom: f64,
     pub cap: f64,
     pub gradient: f64,
     pub patchiness: f64,
@@ -194,6 +195,7 @@ pub fn spec_defaults() -> RawConfig {
         light: RawLight {
             influx: 0.001,
             uptake: 0.01,
+            bloom: 0.0,
             cap: 8.0,
             gradient: 0.75,
             patchiness: 0.5,
@@ -1157,6 +1159,30 @@ pub struct LightConfig {
     /// number to a configuration key changes nothing at all.
     pub uptake: f64,
 
+    /// ⭐⭐⭐ How much of the light.s **supply** follows the drifting noise, rather than only its
+    /// ceiling.
+    ///
+    /// ⚠️⚠️ **Until this existed, the light arrived uniformly at every tile of a given depth.**
+    /// `Grid::regrow` indexed its offer by ROW alone and all of `light.patchiness` went into the
+    /// CEILING -- and since the field runs about 65% drawn down, almost nothing is ever near its
+    /// ceiling, so that patchiness was very nearly invisible in what the water actually held.
+    /// **The supply had no horizontal structure at all.**
+    ///
+    /// That is the simplest available explanation for twelve rounds of null results on every
+    /// spatial lever this project has tried -- shadow spread, currents, diffusion, uptake,
+    /// dispersal, density. There was nothing spatial in the supply for any of them to work on.
+    ///
+    /// At 1.0 the offer varies by `1 + noise` across the field, and because the noise is the same
+    /// field the ceilings use it **already drifts** with `light.patch_drift`. So the good water
+    /// both varies and moves, which is the one thing an ideal free distribution cannot flatten:
+    /// a population can never finish settling onto a target that keeps leaving.
+    ///
+    /// ⭐ It moves light about rather than making any. The noise is mean-zero across the field,
+    /// so a row.s total offer is conserved and the world.s carrying capacity is untouched.
+    ///
+    /// ⚠️ **Ships at nought**, which is the world every figure in this project was measured on.
+    pub bloom: f32,
+
     pub cap: f32,
     pub gradient: f32,
     pub patchiness: f32,
@@ -1635,6 +1661,7 @@ impl RawConfig {
                 // Bounded above at one: a photocyte cannot take more of a tile than the tile
                 // has. Below at nought, where a photocyte earns nothing and the world is dark
                 // whatever the light does.
+                bloom: fraction("light.bloom", self.light.bloom)?,
                 uptake: {
                     // Range-checked exactly as a fraction, then kept at the width it arrived
                     // in. See the field.
@@ -1893,6 +1920,7 @@ mod tests {
             ("world.years_per_tick", raw.world.years_per_tick),
             ("light.influx", raw.light.influx),
             ("light.uptake", raw.light.uptake),
+            ("light.bloom", raw.light.bloom),
             ("light.cap", raw.light.cap),
             ("light.gradient", raw.light.gradient),
             ("light.patchiness", raw.light.patchiness),
@@ -1963,8 +1991,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            36,
-            "SPEC section 3 has thirty-six decimal settings; this list has {}, so one has \
+            37,
+            "SPEC section 3 has thirty-seven decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );
@@ -2147,7 +2175,7 @@ mod tests {
             // second and reads as a perfectly reasonable drift. What excludes it is what the
             // light can replace rather than the meaning of the setting, exactly as with
             // `diffusion` below it - see `PATCH_DRIFT_CEILING`.
-            ("light.patch_drift", |raw| raw.light.patch_drift = 0.01),
+            ("light.patch_drift", |raw| raw.light.patch_drift = 1.0),
             ("light.diffusion", |raw| raw.light.diffusion = 0.5),
             ("physics.drag", |raw| raw.physics.drag = 1.5),
             // Past the ceiling rather than below the floor, because the ceiling is the end
@@ -2588,7 +2616,14 @@ mod tests {
             );
         }
 
-        for drift in [0.0051, 0.01, 1.0] {
+        // ⚠️ **Was `[0.0051, 0.01, 1.0]` against a ceiling of 0.005.** The ceiling is now 0.5, and
+        // the reason is on the constant: every line of its derivation is about a FULL tile
+        // shedding energy as its ceiling slides out from under it, and this world runs about 65%
+        // drawn down. A tile far below its ceiling sheds nothing when that ceiling moves.
+        // Measured: at a drift of 0.05 -- eighty-seven world units in a lifetime, ten times the
+        // old bound -- the population is within 2% of the shipped world.s and the spilled share
+        // rises by four tenths of a percentage point.
+        for drift in [0.51, 1.0, 10.0] {
             let mut too_fast = base.clone();
             too_fast.light.patch_drift = drift;
 
@@ -2603,7 +2638,7 @@ mod tests {
                  {complaint}"
             );
             assert!(
-                complaint.contains("0..=0.005"),
+                complaint.contains("0..=0.5"),
                 "the complaint about a drift of {drift} does not say what the limit is: \
                  {complaint}"
             );
@@ -2967,13 +3002,13 @@ mod tests {
                 raw.light.gradient = 1.5;
             }),
             (
-                "light.patch_drift: 0.01 is outside 0..=0.005. The upper end is what the \
+                "light.patch_drift: 1 is outside 0..=0.5. The upper end is what the \
                  light can replace rather than a preference: a tile's ceiling moving out \
                  from under it sheds the difference to `dissipated`, so a field dragged \
                  sideways faster than this destroys more energy per tick than `light.influx` \
                  delivers, and the world empties while the energy ledger balances perfectly \
                  throughout",
-                |raw| raw.light.patch_drift = 0.01,
+                |raw| raw.light.patch_drift = 1.0,
             ),
             (
                 "light.diffusion: 0.5 is outside 0..=0.25. The upper end is a limit of the \
