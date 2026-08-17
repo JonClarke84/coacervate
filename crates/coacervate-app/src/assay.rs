@@ -3034,20 +3034,52 @@ mod tests {
             best - still
         );
 
-        // ⭐⭐ The claim, and it is held to a margin wider than the between-seed spread rather
-        // than to the ±1.12 noise floor - because the floor was measured on repeated seeds of one
-        // configuration and these rows are different configurations, which is a larger variance.
+        // ⚠️⚠️⚠️ **THE NULL, ASSERTED AS A NULL.** Prediction 3 is not confirmed and the
+        // single-seed reading that appeared to confirm it was a lucky draw. Over three seeds:
+        //
+        //   thrust | mean %/gen | spread | the three seeds
+        //        0 |    −10.340 |   16.9 | −19.9, −8.1, −3.0
+        //       40 |     −7.202 |   19.6 | **+2.0**, −17.7, −5.9
+        //      100 |    −15.158 |   23.7 | −30.8, −7.0, −7.7
+        //
+        // The difference between a motor that can push and one that cannot is 3.1 %/generation
+        // against a between-seed spread of 17 to 24. **The +2.0 that made this look like a
+        // discovery is the first entry on the middle row**, and it is one seed out of nine.
+        //
+        // # Why this instrument cannot answer the question, which is the useful part
+        //
+        // The invasion assay's ±1.12 noise floor was measured on arms near neutrality. This arm
+        // is nowhere near it: a founder plus one flagellocyte is a three-celled body with a
+        // *single* photocyte paying for a cell that costs more than that photocyte earns, so the
+        // invaders crash almost at once and the slope of a log frequency that has gone to nothing
+        // is badly estimated. The variance is a property of measuring a strongly negative arm,
+        // not of the motor.
+        //
+        // ⚠️ So what is refuted is the *experiment*, and the hypothesis is untested rather than
+        // false. `does_moving_find_more_food_than_staying_put` still says a motor finds 3.38%
+        // more food, deterministically, on a four-celled body with two photocytes. **The
+        // untested claim is that a motor pays for a body big enough to afford it**, and the
+        // founder-plus-one design cannot ask that, because the marginal cell it adds is always
+        // added to the smallest body in the world.
         assert!(
-            best - still > still_spread.max(best_spread),
+            best - still < still_spread.max(best_spread),
             "a motor that can push invaded at {best:+.3} %/generation and one that cannot at \
-             {still:+.3}, a difference of {:+.3} - against a between-seed spread of \
-             {:.1}. **The difference has to beat the spread or it is a world and not an \
-             organelle.** The measured readings are −19.9 and +2.0 on seed 42 alone; if the \
-             mean over three seeds no longer separates them, prediction 3 of docs/NEXT.md §8 \
-             fails and the next round is about what there is worth reaching rather than about \
-             how fast a body can reach it",
+             {still:+.3}, a difference of {:+.3}, and that now BEATS the between-seed spread of \
+             {:.1}. **This test asserts a null and the null has broken**, which is a result \
+             worth stopping for rather than a failure: the measured means are −10.3, −7.2 and \
+             −15.2 with spreads of 17 to 24. Re-run at more seeds before believing it",
             best - still,
             still_spread.max(best_spread)
+        );
+
+        // ⚠️ And the flat truth underneath: at no thrust does a motor pay in a crowd.
+        assert!(
+            best < -2.0,
+            "a motor invaded at {best:+.3} %/generation, meaned over {} seeds. Every reading \
+             taken so far is between −7 and −15 on the mean. A motor that has become worth \
+             owning in a settled world is the result this whole round was looking for and it \
+             must not arrive silently inside a test that was written to record a null",
+            SEEDS.len()
         );
     }
 

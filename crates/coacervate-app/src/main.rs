@@ -48,6 +48,7 @@ use args::{Arguments, Settings};
 // into the binary that draws it; the alternative was to compute them twice, which is the one
 // thing `census.rs`'s own opening paragraph argues against. Nothing about the numbers changed.
 use coacervate_render::census::{Census, millions_of_years};
+use coacervate_sim::cell::CellKind;
 use coacervate_sim::chronicle::Chronicle;
 use coacervate_sim::config::RunConfig;
 use coacervate_sim::species::Taxonomy;
@@ -419,7 +420,8 @@ fn listen(interrupt: &Interrupt) {
 /// The column headings of the progress report, written once.
 fn heading() {
     println!(
-        "{:>12} {:>9} {:>6} {:>9} {:>8} {:>8} {:>11} {:>11} {:>9} {:>9} {:>11} {:>11} {:>6}",
+        "{:>12} {:>9} {:>6} {:>9} {:>8} {:>8} {:>11} {:>11} {:>9} {:>9} {:>11} {:>11} {:>6} \
+         {:>7} {:>7} {:>7}",
         "time",
         "tick",
         "alive",
@@ -433,6 +435,18 @@ fn heading() {
         "body",
         "genome",
         "depth",
+        // ⭐⭐⭐ The three kinds worth watching a long run for, and the only three whose count
+        // means something on its own. A photocyte is the world's whole income and its number is
+        // the population by another name. The other three are the specialisations ten rounds of
+        // this project failed to make worth having: `motors` is the flagellocyte,
+        // `mouths` the devorocyte, `eyes` the sensocyte.
+        //
+        // Here rather than in the closing composition line because **what matters is whether they
+        // are rising**, and a single figure at the end cannot say. A run left overnight is read
+        // by scrolling this column.
+        "motors",
+        "mouths",
+        "eyes",
     );
 }
 
@@ -459,7 +473,7 @@ fn report(world: &World) {
 
     println!(
         "{:>9.1} Ma {:>9} {:>6} {:>9.0} {:>8.0} {:>8.0} {:>11.0} {:>11.0} {:>9} {:>9} \
-         {:>6.2}+-{:<4.2} {:>6.2}+-{:<4.2} {:>6.0}",
+         {:>6.2}+-{:<4.2} {:>6.2}+-{:<4.2} {:>6.0} {:>7} {:>7} {:>7}",
         millions,
         world.ticks(),
         census.population,
@@ -475,6 +489,12 @@ fn report(world: &World) {
         census.mean_genes,
         census.gene_spread,
         census.mean_depth,
+        // Indexed through `CellKind` itself rather than by a literal, so that a kind inserted
+        // into the middle of `CellKind::ALL` could not silently repoint these three columns at
+        // whatever ended up in the slot. `census.rs` fills the array by the same route.
+        census.kinds[CellKind::Flagellocyte as usize],
+        census.kinds[CellKind::Devorocyte as usize],
+        census.kinds[CellKind::Sensocyte as usize],
     );
 }
 
@@ -1173,10 +1193,13 @@ mod tests {
         // coefficient was measured in, and a motor spreading at this tempo would be an artefact
         // of the tempo.
         //
-        // ⚠️ `config/tempo.toml`'s own comment used to say precisely this, and said it changed no
-        // conclusion because nothing had ever made movement pay at any price. That stopped being
-        // true: `assay.rs`'s `what_a_motor_is_worth_where_there_is_somewhere_to_go` measures a
-        // third flagellocyte invading a settled world at +2.0 %/generation at a thrust of 40.
+        // ⚠️ `config/tempo.toml`'s own comment used to say precisely this and excused itself on
+        // the grounds that nothing had ever made movement pay at any price. Whether that is still
+        // true is a separate question — `what_a_motor_is_worth_where_there_is_somewhere_to_go`
+        // means −7.2 %/generation over three seeds, which is a null — but it was never a good
+        // excuse. A price wrong by a factor of eight is wrong whether or not anything currently
+        // notices, and `does_moving_find_more_food_than_staying_put` measures a motor finding
+        // 3.38% more food, so there is now something for a mispriced motor to be cheap at.
         assert_eq!(
             tempo.metabolism.movement_cost,
             shipped.metabolism.movement_cost * factor,

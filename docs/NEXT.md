@@ -693,27 +693,48 @@ performs a long unsteered walk in a world where most directions are darker than 
 together, and it is what makes the whole picture consistent — the same shape appears in travel
 (where cost kills the body above 250), in gross income (peaks at 40) and in invasion fitness.
 
-### ⭐⭐⭐ Result 3: prediction 3 confirmed — a motor is worth what it can reach
+### ⚠️⚠️⚠️ Result 3: prediction 3 is NOT confirmed, and the reading that seemed to confirm it was one seed
 
 `assay.rs`'s `what_a_motor_is_worth_where_there_is_somewhere_to_go`. A third flagellocyte
 released as a **rare invader into a resident population that has already settled and drawn the
-field down** — the regime the competition assay cannot produce at any setting. Seed 42:
+field down** — the regime the competition assay cannot produce at any setting.
+
+**What seed 42 said, and what was very nearly written up as a discovery:**
 
 | `thrust` | motor, %/gen | a third photocyte (calibration) |
 | --- | --- | --- |
-| 0 | **−19.90** | +2.59 |
+| 0 | −19.90 | +2.59 |
 | **40** | **+1.99** | +10.24 |
 | 100 | −30.76 | +5.59 |
 
-**A motor that can push is worth ~22 %/generation more than one that cannot**, and at thrust 40
-it is the first specialisation other than a photocyte ever measured **positive** in this project.
+That reads as a motor being worth 22 %/generation more when it can push, and at thrust 40 as the
+first specialisation other than a photocyte ever measured **positive** in this project.
 
-⚠️ **One seed, and the curve is not monotonic**, so this is not yet a result. The calibration arm
-— the one thing this world is known to reward — itself read +2.59, +10.24 and +5.59 across those
-three runs, a spread of nearly eight against a quoted floor of ±1.12: changing `physics.thrust`
-changes the physics, so each row is a *different world* rather than the same world measured
-again. The test now means over three seeds and prints the calibration's own spread beside every
-figure, and the assertion is that the difference must beat the between-seed spread.
+**What three seeds say:**
+
+| `thrust` | mean %/gen | spread | the three seeds |
+| --- | --- | --- | --- |
+| 0 | −10.34 | 16.9 | −19.9, −8.1, −3.0 |
+| **40** | **−7.20** | 19.6 | **+2.0**, −17.7, −5.9 |
+| 100 | −15.16 | 23.7 | −30.8, −7.0, −7.7 |
+
+**The difference between a motor that can push and one that cannot is 3.1 %/generation against a
+between-seed spread of 17 to 24.** The +2.0 is the first entry on the middle row — one seed out of
+nine. There is no effect here.
+
+⭐ **Why the instrument cannot answer this, which is the part worth keeping.** The ±1.12 noise
+floor was measured on arms near neutrality, and this arm is nowhere near it. A founder plus one
+flagellocyte is a **three-celled body with a single photocyte** paying for a cell that costs more
+than that photocyte earns, so the invaders crash almost immediately and the slope of a log
+frequency that has gone to nothing is badly estimated. The variance is a property of measuring a
+strongly negative arm.
+
+⚠️ **So the experiment is refuted, not the hypothesis** — which is a different and more useful
+position. Result 2 still stands: a motor finds 3.38% more food, deterministically, on a
+four-celled body with two photocytes. **The untested claim is that a motor pays for a body big
+enough to afford one**, and neither assay can ask it, because the founder-plus-one design always
+hangs the marginal cell on the smallest body in the world. That is the next experiment, and it
+needs an instrument that does not yet exist.
 
 ### ⚠️ Two errors of mine in this round, both caught by re-measurement
 

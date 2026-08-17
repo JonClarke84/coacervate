@@ -14,14 +14,24 @@
 #     `light.gradient` is 0.75, nothing steers a motor, and a body that goes far enough walks out
 #     of the light. There is an optimum, and it is near here.
 #
-#   * FITNESS. `what_a_motor_is_worth_where_there_is_somewhere_to_go`: released as a rare invader
-#     into a settled, drawn-down population, a third flagellocyte invades at **+2.0 %/generation**
-#     at this thrust, against −19.9 for one that cannot push and −30.8 at a thrust of 100.
+# ⚠️⚠️ **AND FITNESS IS A NULL. A MOTOR HAS NOT BEEN SHOWN TO PAY.**
 #
-# ⚠️ A motor still prices **−2.5 %/generation in the competition assay**, and that is not a
-# contradiction. The competition assay measures empty water, where there is nowhere worth going.
-# The two readings together are the finding: **what a motor is worth depends on the state of the
-# world**, which is the first time in this project any specialisation's value has.
+# The first two readings are deterministic and hold. The third one does not exist. A single seed
+# of `what_a_motor_is_worth_where_there_is_somewhere_to_go` came back at +2.0 %/generation for a
+# motorised invader against −19.9 for one that could not push, which read as the first
+# specialisation other than a photocyte ever measured positive here. **Three seeds killed it**:
+# the means are −10.3, −7.2 and −15.2 at thrusts of 0, 40 and 100, and the between-seed spread is
+# 17 to 24 against a between-thrust difference of 3. The +2.0 was one seed out of nine.
+#
+# A motor also prices −2.5 %/generation in the competition assay, which measures empty water.
+#
+# So what this profile switches on is an organelle that **demonstrably moves a body and
+# demonstrably finds it more food**, and which nothing has yet shown a lineage is better off
+# owning. Those are not in contradiction — the founder-plus-one-cell design of both assays always
+# hangs the marginal cell on the *smallest body in the world*, a three-celled thing with one
+# photocyte paying for a cell dearer than that photocyte earns. **The untested claim is that a
+# motor pays for a body big enough to afford one.** That is what a long run of this profile is
+# for, and it is a question and not a result.
 #
 # The `default` profile's own documentation follows, unchanged.
 #
