@@ -1294,3 +1294,61 @@ that reduces a *rate* is a different thing from armour that reduces a *bite*.
 That is a real cost and it should be paid deliberately. But it is the first candidate in eleven
 rounds that would make movement and feeding want the same thing, and every cheaper lever is now
 spent.
+
+---
+
+## ⭐⭐⭐ Result 12: drag is NOT the problem, and what that proves is the root cause
+
+**The hypothesis.** `physics.drag = 0.92` is not a fact about water — it is a declaration that this
+world is **microscopic**. A cell keeps 92% of its velocity per tick, so motion dies in a dozen
+ticks; that is a bacterium in treacle, it is why the scallop theorem bites, and it is why a body's
+speed goes as the fraction of it that is motor. The integrator's fixed point gives a per-tick
+travel of `k = F × dt² × drag ÷ (1 − drag)`, and for a **target speed** the energy cost is
+`movement_cost × s² ÷ k` — **inversely proportional to `k`**. Raising drag towards 1 should
+therefore make locomotion dramatically cheaper. It looked like the whole gap.
+
+**Measured** — `is_drag_the_number_that_makes_locomotion_unaffordable`, one body, thrust 40:
+
+| `drag` | `k` | travel | **net vs the same body held still** | body extent | stable |
+| --- | --- | --- | --- | --- | --- |
+| **0.920** ships | 0.00319 | 76.2 | **+0.28** | 59.2 | yes |
+| 0.960 | 0.00667 | 173.4 | **−21.24** | 59.2 | yes |
+| 0.980 | 0.01361 | 363.0 | **−38.26** | 63.3 | yes |
+| 0.990 | 0.02750 | 721.8 | **−29.64** | 68.9 | yes |
+| 0.995 | 0.05528 | 721.2 | −59.58 | **2036.3** | **NO — the body flies apart** |
+
+The travel arithmetic is exactly right: `k` rises 17× and travel rises nine-fold. **And income
+falls monotonically the whole way.** The one setting where a motor is not a net loss is the
+shipped one, where it barely moves.
+
+⚠️ There is a hard ceiling anyway: at 0.995 the same number that damps motion stops damping
+**springs and collisions**, and a five-celled chain that spans 59 units blows out to 2,036. It is
+not a body any more, and a travel figure taken on it would read an explosion as a fast swimmer.
+
+### ⭐⭐⭐ What the null proves — and this is the root cause of all twelve
+
+**Making a body faster makes it poorer.** Not because speed costs — the cost was removed and it
+still got poorer — but because **there is nowhere better to go.**
+
+`light.gradient` is 0.75, so this world's resource is a **static, monotone field with its best
+place at the top**. Every body is already at, or has settled to, its optimum. There is no
+information a sensor could gather that it does not already have, and **every direction is
+downhill.** A faster body is a body that leaves the best water sooner.
+
+That is the sentence eleven earlier nulls were circling:
+
+> **The optimal position in this world is fixed, known in advance, and already occupied.
+> Locomotion cannot pay in a world like that, at any price, with any organelle, at any scale.**
+
+Photosynthesis rewards holding still in the light. Predation-as-a-drain rewards holding still in
+contact. **Both niches are sessile by construction**, and no organism-side change reaches that.
+
+### ⚠️ What this rules out, permanently
+
+- **Cheaper motors.** Result 12: the cost was cut by up to 17× and income fell.
+- **Bigger bodies, better wiring, cheaper cells, a mouth to go with it.** All measured (Results
+  7–11), all downstream of the same thing.
+- **A macroscopic rescale.** The physics is sound and the drag ceiling is 0.99 anyway.
+
+**Eleven rounds tuned the organisms. Nobody changed the world's economy.** That is the round that
+has never been run, and it is the only one left.

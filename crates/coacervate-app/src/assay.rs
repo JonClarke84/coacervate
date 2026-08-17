@@ -4422,4 +4422,90 @@ mod tests {
             best - worst
         );
     }
+
+    /// ⭐⭐⭐ Is `physics.drag` the number that makes locomotion unaffordable? The scale question.
+    ///
+    /// **`physics.drag = 0.92` is not a fact about water. It is a declaration that this world is
+    /// microscopic**, and every locomotion result in this project is downstream of it. A cell
+    /// keeps 92% of its velocity per tick, so motion dies in about a dozen ticks; that is a
+    /// bacterium in treacle, it is why the scallop theorem bites, and it is why a body's speed
+    /// goes as the fraction of it that is motor.
+    ///
+    /// The integrator's fixed point is `v = F × dt × drag ÷ (1 − drag)` per second, so a tick
+    /// covers `k = F × dt² × drag ÷ (1 − drag)`. And `behaviour.rs` charges
+    /// `movement_cost × F² × k / F`… more usefully: for a **target speed** `s`, the force needed
+    /// is `s / k` and the charge is `movement_cost × s² ÷ k`. So **the cost of going a given speed
+    /// is inversely proportional to `k`**, and `k` is what drag controls:
+    ///
+    /// | `drag` | `k` (units per tick per unit force) | cost of a given speed |
+    /// | --- | --- | --- |
+    /// | 0.92 — ships | 0.00319 | ×1 |
+    /// | 0.98 | 0.01361 | ×0.23 |
+    /// | 0.995 | 0.05528 | ×0.058 |
+    ///
+    /// ⚠️ That arithmetic is a prediction, and this project has learned the hard way what a
+    /// prediction is worth. What is measured here is what a body **actually does**: how far it
+    /// travels, what it earns, and — the half that decides whether any of it is usable —
+    /// **whether the world is still stable**, since springs and collisions are damped by the same
+    /// number.
+    #[test]
+    #[ignore = "a lifetime per arm; run deliberately with --ignored"]
+    fn is_drag_the_number_that_makes_locomotion_unaffordable() {
+        const PLAN: [CellKind; 4] = [
+            CellKind::Photocyte,
+            CellKind::Photocyte,
+            CellKind::Gonocyte,
+            CellKind::Flagellocyte,
+        ];
+        const WATCH: u64 = 1_500;
+        const THRUST: f64 = 40.0;
+
+        println!("drag  |    k     | travel | net vs still | extent | lived | stable");
+
+        for drag in [0.92f64, 0.96, 0.98, 0.99, 0.995] {
+            let tune = |raw: &mut RawConfig| {
+                raw.physics.thrust = THRUST;
+                raw.physics.drag = drag;
+            };
+
+            let k = drag * (1.0 / 60.0) * (1.0 / 60.0) / (1.0 - drag);
+            let (travel, lived) =
+                travels(42, tune, |limits| swimmer(limits, &PLAN, BEAT, 0.0), WATCH);
+            let (moving, _) = earns(42, tune, |limits| swimmer(limits, &PLAN, BEAT, 0.0), WATCH);
+            let (still, _) = earns(
+                42,
+                tune,
+                |limits| held_still(&swimmer(limits, &PLAN, BEAT, 0.0), limits),
+                WATCH,
+            );
+            let (extent, _) = spreads(42, tune, |limits| swimmer(limits, &PLAN, BEAT, 0.0), WATCH);
+
+            // ⚠️ **The stability half, and it decides whether any of the rest is usable.** Drag
+            // damps springs and collisions as well as motion. A body whose cells have flown
+            // apart still reports a displacement — a large one — so a travel figure alone would
+            // read an exploding body as a fast swimmer. A five-celled chain at a rest length of
+            // ten spans about forty units when straight; anything past a few hundred is not a
+            // body.
+            let stable = extent < 200.0 && travel.is_finite() && lived == WATCH;
+
+            println!(
+                "{drag:5.3} | {k:8.5} | {travel:6.1} | {:12.4} | {extent:6.1} | {lived:5} | {}",
+                moving - still,
+                if stable { "yes" } else { "**NO**" }
+            );
+        }
+
+        // The shipped world, as the control that the sweep is read against.
+        let (shipped, _) = travels(
+            42,
+            |raw| raw.physics.thrust = THRUST,
+            |limits| swimmer(limits, &PLAN, BEAT, 0.0),
+            WATCH,
+        );
+        assert!(
+            shipped > 50.0,
+            "the shipped-drag arm travelled {shipped:.1} units and the measured figure is 76.2, \
+             so this sweep's control is not reading and none of the rows above mean anything"
+        );
+    }
 }
