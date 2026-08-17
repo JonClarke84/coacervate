@@ -3186,4 +3186,105 @@ mod tests {
             );
         }
     }
+
+    /// ⭐⭐⭐ A motor pushes a body out along its own geometry, and a symmetric arrangement of
+    /// motors pushes it nowhere at all.
+    ///
+    /// **The second claim is the design.** The first is only arithmetic — a steady external force
+    /// against linear drag moves something, and it would be alarming if it did not. The second is
+    /// what keeps the flagellocyte an *organ* rather than a gift of locomotion: motors spread
+    /// evenly round a body cancel, so **where** a lineage puts them is the thing evolution has to
+    /// find, and a mutation that merely grows one more motor buys nothing unless it grows it in
+    /// the right place.
+    ///
+    /// Without this property the organelle would be a switch marked "swim", and CLAUDE.md's rule
+    /// that a motor is permitted and a tactic is not would be a distinction with nothing behind
+    /// it.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "an unattached motor must move by exactly nothing, not nearly nothing. A \
+                  tolerance here would accept a direction that came out as a tiny vector \
+                  rather than as no vector at all, which is the difference between a cell \
+                  that cannot swim and one that swims slowly"
+    )]
+    fn a_motor_pushes_out_along_its_own_geometry_and_a_symmetric_body_goes_nowhere() {
+        let world = config(|raw| {
+            raw.limits.max_organisms = 1;
+            raw.limits.max_cells_per_organism = 64;
+        });
+        let middle = Vec2::new(1_000.0, 576.0);
+        let arm = 8.0;
+
+        // A hub with `arms` cells around it, each joined to the hub and each pushing. One arm is
+        // a body with a tail; four arms is a rosette. The two differ in nothing but symmetry.
+        let ran = |arms: u8| {
+            let mut cells = vec![Cell::new(CellKind::Photocyte, middle)];
+            let mut springs = Vec::new();
+
+            for index in 0..arms {
+                let turn = std::f32::consts::TAU * f32::from(index) / f32::from(arms);
+                let mut motor = Cell::new(
+                    CellKind::Flagellocyte,
+                    Vec2::new(middle.x + arm * turn.cos(), middle.y + arm * turn.sin()),
+                );
+                // Set by `behaviour.rs` in a running world; set by hand here so that this is a
+                // test of the physics and not of the controller.
+                motor.thrust = 20.0;
+                cells.push(motor);
+                springs.push(Spring {
+                    a: 0,
+                    b: usize::from(index) + 1,
+                    rest_length: arm,
+                    stiffness: 10.0,
+                });
+            }
+
+            let mut physics = Physics::new(&world);
+            let began = centre(&cells);
+            for _ in 0..600 {
+                physics.step(&mut cells, &springs);
+            }
+
+            (centre(&cells) - began).length()
+        };
+
+        let tail = ran(1);
+        let rosette = ran(4);
+
+        assert!(
+            tail > 5.0,
+            "a body with one motor on it travelled {tail:.3} units in 600 ticks. A steady \
+             external force against linear drag has to move something, so this is either a \
+             thrust that is not being applied or a direction that is coming out as nothing"
+        );
+
+        // ⭐⭐ The claim the design rests on.
+        assert!(
+            rosette < tail / 50.0,
+            "four motors spaced evenly round a hub carried the body {rosette:.3} units against \
+             {tail:.3} for a single motor on the same hub. **They are meant to cancel.** If a \
+             symmetric body swims, then thrust does not depend on where a lineage puts its \
+             motors, growing one is unconditionally worth it, and the organelle has stopped \
+             being something evolution has to arrange and become something it merely has to own"
+        );
+
+        // ⭐ And a motor with nothing to push against does not push. A flagellocyte with no
+        // adhesion has no partners, so no direction — `behaviour.rs` declines to charge for one
+        // on exactly the same test, and the two have to agree or the ledger pays for thrust the
+        // world never felt.
+        let mut loose = vec![Cell::new(CellKind::Flagellocyte, middle)];
+        loose[0].thrust = 20.0;
+        let mut physics = Physics::new(&world);
+        let began = loose[0].pos;
+        for _ in 0..600 {
+            physics.step(&mut loose, &[]);
+        }
+        assert!(
+            (loose[0].pos - began).length() == 0.0,
+            "an unattached flagellocyte moved itself by {}, so a lone cell can swim — and a \
+             lineage gets locomotion without ever having to become multicellular",
+            (loose[0].pos - began).length()
+        );
+    }
 }

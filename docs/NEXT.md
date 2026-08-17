@@ -615,3 +615,58 @@ and `new_kind` uniformly over that list. **Every golden vector moves**, whatever
 ships at, because the RNG stream itself differs. The old values are to be kept verbatim in the
 tests as history rather than deleted, and the re-record is to be a commit of its own so that it
 is legible in the log as a re-baseline and not as a result.
+
+### ⭐⭐⭐ Result 1: the organelle moves a body, and the trade-off is real
+
+`assay.rs`'s `what_a_motor_buys_in_travel`, seed 42, one body alone in a lit world it cannot
+share, `LIFETIME` = 2,000 ticks. The body is `[photocyte, photocyte, gonocyte, flagellocyte]` —
+a chain with the motor at one end, since a motor in the middle of a symmetric body pushes
+against its own other half. The control is the identical genome with `osc_freq` at nought,
+which for a motor is a thrust of nought: same cells, same buoyancy, same springs, same upkeep,
+same shape, differing only in whether the motor is running.
+
+| `thrust` | travel | control | ratio | lived | **body lengths** |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 2.10 | 2.10 | 1.0 | 1,708 | 0.07 |
+| 5 | 6.48 | 2.10 | 3.1 | 1,708 | 0.22 |
+| 15 | 29.61 | 2.10 | 14.1 | 1,708 | 0.99 |
+| 40 | **88.84** | 2.10 | 42.2 | 1,708 | 2.96 |
+| 100 | **232.61** | 2.10 | 110.6 | 1,708 | **7.75** |
+| 250 | 46.67 | 2.10 | 22.2 | **273** | 1.56 |
+| 600 | 0.00 | 2.10 | 0.0 | **3** | 0.00 |
+
+**Prediction 1 holds.** Travel per lifetime goes from two-thirds of a body length to 7.75, and
+it was right to say the confidence in it deserved nothing — a steady external force against
+linear drag is arithmetic.
+
+⭐⭐ **What was not predicted, and is the better half of the result: the curve turns over.** At
+250 the body dies at tick 273 instead of 1,708, and at 600 it dies in three ticks. **Speed is
+bought with life**, because the running cost goes as the square of the force while the travel
+goes only as the force. That is not a number anybody chose — it is Stokes drag, and it arrived
+with the physics. It means `osc_freq` is under real selection rather than drifting free: there
+is a fastest a lineage can usefully go, it is a soft optimum rather than a cliff, and it sits
+inside the range mutation can reach.
+
+⚠️ **At thrust 40 a body covers 88 units in a lifetime**, which is the top of the 60–88 range to
+the nearest unrelated body measured in round 7. **The reach gap closes here.** That is a
+statement about geometry and not yet about selection.
+
+### ⚠️ Where the next question actually lies
+
+Reaching a stranger is not the same as it being worth reaching, and there is a valley hiding in
+the obvious reading. A devorocyte that can now travel is **two** mutations, not one — the mouth
+and the motor — and this project has ten rounds of evidence that two-mutation payoffs do not
+happen here.
+
+So the motor has to pay for something a single mutation can collect, and the candidate already
+in the world is **escaping your own family's grazing shadow**: the field runs 65% drawn down at
+equilibrium, `light.patchiness` is 0.5, and round 7 measured that 99.9% of a body's contacts are
+its own descendants — which means a body is surrounded by relatives eating the same tiles. A
+motor that carries a body out of that costs one mutation and pays immediately, and **predation
+becomes reachable afterwards, from a lineage that already has motors, which is the exaptation
+ladder rather than a valley.**
+
+⚠️ `light.patch_drift` is 0.0006 units a tick — about **one world unit in a whole lifetime**, so
+the patches are effectively fixed. A world whose patches drifted faster than a body could sit
+still would be a second, stronger reason to move. **That is a lever to measure and not to
+assume**, and it is the first candidate if the motor prices badly.

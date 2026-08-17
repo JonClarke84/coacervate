@@ -149,6 +149,13 @@ current = 0.0            # a sideways force running one way at the surface and t
                          # floor: `current × (1 - 2 × depth / height)`. ⚠️ Ships at nought, and
                          # `config/current.toml` is the same world at 600 — a **recorded
                          # negative**, see section 8
+thrust = 0.0             # ⭐⭐⭐ how hard ONE FLAGELLOCYTE pushes per unit of its gene's
+                         # `osc_freq`, out along the vector from its adhered partners to
+                         # itself. A body settles at `thrust / 313` units a tick DIVIDED BY
+                         # ITS CELL COUNT, since the thrust is one cell's and the drag is all
+                         # of them — so speed goes as the fraction of a body that is motor.
+                         # ⚠️ PROVISIONAL nought, and NOT a recorded negative like `current`
+                         # above it. See section 6 and section 8
 
 [behaviour]
 resting_amplitude = 0.8  # how hard a myocyte contracts with nothing telling it otherwise —
@@ -762,6 +769,34 @@ some circumstance and not others, or differentiation never evolves.
 | `Sclerocyte` | 3.4 | 0.002 | 0.90 | **+1.00** | High spring stiffness, high toughness. No metabolic function — pure structure and defence. |
 | `Sensocyte` | 2.0 | 0.006 | 0.00 | **−0.20** | Samples a local gradient (light, detritus, or foreign biomass — determined by its gene) and emits a scalar signal. |
 | `Gonocyte` | 3.2 | 0.005 | 0.10 | **+0.50** | Accumulates energy toward reproduction. An organism with no gonocyte cannot reproduce. |
+| `Flagellocyte` ⭐⭐⭐ | 2.4 | 0.006 | 0.30 | **0.00** | Pushes on the water at `physics.thrust × osc_freq × amplitude`, **outward along the vector from the mean of its adhered partners to itself**. Costs `movement_cost × force²  × drag × dt² ÷ (1 − drag)`. Thrust is *computed, not simulated* — there is no stroke. **The seventh kind, added after ten rounds established that six could not move a body far enough to reach anything.** |
+
+⭐⭐⭐ **The flagellocyte is the only kind not in the original six, and the reason is worth
+stating.** A myocyte is the *correct* model of muscle and it cannot solve this world's problem:
+swimming with one needs two myocytes, phased, on a body already bent — the scallop theorem
+forbids anything simpler — which is three mutations that pay nothing until all three are
+present. Measured travel with muscle alone is about two-thirds of a body's own length in a whole
+lifetime, against 23 world units to a neighbour and 60 to 88 to a stranger.
+
+**Biology never crossed that valley either, and that is the argument.** The bacterial flagellum's
+export apparatus is homologous to the Type III secretion system — machinery built to secrete,
+co-opted to swim. Twitching motility runs on pili that evolved for DNA uptake. The eukaryotic
+cilium is built on microtubule transport that already existed. Every motor in life is an
+exaptation of something that already worked; nothing ever paid for a half-built engine. A motor
+reachable in **one** mutation, from a cell kind whose frequency parameter is already tuned, is
+the biological case rather than a shortcut around it.
+
+Two properties keep it an *organ* and not a *strategy*, which is the line CLAUDE.md's decision
+log draws:
+
+- **Direction is geometry, not choice.** Thrust points out along the vector from a cell's adhered
+  partners to itself. So a symmetric body's motors **cancel**, and only a lineage that puts them
+  on one side goes anywhere; a cell with no adhesions has no direction, produces nothing and is
+  charged nothing. Where to put a motor stays the evolved question.
+- **Nothing it reads is outside the body.** `sensor_gain` scales the *magnitude*, so a body with
+  motors on two sides that drives them unequally turns — taxis assembled out of an organ and an
+  evolved number, rather than written down. Thrust that pointed up a gradient or at prey would
+  answer in advance the question this world exists to ask.
 
 Toughness was decided in Phase 4 and buoyancy in Phase 7; SPEC gave neither. Both live beside
 the radius and the upkeep because **a kind is a trade-off**, and a trade-off split across

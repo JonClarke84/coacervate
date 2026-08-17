@@ -2730,4 +2730,79 @@ mod tests {
             moved / drifted
         );
     }
+
+    /// ⭐⭐⭐ What a motor is worth, swept over what it costs to run — predictions 2 and 3 of
+    /// `docs/NEXT.md` §8.
+    ///
+    /// [`what_a_motor_buys_in_travel`] establishes that the organelle *moves a body*, and says
+    /// nothing whatever about whether moving is worth doing. This is the other half.
+    ///
+    /// # What was predicted, before any of it was run
+    ///
+    /// **2. Negative, around −1 to −3 %/generation.** The competition assay measures the filling
+    /// regime — two-celled bodies growing into empty water — and in empty water there is nowhere
+    /// worth going, so a motor is pure cost. ⚠️ A negative here is *not* a failure of the
+    /// organelle, and that was written down in advance precisely so it could not be read as one
+    /// afterwards.
+    ///
+    /// **3. Materially less negative, and plausibly positive, at a thrust that carries a body
+    /// somewhere.** This is the one I was least sure of and it is the interesting one: if the
+    /// coefficient is flat across the sweep, the price is simply wrong and the motor is a tax; if
+    /// it moves with thrust, then locomotion is worth what it can reach, which would be the first
+    /// time in this project that a specialisation's value depended on the state of the world
+    /// rather than on its own price.
+    #[test]
+    #[ignore = "a sweep of 42,000-tick assays; run deliberately with --ignored"]
+    fn what_a_motor_is_worth_where_there_is_somewhere_to_go() {
+        let mut readings = Vec::new();
+
+        for thrust in [0.0f64, 15.0, 40.0, 100.0, 250.0] {
+            let config = seeded_world(42, |raw| raw.physics.thrust = thrust);
+            let plain = founder_genome(&config.limits);
+            let motorised = founder_with_a_third_cell(&config.limits, CellKind::Flagellocyte);
+
+            let outcome = assay(&config, [&plain, &motorised], WINDOW);
+            report(
+                &format!("a third flagellocyte at thrust {thrust}"),
+                &outcome,
+            );
+            readings.push((thrust, outcome.per_generation() * 100.0));
+        }
+
+        println!("\nthrust | %/gen");
+        for (thrust, per_gen) in &readings {
+            println!("{thrust:6.0} | {per_gen:+.3}");
+        }
+
+        // ⚠️ The control. At no thrust at all a flagellocyte is a cell with a dearer upkeep than
+        // the photocyte funding it and no function whatever, so it must price clearly negative -
+        // and if it does not, then the arms are not one mutation apart and nothing below this
+        // line means anything.
+        let (_, inert) = readings[0];
+        assert!(
+            inert < -0.5,
+            "a motor that cannot push priced at {inert:+.3} %/generation. A cell that costs \
+             0.006 a tick and does nothing has to be a loss, so either the assay is not \
+             resolving or the two arms differ in something other than the third cell's kind"
+        );
+
+        // ⭐⭐ Prediction 3. Whether it moves at all with thrust is the whole question; the
+        // direction is asserted and the size is left to the printout, because a threshold picked
+        // now would be a threshold picked to be passed.
+        let best = readings
+            .iter()
+            .map(|&(_, per_gen)| per_gen)
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            best > inert + 0.22,
+            "the best a motor managed anywhere in the sweep was {best:+.3} %/generation against \
+             {inert:+.3} for one that cannot push - a difference of {:.3}, which is inside the \
+             competition assay's ±0.11 %/generation noise floor doubled. **A coefficient that \
+             does not move with thrust means the motor is a tax and not a trade**: it would say \
+             a body gains nothing from the travel measured in what_a_motor_buys_in_travel, and \
+             the next round is about what there is in this world worth reaching rather than \
+             about how fast a body can reach it",
+            best - inert
+        );
+    }
 }
