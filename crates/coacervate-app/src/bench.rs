@@ -326,6 +326,7 @@ pub fn overrides(spec: &str) -> Result<impl Fn(&mut RawConfig) + Sync + use<>, S
                 "behaviour.stroke" => take(&mut raw.behaviour.stroke, *value),
                 "metabolism.upkeep_scale" => take(&mut raw.metabolism.upkeep_scale, *value),
                 "metabolism.tissue_share" => take(&mut raw.metabolism.tissue_share, *value),
+                "metabolism.motor_upkeep" => take(&mut raw.metabolism.motor_upkeep, *value),
                 "metabolism.scaling_exponent" => take(&mut raw.metabolism.scaling_exponent, *value),
                 "metabolism.movement_cost" => take(&mut raw.metabolism.movement_cost, *value),
                 "metabolism.reproduction_threshold" => {

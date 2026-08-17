@@ -120,6 +120,10 @@ stroke = 1.0             # property of how much water there is.
 # birth: unspendable, unreachable by upkeep, released to detritus when it dies and drainable
 # by a mouth. Ships at nought. See config.rs's MetabolismConfig::tissue_share.
 tissue_share = 0.0
+# ⭐⭐ `motor_upkeep` is what a flagellocyte costs per tick, overriding SPEC section 6's table
+# for that one kind. It is the only lever ever measured to move motor retention. Ships at the
+# table's own 0.006. See config.rs's MetabolismConfig::motor_upkeep.
+motor_upkeep = 0.006
 upkeep_scale = 1.0
 scaling_exponent = 1.0
 gene_cost = 0.0001

@@ -110,6 +110,7 @@ pub struct RawBehaviour {
 #[serde(deny_unknown_fields)]
 pub struct RawMetabolism {
     pub tissue_share: f64,
+    pub motor_upkeep: f64,
     pub upkeep_scale: f64,
     pub scaling_exponent: f64,
     pub gene_cost: f64,
@@ -226,6 +227,8 @@ pub fn spec_defaults() -> RawConfig {
         metabolism: RawMetabolism {
             upkeep_scale: 1.0,
             tissue_share: 0.0,
+            // The table.s own figure for a flagellocyte, so the key ships inert.
+            motor_upkeep: 0.006,
             scaling_exponent: 1.0,
             gene_cost: 0.0001,
             movement_cost: 0.0001,
@@ -1487,6 +1490,28 @@ pub struct MetabolismConfig {
     /// was measured on. Bounded at one: a body cannot lock away more than it cost to build.
     pub tissue_share: f32,
 
+    /// ⭐⭐⭐ What a flagellocyte costs per tick to own, overriding SPEC section 6.s table for that
+    /// one kind.
+    ///
+    /// **The one per-kind price this project has a reason to sweep**, because it is the only
+    /// lever that has ever moved motor retention. Measured with the bench, seeding every founder
+    /// with a motor and asking what share survives sixty thousand ticks:
+    ///
+    /// - a motor that costs nothing to RUN is still shed, so the running charge is not what kills
+    ///   it;
+    /// - halving every upkeep in the world does not help either, because it halves the
+    ///   photocyte.s too and the relative disadvantage is untouched;
+    /// - dropping this from 0.006 to 0.003 raised retention **sixfold**.
+    ///
+    /// ⚠️ **Below the photocyte.s 0.004 is where `CellKind::upkeep`.s own note says neutral bloat
+    /// begins** -- a cell cheaper to own than the cell funding it accumulates for being cheap
+    /// rather than for being useful. That argument was measured on the MYOCYTE, whose case does
+    /// not obviously transfer: an idle muscle is free and an owned motor is run. Whether it
+    /// transfers is a measurement nobody has taken.
+    ///
+    /// Ships at 0.006, which is the table.s own figure, so the key is inert.
+    pub motor_upkeep: f32,
+
     /// The power a body's own cell count raises its summed upkeep to: SPEC section 10's
     /// `(sum of its cells' upkeeps) × n^(scaling_exponent − 1)`.
     ///
@@ -1811,6 +1836,10 @@ impl RawConfig {
                 // costs anything to be alive.
                 upkeep_scale: positive("metabolism.upkeep_scale", self.metabolism.upkeep_scale)?,
                 tissue_share: fraction("metabolism.tissue_share", self.metabolism.tissue_share)?,
+                motor_upkeep: non_negative(
+                    "metabolism.motor_upkeep",
+                    self.metabolism.motor_upkeep,
+                )?,
                 // ⭐ The power a body's summed upkeep is raised to as it grows. One is linear
                 // and is what ships, so the multiplier is exactly 1.0 at every size and the
                 // default world is the world every figure in this project was measured on; a
@@ -1945,6 +1974,7 @@ mod tests {
             ("behaviour.stroke", raw.behaviour.stroke),
             ("metabolism.upkeep_scale", raw.metabolism.upkeep_scale),
             ("metabolism.tissue_share", raw.metabolism.tissue_share),
+            ("metabolism.motor_upkeep", raw.metabolism.motor_upkeep),
             (
                 "metabolism.scaling_exponent",
                 raw.metabolism.scaling_exponent,
@@ -1991,8 +2021,8 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            37,
-            "SPEC section 3 has thirty-seven decimal settings; this list has {}, so one has \
+            38,
+            "SPEC section 3 has thirty-eight decimal settings; this list has {}, so one has \
              been added or removed without being checked here",
             fields.len()
         );

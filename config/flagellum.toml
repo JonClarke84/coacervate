@@ -218,6 +218,10 @@ stroke = 1.0             # how much of its rest length a myocyte at full amplitu
 # birth: unspendable, unreachable by upkeep, released to detritus when it dies and drainable
 # by a mouth. Ships at nought. See config.rs's MetabolismConfig::tissue_share.
 tissue_share = 0.0
+# ⭐⭐ `motor_upkeep` is what a flagellocyte costs per tick, overriding SPEC section 6's table
+# for that one kind. It is the only lever ever measured to move motor retention. Ships at the
+# table's own 0.006. See config.rs's MetabolismConfig::motor_upkeep.
+motor_upkeep = 0.006
 upkeep_scale = 1.0       # global multiplier on all cell upkeep ("temperature")
 scaling_exponent = 1.0   # the power a body's *summed* upkeep is raised to as it grows: a body of
                          # n cells pays `(sum of its cells' upkeeps) × n^(exponent - 1)`. Real

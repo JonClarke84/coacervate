@@ -72,7 +72,7 @@
 //! stops matching its own recording.
 
 use crate::behaviour::Detritus;
-use crate::cell::Cell;
+use crate::cell::{Cell, CellKind};
 use crate::config::{Config, LimitsConfig};
 use crate::grid::Grid;
 use crate::ledger::Ledger;
@@ -252,6 +252,10 @@ pub struct Metabolism {
     /// multiplied by.
     upkeep_scale: f64,
 
+    /// SPEC.s `metabolism.motor_upkeep`: what a flagellocyte costs per tick, overriding the
+    /// table for that one kind. See [`crate::config::MetabolismConfig::motor_upkeep`].
+    motor_upkeep: f64,
+
     /// SPEC section 3's `metabolism.gene_cost`: what one gene costs its organism per tick.
     /// See [`crate::config::MetabolismConfig::gene_cost`] for why it exists, which is not the
     /// reason it looks like.
@@ -291,6 +295,7 @@ impl Metabolism {
     pub fn new(config: &Config) -> Self {
         Self {
             upkeep_scale: f64::from(config.metabolism.upkeep_scale),
+            motor_upkeep: f64::from(config.metabolism.motor_upkeep),
             gene_cost: f64::from(config.metabolism.gene_cost),
             scaling: scaling_table(config),
             limits: config.limits.clone(),
@@ -311,6 +316,7 @@ impl Metabolism {
     /// [`crate::world::World::retune`].
     pub fn retune(&mut self, config: &Config) {
         self.upkeep_scale = f64::from(config.metabolism.upkeep_scale);
+        self.motor_upkeep = f64::from(config.metabolism.motor_upkeep);
         self.gene_cost = f64::from(config.metabolism.gene_cost);
         // ⭐ Rebuilt rather than adjusted, because the table *is* the setting: sixty-four
         // numbers worked out from one, and there is no version of them that is half retuned.
@@ -469,7 +475,22 @@ impl Metabolism {
         // SPEC section 6's table meaning what it says: a sclerocyte still costs a fifth of what
         // a devorocyte costs inside the same body, and only the total is bent. See
         // [`Self::scaling`] and [`crate::config::MetabolismConfig::scaling_exponent`].
-        let tissue: f64 = body.iter().map(|cell| f64::from(cell.kind.upkeep())).sum();
+        // ⭐⭐ `metabolism.motor_upkeep` overrides the table for a flagellocyte alone, and it is
+        // the one per-kind price this project has a reason to sweep. Measured: a motor that runs
+        // FREE is still shed, so the running charge is not what kills it -- and dropping the
+        // standing charge from 0.006 to 0.003 raised retention sixfold. That is the lever, and
+        // before this it could only be pulled by editing a constant and rebuilding, which made
+        // two sweeps quietly incomparable.
+        let tissue: f64 = body
+            .iter()
+            .map(|cell| {
+                if cell.kind == CellKind::Flagellocyte {
+                    self.motor_upkeep
+                } else {
+                    f64::from(cell.kind.upkeep())
+                }
+            })
+            .sum();
         let bent = tissue * self.scaling[body.len()];
 
         let genes = f64::from(
