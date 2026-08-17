@@ -2895,7 +2895,11 @@ mod tests {
             // `1 / (uptake + 4 × diffusion)` ticks and never becomes anybody's income.
             let tile_width = f64::from(width) / f64::from(u32::try_from(cols).expect("columns"));
             let screening = tile_width * (diffusion / uptake).sqrt();
-            let radii = [0usize, usize::try_from(((screening / tile_width).round()).max(0.0) as u64).expect("a small radius")];
+            let radii = [
+                0usize,
+                usize::try_from(((screening / tile_width).round()).max(0.0) as u64)
+                    .expect("a small radius"),
+            ];
             println!(
                 "screening length {screening:.2} world units ({:.2} tiles); crater relaxes in \
                  {:.2} ticks",
@@ -2904,45 +2908,47 @@ mod tests {
             );
 
             for radius in radii {
-            println!(
-                "\n--- field read over a box of radius {radius} tiles ({:.0} world units) ---",
-                f64::from(u32::try_from(radius).expect("radius")) * 2.0 * tile_width + tile_width
-            );
-            println!(
-                "centres              | reach | uptake*(max-here) | uptake*(median-here) | \
+                println!(
+                    "\n--- field read over a box of radius {radius} tiles ({:.0} world units) ---",
+                    f64::from(u32::try_from(radius).expect("radius")) * 2.0 * tile_width
+                        + tile_width
+                );
+                println!(
+                    "centres              | reach | uptake*(max-here) | uptake*(median-here) | \
                  uptake*(max-median) | here   | max    | median | clamped"
-            );
-            for (label, centres) in [
-                ("bodies", &cells),
-                ("same depth, random x", &random_at_depth),
-                ("uniformly random", &random_anywhere),
-            ] {
-                for reach in REACHES {
-                    let (mut a_here, mut a_max, mut a_med, mut a_clamp, mut a_sin) =
-                        (0.0, 0.0, 0.0, 0.0, 0.0);
-                    for at in centres.iter() {
-                        let (seen, here, clamped, best) =
-                            ring(grid, *at, reach, width, height, radius);
-                        let (max, median, _mean) = read(&seen);
-                        a_here += here;
-                        a_max += max;
-                        a_med += median;
-                        a_clamp += f64::from(u32::try_from(clamped).expect("sixteen"));
-                        let turn = f32::from(u16::try_from(best).expect("sixteen fits in a u16"));
-                        a_sin += f64::from((turn * std::f32::consts::TAU / 16.0).sin());
-                    }
-                    let (here, max, med) = (a_here / n, a_max / n, a_med / n);
-                    println!(
-                        "{label:20} | {reach:5.1} | {:17.5} | {:20.5} | {:19.5} | {here:6.4} | \
+                );
+                for (label, centres) in [
+                    ("bodies", &cells),
+                    ("same depth, random x", &random_at_depth),
+                    ("uniformly random", &random_anywhere),
+                ] {
+                    for reach in REACHES {
+                        let (mut a_here, mut a_max, mut a_med, mut a_clamp, mut a_sin) =
+                            (0.0, 0.0, 0.0, 0.0, 0.0);
+                        for at in centres.iter() {
+                            let (seen, here, clamped, best) =
+                                ring(grid, *at, reach, width, height, radius);
+                            let (max, median, _mean) = read(&seen);
+                            a_here += here;
+                            a_max += max;
+                            a_med += median;
+                            a_clamp += f64::from(u32::try_from(clamped).expect("sixteen"));
+                            let turn =
+                                f32::from(u16::try_from(best).expect("sixteen fits in a u16"));
+                            a_sin += f64::from((turn * std::f32::consts::TAU / 16.0).sin());
+                        }
+                        let (here, max, med) = (a_here / n, a_max / n, a_med / n);
+                        println!(
+                            "{label:20} | {reach:5.1} | {:17.5} | {:20.5} | {:19.5} | {here:6.4} | \
                          {max:6.4} | {med:6.4} | {:5.2}  (mean sin of the winning bearing {:+.3})",
-                        uptake * (max - here),
-                        uptake * (med - here),
-                        uptake * (max - med),
-                        a_clamp / n,
-                        a_sin / n
-                    );
+                            uptake * (max - here),
+                            uptake * (med - here),
+                            uptake * (max - med),
+                            a_clamp / n,
+                            a_sin / n
+                        );
+                    }
                 }
-            }
             }
 
             // ---- how much of the ring is even distinguishable from `here` ----
@@ -3046,6 +3052,89 @@ mod tests {
             "with `tissue_share` at one the world's organisms are holding nothing in tissue, so \
              the setting is one a person can turn and a world that cannot feel it. That is \
              exactly what `physics.thrust` did for three experiments before an audit found it"
+        );
+    }
+
+    /// ⭐⭐⭐ What a moving light costs, and what it buys. **The round Result 13 forces.**
+    ///
+    /// Result 13 closed off every lever on a light that renews in place: a resource consumed by
+    /// organisms that settle where they are born reaches an **ideal free distribution**, in which
+    /// spatial variance in *value* is competed away however much variance there is in *stock*.
+    /// Measured on two instruments. The only escape is a resource that is **not in equilibrium**,
+    /// and the cheapest of those is one whose good places move faster than a population can settle
+    /// onto them.
+    ///
+    /// `light.patch_drift` is exactly that and it has been shipped at **0.0006** — about one world
+    /// unit in a lifetime, against a body that travels 88. The two were never in the same regime.
+    /// Its ceiling of 0.005 was derived for a **full** tile shedding energy as its ceiling slides
+    /// out from under it, and this world runs 65% drawn down at the shipped settings.
+    ///
+    /// # The two halves, and the second is the one that has never been asked
+    ///
+    /// **What it costs:** the share of the world's light that is spilled rather than eaten.
+    /// `Ledger::overflow` credits `dissipated` with every unit shed by a tile too full to hold
+    /// what it was offered, so `spilled ÷ delivered` is the tax the drift levies.
+    ///
+    /// **What it buys:** whether a moving light keeps the field out of equilibrium — measured as
+    /// the *standing variation* in what tiles hold. A field at an ideal free distribution is flat
+    /// in value; a field being chased is not.
+    #[test]
+    #[ignore = "a settled world per row; run deliberately with --ignored"]
+    fn what_a_moving_light_costs_and_buys() {
+        println!("drift    | units/life | alive | cells | spilled share | tile mean | tile spread");
+
+        for drift in [0.0006f64, 0.005, 0.02, 0.05, 0.2] {
+            let mut world = World::new(&config(|raw| raw.light.patch_drift = drift));
+            genesis(&mut world, 8);
+
+            let before = world.ledger().dissipated();
+            for _ in 0..60_000 {
+                world.tick();
+            }
+
+            let ledger = world.ledger();
+            // ⚠️ `dissipated` is spending as well as spillage, so the share below is an
+            // over-estimate of the drift's tax and is quoted as one. What makes it usable is the
+            // control row: the shipped drift spills essentially nothing, so the RISE across the
+            // sweep is the drift's own doing.
+            let lost = ledger.dissipated() - before;
+            let delivered = ledger.influx_total();
+
+            let tiles = world.grid().tiles();
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a tile count of tens of thousands is exact in an f64"
+            )]
+            let n = tiles.len() as f64;
+            let mean = tiles.iter().map(|t| f64::from(*t)).sum::<f64>() / n;
+            let spread = (tiles
+                .iter()
+                .map(|t| (f64::from(*t) - mean).powi(2))
+                .sum::<f64>()
+                / n)
+                .sqrt();
+
+            println!(
+                "{drift:8.4} | {:10.1} | {:5} | {:5} | {:13.4} | {mean:9.4} | {spread:11.4}",
+                drift * 1739.0,
+                world.organisms().iter().flatten().count(),
+                world.living_cells().len(),
+                lost / delivered
+            );
+        }
+
+        // ⚠️ The instrument check. The shipped drift must leave a world that still holds life; if
+        // the control row is dead, the rows below it are measuring extinction rather than drift.
+        let mut world = World::new(&config(|raw| raw.light.patch_drift = 0.0006));
+        genesis(&mut world, 8);
+        for _ in 0..60_000 {
+            world.tick();
+        }
+        assert!(
+            world.organisms().iter().flatten().count() > 500,
+            "the shipped drift left {} organisms alive after 60,000 ticks and the measured \
+             figure is about 2,100, so this sweep's control is not a living world",
+            world.organisms().iter().flatten().count()
         );
     }
 }

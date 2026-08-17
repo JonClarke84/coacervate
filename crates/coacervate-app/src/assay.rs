@@ -4834,4 +4834,93 @@ mod tests {
             best - shipped
         );
     }
+
+    /// ⭐⭐⭐ **Does a light whose good places MOVE break the ideal free distribution?**
+    ///
+    /// Result 13's theorem: a resource that renews in place, eaten by organisms that settle where
+    /// they are born, equalises — every occupied position ends up worth the same, however much
+    /// variance there is in what tiles hold. Twelve rounds of tuning a static field all returned
+    /// nothing, and that is why.
+    ///
+    /// The escape is a resource that is **not in equilibrium**, and `light.patch_drift` is the
+    /// cheapest one available: it slides the whole field of ceilings sideways, so the good water
+    /// is somewhere else by the time a population has settled onto it.
+    ///
+    /// ⚠️ **It has shipped at 0.0006 — one world unit in a lifetime — against a body that travels
+    /// 88.** They were never in the same regime. Its ceiling of 0.005 was derived for a *full*
+    /// tile shedding energy as its ceiling slides out from under it, and this world runs 65% drawn
+    /// down; `what_a_moving_light_costs_and_buys` measures the real tax at about **0.4% of
+    /// throughput at a drift of 0.05**, which moves the light 87 units in a lifetime and leaves
+    /// the population within 2% of the shipped world's.
+    ///
+    /// So the drift was affordable all along and nobody had run it. This asks the calibrated
+    /// instrument whether it buys anything: arm B's bodies placed in the best water within 88
+    /// units, three seeds, against a same-seed control.
+    #[test]
+    #[ignore = "twelve 42,000-tick competition runs; run deliberately with --ignored"]
+    fn does_a_moving_light_break_the_ideal_free_distribution() {
+        const REACH: f32 = 88.0;
+        const SEEDS: [u64; 3] = [42, 43, 44];
+
+        println!("drift    | units/life | ceiling %/gen (mean of 3) | the three seeds");
+
+        let mut readings = Vec::new();
+        for drift in [0.0006f64, 0.05, 0.2] {
+            let mut each = Vec::new();
+            for seed in SEEDS {
+                let settings = seeded_world(seed, |raw| raw.light.patch_drift = drift);
+                let plain = founder_genome(&settings.limits);
+
+                let control = package_assay(&settings, [&plain, &plain], WINDOW);
+                let arrived =
+                    placed_assay(&settings, [&plain, &plain], WINDOW, |side, world, at| {
+                        if side == 0 {
+                            at
+                        } else {
+                            best_water_near(world, at, REACH)
+                        }
+                    });
+                each.push((arrived.per_generation() - control.per_generation()) * 100.0);
+            }
+
+            let mean = each.iter().sum::<f64>() / 3.0;
+            let shown: Vec<String> = each.iter().map(|v| format!("{v:+.2}")).collect();
+            println!(
+                "{drift:8.4} | {:10.1} | {mean:+25.3} | {}",
+                drift * 1739.0,
+                shown.join(", ")
+            );
+            readings.push((drift, mean, each));
+        }
+
+        let (_, shipped, _) = &readings[0];
+        let (best_drift, best, _) = readings
+            .iter()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).expect("coefficients are finite"))
+            .expect("the sweep has rows");
+
+        println!(
+            "\n⭐ A still light gives a ceiling of {shipped:+.3} %/generation. A drift of \
+             {best_drift} gives {best:+.3}. A motor costs about 7 to own."
+        );
+
+        // ⚠️ No direction asserted. Every lever on a static field has come back null and this is
+        // the first one that moves the field in TIME; it could honestly go either way, and this
+        // project has been burned by asserting a hope. What is held is that the seeds agree well
+        // enough for the mean to be read at all.
+        let spread = |each: &[f64]| {
+            each.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                - each.iter().copied().fold(f64::INFINITY, f64::min)
+        };
+        let worst = readings
+            .iter()
+            .map(|(_, _, each)| spread(each))
+            .fold(0.0f64, f64::max);
+        assert!(
+            worst < 8.0,
+            "the widest between-seed spread in the sweep is {worst:.2} %/generation, which is too \
+             wide to read a trend through. The competition assay's floor is ±0.11 and these arms \
+             are the same genome in the same water"
+        );
+    }
 }

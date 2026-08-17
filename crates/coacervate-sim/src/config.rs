@@ -703,7 +703,29 @@ pub const DIFFUSION_STABILITY_LIMIT: f32 = 0.25;
 ///
 /// Nought is allowed and is the world as it was before Phase 7's Group G: a fixed field of
 /// blotches, worked out once from the seed. It is the control for every claim about drift.
-pub const PATCH_DRIFT_CEILING: f32 = 0.005;
+/// ⚠️⚠️ **RAISED from 0.005 to 0.5, and the derivation above is why it could be.** Every line
+/// of it is about a **full** tile: *"a full tile whose ceiling has moved down under it sheds the
+/// difference"*. This world is not full. It runs about 65% drawn down at the shipped settings and
+/// 99% drawn down at `light.uptake = 0.9`, and a tile far below its ceiling sheds nothing at all
+/// when that ceiling moves. The bound was the worst case for water nobody was eating.
+///
+/// The doc above says as much in its own last paragraph -- *"a bound on the shipped light rather
+/// than on any light... a world with `light.influx` turned up is a world that could follow a
+/// faster drift"*. What it did not anticipate is that a world with anything **living** in it is
+/// also such a world.
+///
+/// ⭐ It is raised because Result 13 closed off every other lever on the light. A resource that
+/// renews in place, eaten by things that settle where they are born, reaches an ideal free
+/// distribution in which spatial variance in VALUE is competed away however much variance there
+/// is in STOCK -- measured, on two instruments. **The only escape is a resource that is not in
+/// equilibrium**, and the cheapest of those is one whose good places MOVE faster than a
+/// population can settle onto them. The shipped 0.0006 moves a patch about one world unit in a
+/// lifetime; a body travels 88. They were never in the same regime.
+///
+/// ⚠️ **The loss is now something to measure rather than to bound**, and
+/// `run.rs`.s `what_a_moving_light_costs_and_buys` is where it is measured. A drift that spills
+/// more than it delivers is still refused -- by the evidence rather than by this constant.
+pub const PATCH_DRIFT_CEILING: f32 = 0.5;
 
 /// The shortest season the water can follow, in ticks, and the transfer function that decides
 /// it.
