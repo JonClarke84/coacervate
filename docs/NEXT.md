@@ -1069,3 +1069,83 @@ like a discovery and the thing behind it was not what the name said. What caught
 asking a question with **no coefficient in it at all**: *how far does the body actually move?*
 
 ⚠️ **A number is a claim about a mechanism, and the mechanism has to be measured separately.**
+
+---
+
+## ⚠️⚠️⚠️ SECOND RETRACTION, and this one takes three whole experiments with it
+
+**Found by an adversarial audit of the round, not by re-measurement.** Four agents read the code
+against the claims; each finding was put to an independent refuter; nineteen of thirty-two
+survived. This was the first.
+
+### `founder_with_a_third_cell` built a motor that was switched off
+
+```rust
+osc_freq: 0.0,      // on the gene that builds the third cell
+```
+
+`behaviour.rs`'s `propel` computes `force = thrust × osc_freq × amplitude` and returns early on
+`force <= 0.0`. So the cell was never charged, `cell.thrust` stayed at nought, and `physics.rs`
+never applied a force to it. **A third flagellocyte was a sclerocyte with a dearer upkeep.**
+
+⚠️ **The comment in `swimmer` names this exact failure** — *"a builder that only knew about muscle
+would hand every motor a frequency of nought and measure a body that was never switched on"* —
+and `swimmer` was fixed at the start of the round while this builder was never checked.
+
+### What it invalidates
+
+| experiment | what it actually measured |
+| --- | --- |
+| `what_a_motor_costs_in_empty_water` | a sweep of `physics.thrust` the arm could not feel |
+| `what_a_motor_is_worth_where_there_is_somewhere_to_go` | nine 92,000-tick invasions of an inert cell |
+| `does_a_motor_pay_for_itself_once_the_water_stops_mixing` | the motor arm of the diffusion sweep |
+
+**Results 2's follow-on, 3 and 5 above are all affected**, and the "flat coefficient across a
+hundredfold change in thrust" that Result 2 recorded as a *finding* was an artefact of the motor
+being off.
+
+### What survives untouched
+
+Everything built by `swimmer`, which does drive a motor: **travel, gross income, the steering
+sweep, the throttling measurement, the posture-versus-travel diagnostic, the rung test, and the
+body-size sweep.** And `how_much_of_what_a_body_eats_is_another_body`, which builds no genomes at
+all.
+
+### The corrected reading, in empty water
+
+`what_a_motor_costs_in_empty_water`, with a motor that runs:
+
+| `thrust` | %/generation |
+| --- | --- |
+| 0 | **−2.458** — the pure upkeep of a cell dearer than the photocyte funding it |
+| 15 | −2.672 |
+| 40 | −4.285 |
+| 100 | −7.612 |
+| 250 | **extinct** |
+
+**Monotone, and in the direction prediction 2 gave in advance.** Empty water has nowhere worth
+going, so thrust is pure cost and more of it costs more. The thrust-0 row is now the control it
+was always meant to be.
+
+### ⚠️ It re-baselines the myocyte too, and the direction differs by kind
+
+`osc_freq = 0` on a myocyte is a muscle that never contracts, so **every third-myocyte coefficient
+in this project's history was taken on a muscle at rest.** The two kinds move opposite ways under
+the fix, which is worth stating plainly:
+
+- An **inert myocyte** was already a loss, and a working one *additionally* pays `movement_cost`
+  on the work it does. That conclusion can only get firmer.
+- An **inert flagellocyte** is a loss for the same reason, and a working one **earns food**. That
+  conclusion was never tested at all.
+
+### ⭐ Four errors in one round, and what caught each
+
+| error | caught by |
+| --- | --- |
+| a single seed read as a result | replication |
+| `earns` measuring the whole field's weather | the number being absurd on its face |
+| "steering" being the motor idling | asking a question with no coefficient in it — *how far does it move?* |
+| **the motor never switched on** | **an adversarial audit reading the code against the claim** |
+
+**Nothing but the last would have found the last.** Every instrument agreed with every other,
+because they were all wired to the same dead cell.

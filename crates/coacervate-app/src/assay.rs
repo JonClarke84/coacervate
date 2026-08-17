@@ -812,6 +812,30 @@ fn fields_differing(one: &Gene, other: &Gene) -> usize {
 /// development budded it.
 fn founder_with_a_third_cell(limits: &LimitsConfig, kind: CellKind) -> Genome {
     let mut genes = founder_genome(limits).genes().to_vec();
+
+    // ⭐⭐⭐ **The frequency the third cell is driven at, and it used to be nought.**
+    //
+    // ⚠️⚠️ A myocyte and a flagellocyte are both driven by `osc_freq`, and a gene carrying nought
+    // gives a muscle that never contracts and a motor that never pushes. `behaviour.rs`'s
+    // `propel` computes `force = thrust × osc_freq × amplitude` and returns early on `force <=
+    // 0.0`, so such a flagellocyte is never charged and `physics.rs` never applies a force to it:
+    // **it is a sclerocyte with a dearer upkeep.**
+    //
+    // Every "third flagellocyte" coefficient taken before this line existed was therefore a price
+    // for an organelle that was switched off, and the three tests that took them said so about a
+    // sweep of `physics.thrust` the arm could not feel. `swimmer`'s own comment names this exact
+    // failure — *"a builder that only knew about muscle would hand every motor a frequency of
+    // nought and measure a body that was never switched on"* — and `swimmer` was fixed while this
+    // builder was not.
+    //
+    // ⚠️ It moves the **myocyte** arm too, and that is a re-baseline rather than a bug fix: every
+    // third-myocyte coefficient in this project was also taken on a muscle at rest. The direction
+    // differs by kind and is worth stating. An inert myocyte was already a loss, and a working one
+    // additionally pays `movement_cost` on the work it does, so the conclusion there can only get
+    // firmer. An inert flagellocyte is a loss for the same reason and a working one **earns
+    // food**, so that conclusion was never tested at all.
+    let driven = matches!(kind, CellKind::Myocyte | CellKind::Flagellocyte);
+
     genes.push(Gene {
         trigger_state: State::ZERO,
         min_step: 1,
@@ -825,8 +849,14 @@ fn founder_with_a_third_cell(limits: &LimitsConfig, kind: CellKind) -> Genome {
         stiffness: 10.0,
         new_kind: CellKind::Photocyte,
         new_state: State::ZERO,
-        osc_freq: 0.0,
+        // `BEAT` is the frequency every hand-built driven body in this module uses, so a third
+        // myocyte and a third flagellocyte are worked exactly as hard here as they are there.
+        osc_freq: if driven { BEAT } else { 0.0 },
         osc_phase: 0.0,
+        // ⚠️ Left at nought deliberately. A gain is a *wiring* to a sensocyte, this body has no
+        // sensocyte to be wired to, and `is_a_steered_motor_steering_or_switching_itself_off`
+        // measures what a negative gain actually does: it throttles the motor towards a stop. A
+        // gain here would quietly re-price the cell as a slower one.
         sensor_gain: 0.0,
         sensor_target: coacervate_sim::genome::SensorTarget::Light,
     });
@@ -2934,29 +2964,46 @@ mod tests {
              resolving or the two arms differ in something other than the third cell's kind"
         );
 
-        // ⭐⭐ **The measured result, asserted as the flat thing it is.** The spread across a
-        // hundredfold change in travel is 0.71 %/generation and it is not monotonic - it is
-        // noise on one seed, and the honest assertion is that nothing here depends on thrust.
+        // ⭐⭐⭐ **The measured result, and it is monotone. This assertion replaces two earlier
+        // ones, both of which were wrong, and the sequence is the point.**
         //
-        // ⚠️ This replaces `best > inert + 0.22`, which passed on a margin of 0.237 at the one
-        // thrust that kills a body outright. See this test's own documentation: an assertion
-        // that passes on noise is worse than none, because it turns "not measured" into
-        // "measured and fine".
+        // The first asserted `best > inert + 0.22` and PASSED on a margin of 0.237, at the one
+        // thrust that kills a body outright — an assertion carried by noise, which turns "not
+        // measured" into "measured and fine".
+        //
+        // The second asserted the *opposite*: that the coefficient was flat across the sweep
+        // (spread 0.71 over a hundredfold change in thrust), and recorded that as the finding.
+        // ⚠️⚠️ **It was flat because the motor was switched off.**
+        // `founder_with_a_third_cell` gave the third cell's gene an `osc_freq` of nought, so
+        // `behaviour.rs`'s `propel` returned early on `force <= 0.0` and the arm could not feel
+        // `physics.thrust` at any value. See that builder's own comment.
+        //
+        // With a motor that runs:
+        //
+        //   thrust | %/gen
+        //        0 | −2.458   <- the pure upkeep of a cell dearer than the photocyte funding it
+        //       15 | −2.672
+        //       40 | −4.285
+        //      100 | −7.612
+        //      250 | extinct
+        //
+        // **Monotone, and it goes the way prediction 2 of docs/NEXT.md §8 said it would.** In
+        // empty water there is nowhere worth going, so thrust is pure cost and more of it costs
+        // more. The thrust-0 row is the control it was always meant to be: what a dearer inert
+        // cell costs, with the running charge removed.
         let best = readings
             .iter()
             .map(|&(_, per_gen)| per_gen)
             .fold(f64::NEG_INFINITY, f64::max);
-        let worst = readings
-            .iter()
-            .map(|&(_, per_gen)| per_gen)
-            .fold(f64::INFINITY, f64::min);
+        let hardest = readings[readings.len() - 1].1;
         assert!(
-            best - worst < 1.5,
-            "the coefficient ranged over {:.3} %/generation across the thrust sweep, and the \
-             measured spread is 0.71. **If this has become a real trend the finding is \
-             overturned and that is worth knowing**: it would mean a motor pays for itself in \
-             empty water, which is the one regime where there is nothing to go and get",
-            best - worst
+            hardest < inert,
+            "the hardest-running motor in the sweep priced {hardest:+.3} %/generation against \
+             {inert:+.3} for one that cannot push at all. **Running a motor in empty water has \
+             to cost more than not running one** — there is nothing to reach, so every unit of \
+             thrust is spent for nothing. If that has stopped being true, either the motor has \
+             found something to earn in an empty ocean or it has been switched off again, and \
+             the second is what happened last time"
         );
         assert!(
             best < 0.0,
