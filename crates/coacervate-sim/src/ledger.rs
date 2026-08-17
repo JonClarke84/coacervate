@@ -141,6 +141,17 @@ pub struct Ledger {
     ///
     /// Nothing in a tick reads it. See `chronicle.rs`.
     predated: f64,
+
+    /// Everything devorocytes have taken out of DETRITUS since the run began.
+    ///
+    /// ⭐ Counted for the same reason `predated` is, and it should have been counted at the same
+    /// time. Scavenging is the OTHER way a body can eat something that was once alive, and this
+    /// project has spent twelve rounds asking whether predation can pay without ever asking what
+    /// share of the world.s income already arrives second-hand through the dead. A `predate` that
+    /// moves nothing between accounts needed a counter to be visible at all; `scavenge` does move
+    /// energy, from `Detritus` to `Biomass`, but nothing anywhere records how much has gone that
+    /// way rather than straight from the light.
+    scavenged: f64,
     /// What the world held when the books were opened, which never changes afterwards.
     ///
     /// Without it there is nothing to measure against. The invariant is not "the total is
@@ -165,6 +176,7 @@ impl Ledger {
             dissipated: 0.0,
             influx_total: 0.0,
             predated: 0.0,
+            scavenged: 0.0,
             initial_total: initial_field,
         }
     }
@@ -210,6 +222,12 @@ impl Ledger {
         self.predated
     }
 
+    /// Everything devorocytes have taken out of detritus since the run began. See [`Ledger::scavenged`].
+    #[must_use]
+    pub fn scavenge_total(&self) -> f64 {
+        self.scavenged
+    }
+
     /// A photocyte has drawn `amount` out of the tile it is sitting on.
     ///
     /// The amount is what the grid actually gave up, which the caller is holding because
@@ -220,6 +238,7 @@ impl Ledger {
 
     /// A devorocyte has drained `amount` out of the detritus it is touching.
     pub fn scavenge(&mut self, amount: f64) {
+        self.scavenged += amount;
         self.transfer(Account::Detritus, Account::Biomass, amount);
     }
 
@@ -427,6 +446,12 @@ impl Ledger {
             // place any energy is. Adding it to `held` would make the books stop balancing
             // the first time anything ate anything.
             predated: _,
+            // ⚠️ And this one is off the invariant for a *different* reason, which is worth being
+            // exact about because the two look alike. `predated` is off it because it moves
+            // nothing between accounts. `scavenged` **does** move energy — `Detritus` to
+            // `Biomass` — and that movement is already inside `detritus` and `biomass` above.
+            // Adding the running total as well would count every mouthful twice.
+            scavenged: _,
         } = *self;
 
         let held = field + biomass + detritus + dissipated;

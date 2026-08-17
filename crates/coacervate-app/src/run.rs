@@ -2520,9 +2520,10 @@ mod tests {
                 world.tick();
             }
 
-            let (predated, harvested) = (
+            let (predated, harvested, scavenged) = (
                 world.ledger().predation_total(),
                 world.ledger().influx_total(),
+                world.ledger().scavenge_total(),
             );
             let share = if harvested > 0.0 {
                 predated / harvested
@@ -2531,7 +2532,11 @@ mod tests {
             };
             let cells = world.living_cells().len();
 
-            println!("{what:29} | {predated:8.1} | {harvested:9.0} | {share:16.6} | {cells:5}");
+            println!(
+                "{what:29} | {predated:8.1} | {harvested:9.0} | {share:16.6} | {cells:5} | {:9.1} | {:.6}",
+                scavenged,
+                scavenged / harvested
+            );
             readings.push((what, share, cells));
         }
 
