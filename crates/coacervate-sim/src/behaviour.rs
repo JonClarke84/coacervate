@@ -106,6 +106,12 @@ const MIN_PARALLEL_RUN: usize = 256;
 /// being declined as a slider on the grounds that `influx` and `upkeep_scale` already spanned the
 /// balance space. They span the world.s WEALTH. This spans its GRAIN, which is a different axis
 /// and is the one every locomotion result in this project turned out to depend on.
+/// ⚠️ Only the SHIPPED DEFAULT now, and only the tests below read it. The live value is
+/// `light.uptake`, threaded through [`Behaviour::uptake`]. `config.rs`.s `spec_defaults` carries
+/// the same 0.01 and `the_shipped_uptake_is_the_rate_this_module_was_written_against` holds the
+/// two together, so a change to one that is not a change to the other fails a test rather than
+/// quietly re-pricing every photocyte in the project.
+#[cfg(test)]
 const HARVEST_RATE: f64 = 0.01;
 
 /// How far apart two cells can be and still have anything to do with one another.
@@ -2153,6 +2159,22 @@ mod tests {
     /// here and would quietly remove the reason to be anywhere in particular: depth would stop
     /// costing anything, and SPEC section 4's insistence that "the gradient is what gives
     /// movement a reason to exist" would be false.
+    /// ⚠️ The shipped `light.uptake` is the rate the tests in this module were written against.
+    ///
+    /// `HARVEST_RATE` was a compiled-in constant until it became a configuration key, and the
+    /// tests below still check a photocyte against the literal. If the shipped default moves and
+    /// the literal does not, those tests would go on passing while measuring a world nobody
+    /// runs. This is the one line that stops that.
+    #[test]
+    fn the_shipped_uptake_is_the_rate_this_module_was_written_against() {
+        assert!(
+            (crate::config::spec_defaults().light.uptake - HARVEST_RATE).abs() < 1e-12,
+            "the shipped `light.uptake` is {} and this module.s tests are written against {}",
+            crate::config::spec_defaults().light.uptake,
+            HARVEST_RATE
+        );
+    }
+
     #[test]
     fn a_photocyte_harvests_from_the_tile_it_occupies() {
         let mut scene = Scene::new(&config(|raw| {
