@@ -6,6 +6,71 @@ anything. `docs/NEXT.md` is the shorter "what to do next"; this is the full reco
 
 ---
 
+## 0. ⭐⭐⭐ The locomotion round — added later the same day, and it changes section 13
+
+Everything below section 1 was written **before** a seventh cell kind existed. It is still
+accurate about the six-kind world; this section is what happened next, and `docs/NEXT.md` §8
+carries all of it in full with the numbers.
+
+**Built:** `CellKind::Flagellocyte`, a motor. Thrust is *computed, not simulated* — a real
+flagellum beats at 100 Hz and `dt` is a sixtieth of a second, so a simulated stroke would be an
+aliased one; resistive-force theory integrates it away and gives a mean thrust linear in beat
+frequency, which is why `osc_freq` is the magnitude gene. Direction is **outward along the
+vector from a cell's adhered partners to itself**, so a symmetric body's motors cancel and where
+a lineage puts them is what evolution has to find. `physics.thrust` ships at 0.0;
+`config/flagellum.toml` is the same world at 40.
+
+**Why a motor at all, when a myocyte exists:** muscle needs two myocytes, phased, on a bent body
+— the scallop theorem forbids less — which is three mutations that pay nothing until all three
+arrive. **Biology never crossed that valley either.** The bacterial flagellum's export apparatus
+is homologous to the Type III secretion system; twitching motility runs on pili that evolved for
+DNA uptake; the cilium sits on microtubule transport that already existed. Every motor in life is
+an exaptation of machinery that already worked.
+
+### What is measured
+
+| | |
+| --- | --- |
+| **Travel** | 88.8 units per lifetime at thrust 40, against 2.1 with the motor off. **The 60–88 unit gap to a stranger closes.** |
+| **Cost curve** | Turns over: at thrust 250 a body dies at tick 273, at 600 in three ticks. Running cost goes as force², travel as force. Nobody chose that — it is Stokes drag. |
+| **Income, blind** | +3.38% more food found, gross. But at thrust 100 a body finds **8% less** — `light.gradient` is 0.75 and an unsteered body walks out of the light. |
+| **The bar** | A flagellocyte costs 0.006/tick — **9.0 over 1,500 ticks** — and blind travel finds 4.7. **It earns half its keep.** Every null in this round is that one ratio. |
+| **⭐⭐⭐ Steered** | `sensor_gain = −1.0` on a body with a sensocyte adhered to the motor: **+15.34, which is 170% of its keep.** Travel falls to 6.3 units. |
+
+⭐⭐⭐ **The winning sign is negative, and that is orthokinesis.** Drive the motor *softer* where
+the sensor reads more light, and a body races through the dark and crawls in the bright; a
+population piles up where it is worth being. **The point is not to go far, it is to stop
+somewhere good.** *E. coli* has no rudder either — it modulates how long it swims before
+tumbling, and that alone climbs a gradient. This world reproduced the constraint by accident and
+then reproduced the solution.
+
+⚠️ **Every body measured in the first five experiments of this round had `sensor_gain = 0`.** The
+round priced an organelle with its one steering input nailed shut, and that is what the five
+nulls had in common.
+
+### ⚠️ Refuted in this round — do not retry
+
+- **A motor pays as a founder's third cell.** −2.5 %/gen in competition; invasion means −10.3,
+  −7.2, −15.2 at thrusts 0, 40, 100 with a **between-seed spread of 17 to 24**. A single seed
+  read +2.0 and was very nearly written up as a discovery. Three seeds killed it.
+- **Lowering `light.diffusion`.** Blind income rises hugely (435% of the bar at zero diffusion)
+  **and the control arm collapses with it** — a third photocyte goes +1.678 → +0.102. Slow water
+  means tiles under nobody fill to cap and spill; less of the world's light gets eaten at all.
+  ⭐ *General form, shared with six earlier rounds: a lever that improves what a specialist earns
+  while improving what everyone earns by more is not a lever.*
+- **Making the cell cheaper.** It would need to cost under 0.0031/tick, below the photocyte's
+  0.004, and that is measured to be where neutral bloat begins.
+
+### What is running
+
+`config/emergence.toml` — tempo ×8 + Kleiber 0.75 + thrust 40, flagged in its own header as
+**three changes at once that have not been measured together**, so nothing may be quoted from it.
+At 365 Ma it holds bodies of **43.1 ± 18.5 cells** on genomes of **21.7 ± 6.7 genes**.
+`config/flagellum.toml` — thrust alone — at 840 Ma holds 6.8-cell bodies on 11.9-gene genomes with
+motors, mouths and sensors all present at single figures and not spreading.
+
+---
+
 ## 1. Where the project stands
 
 **313 tests green**, `cargo fmt --check` and `clippy -D warnings` clean, everything
@@ -367,7 +432,22 @@ extinct, and — since Kleiber — genuine size and shape diversification.
 travels 0.4 of its own length in a lifetime, against strangers 60–88 units away. Everything
 specialised exists to *reach* something, and nothing here can reach anything.
 
-**The best thing built this session is not a feature.** It is that this project can now tell a
-real effect from a hopeful one in forty minutes, and has used that to refute three designs
-before a line of them was written and to catch five of its own records being wrong. That is
-what makes the next round cheap.
+⭐⭐⭐ **⚠️ AMENDED BY SECTION 0, THE SAME DAY.** The distance half of that is no longer true. A
+flagellocyte carries a body **88 units in a lifetime**, which is the whole of the gap to a
+stranger, and it does it for a price the physics set rather than one anybody chose. What replaced
+the distance problem is a **price** problem, and it is now known to one decimal: a motor costs
+0.006 a tick and blind travel earns 0.0037. **The reach gap is closed and the ledger is not.**
+
+And the ledger closes too, in the one configuration nothing in the first five experiments tried:
+a motor with a sensor wired to it and a *negative* gain earns **170% of its keep**. Whether that
+survives selection is the reading in flight as this was written; whether a lineage can assemble a
+sensocyte, a flagellocyte and the right sign of one number is the open question, and it is a
+question about **evolution finding a combination** rather than about whether the combination is
+worth finding. That is a better place to be stuck than any of the ten rounds before it.
+
+**The best thing built here is still not a feature.** It is that this project can tell a real
+effect from a hopeful one in forty minutes, and used that — in this round alone — to kill its own
+most exciting result the same afternoon it produced it, to catch a helper computing the wrong
+quantity by four orders of magnitude, and to catch an assertion that passed on noise. Every one of
+those was found by re-measurement rather than by review. **A finding that survives that is worth
+something; the discipline is worth more than any of the findings.**
