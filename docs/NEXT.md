@@ -1639,3 +1639,51 @@ that funds it costs, and earns nothing extra.** Of course it is shed.
 **Nobody has ever lowered it.** The one attempt is documented in `CellKind::upkeep` and was
 declined on a bloat argument measured on the *myocyte* — whose case does not obviously transfer,
 because an idle muscle is free and an owned motor is run.
+
+### ⭐⭐⭐ Result 15: it was never the cost. It is the gradient.
+
+Three bench runs, each three seeds against a same-seed control, isolate it:
+
+| world | motors kept | reading |
+| --- | --- | --- |
+| a motor present but **inert** (`thrust=0`) | 0.00109 | the control |
+| a motor that **runs free** (`thrust=40, movement_cost=0`) | 0.00135 | noise |
+| ... and everything at **half price** (`upkeep_scale=0.5`) | 0.00071 | noise |
+
+**A motor that costs nothing to run is still shed.** The running cost was never the constraint.
+And halving *all* upkeep does not help, because it halves the photocyte's too — finding 9 again.
+
+So the standing cost was tried. `CellKind::upkeep` for a flagellocyte, temporarily at **0.003** —
+below the photocyte's 0.004, which is the line `CellKind::upkeep`'s own note calls the start of
+neutral bloat:
+
+| world | motors kept |
+| --- | --- |
+| cheap motor, **inert** | **0.00646** — six times better |
+| cheap motor, running (`thrust=40`) | 0.00157 |
+| cheap motor, running, **free to run** | 0.00160 |
+
+⭐⭐ **Cheapness helps sixfold and running the motor gives it all back — even when running is
+free.** It is not the cost of thrust. **It is the consequence of moving.**
+
+### And the reason, which every earlier result was circling
+
+`light.gradient = 0.75`. This world is strongly top-weighted; a photocyte's buoyancy is −0.50 so
+bodies float; **every body is already sitting on the single global optimum, and any movement at
+all is downhill.** No amount of cheapness makes a downhill walk pay.
+
+That reframes twelve rounds. It is not that the prize is small, or competed away, or a stock
+rather than a flow. It is that *there is exactly one good place and everybody is standing on it.*
+
+| world | motors kept | cells |
+| --- | --- | --- |
+| control (thrust 0) | 0.00646 | 3,509 |
+| **`thrust=40, light.gradient=0.0`** | **0.02514** | **8,257** |
+
+**Four times the motor retention, and total living tissue more than doubled.** ⚠️ The between-seed
+spread is 0.034 against a change of 0.019, so at three seeds it is not resolved — it is being
+re-run at six. **Nothing here should be quoted until it is.**
+
+But the direction is the first thing in fourteen rounds to point up on the observable that
+matters, and the mechanism is one sentence: **take away the single best place, and going somewhere
+stops being a mistake.**
