@@ -3200,14 +3200,13 @@ mod tests {
     /// Without this property the organelle would be a switch marked "swim", and CLAUDE.md's rule
     /// that a motor is permitted and a tactic is not would be a distinction with nothing behind
     /// it.
+    // The comparison against nought below is exact and is meant to be: an unattached motor must
+    // move by *nothing*, not by nearly nothing, because a tolerance would accept a direction that
+    // came out as a tiny vector rather than as no vector at all — the difference between a cell
+    // that cannot swim and one that swims slowly. It needs no `expect(clippy::float_cmp)`, since
+    // clippy allows a comparison against a zero literal, which is the one case where equality on
+    // a float means what it says.
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "an unattached motor must move by exactly nothing, not nearly nothing. A \
-                  tolerance here would accept a direction that came out as a tiny vector \
-                  rather than as no vector at all, which is the difference between a cell \
-                  that cannot swim and one that swims slowly"
-    )]
     fn a_motor_pushes_out_along_its_own_geometry_and_a_symmetric_body_goes_nowhere() {
         let world = config(|raw| {
             raw.limits.max_organisms = 1;

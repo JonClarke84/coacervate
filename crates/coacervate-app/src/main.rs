@@ -256,9 +256,46 @@ fn main() -> ExitCode {
             .max_ticks
             .map_or(u64::MAX, coacervate_render::Dump::watching_from);
 
-        run.go(|world| {
+        // ⭐⭐ How many moments of this run have already been printed, so that each one is said
+        // once and as it happens.
+        //
+        // **Counted as `dropped + still held` rather than as a position in the ring**, because
+        // the ring is exactly what makes the naive version wrong: `chronicle.rs` keeps the most
+        // recent thousand events and drops the oldest off the front, so an index into
+        // `events()` means something different after the log has filled. A running total of
+        // events the log has ever *seen* does not move under it.
+        let mut said = 0u64;
+
+        run.go(|world, log| {
             if world.ticks().is_multiple_of(REPORT_EVERY) {
                 report(world);
+            }
+
+            // ⭐⭐⭐ **The narrative, streamed.** Until this existed the event log was printed
+            // once, at the end, out of a ring holding the last thousand moments — so a run left
+            // going overnight had dropped the beginning of its own history by morning, and the
+            // beginning is where a lineage's first muscle and first mouth are. CLAUDE.md's whole
+            // premise is that somebody comes back and reads what happened; the closing report
+            // could only ever tell them the end of it.
+            //
+            // ⚠️ The closing report still prints what the log holds, which is now deliberate
+            // duplication rather than an oversight: a person scrolling back wants the last
+            // thousand together, and a person reading a log file from the top wants them in
+            // place. `chronicle()` says how many were dropped, so neither reading is misleading.
+            let held = u64::try_from(log.events().len()).expect("a ring of a thousand events");
+            let seen = log.dropped() + held;
+            if seen > said {
+                // How many of what the log still holds have already been printed. A `said` that
+                // is behind `dropped` means the ring threw events away between two ticks, which
+                // it cannot do here — it drops one per push and this runs every tick — but the
+                // saturating subtraction is what makes that a reprint of the oldest survivor
+                // rather than an underflow.
+                let already = usize::try_from(said.saturating_sub(log.dropped()))
+                    .expect("a ring of a thousand events");
+                for event in log.events().skip(already) {
+                    println!("  {}", event.line());
+                }
+                said = seen;
             }
 
             // ⭐ The last hundred moments of the run, eleven ticks apart, which is what a window

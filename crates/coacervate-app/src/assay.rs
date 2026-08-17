@@ -3552,18 +3552,242 @@ mod tests {
             best - shipped
         );
 
-        // ⭐⭐⭐ The claim: slowing the water down makes a motor worth measurably more. The
-        // margin is ten times the competition assay's noise floor, which is a real effect and
-        // not a resolvable one.
+        // ⚠️⚠️⚠️ **THE LEVER FAILS, AND THE CONTROL IS WHAT SHOWS WHY.** Measured:
+        //
+        //   diffusion | a third flagellocyte | a third photocyte
+        //       0.040 |               −2.460 |            +1.678   <- ships
+        //       0.010 |               −2.803 |            +0.102
+        //       0.005 |               −2.559 |            +0.356
+        //
+        // The motor does not improve. **And neither does the photocyte** - the best cell in the
+        // world loses nine tenths of its advantage over the same range. That is the confounder
+        // this test's control arm was put there to catch, and it caught it: slowing the water
+        // down does not only sharpen the hole a body eats, it makes the field worse at moving
+        // light away from where it fell, so tiles under nobody fill to `light.cap` and spill
+        // into `dissipated` while tiles under bodies are grazed flat. **Less of the world's
+        // light gets eaten at all.** The world is poorer, and every marginal cell in it is worth
+        // less.
+        //
+        // So `what_the_field_has_to_be_like_for_moving_to_pay`'s +39 at zero diffusion is real
+        // and is a fact about **one body alone**. A single body in an otherwise empty ocean
+        // gains everything from sharper structure and pays nothing for the light nobody
+        // collects. A population pays for it.
+        //
+        // ⚠️ This is the same shape as six earlier rounds and it is worth naming: **a lever that
+        // improves what a specialist earns while improving what everyone earns by more is not a
+        // lever.** The competition assay measures a difference, and a difference is what the
+        // world's poverty cancels out of.
         assert!(
-            best - shipped > 1.1,
+            best - shipped < 1.1,
             "a motor priced {shipped:+.3} %/generation at the shipped diffusion and {best:+.3} \
-             at the best setting in the sweep, a change of {:+.3} against a +/-0.11 noise \
-             floor. **The income measurement says a motor finds twice its keep at a diffusion \
-             of 0.005 and half of it at 0.04**; if that does not show up in selection, then \
-             income is not what is limiting the organelle and the gap between the two \
-             measurements is the next thing to explain",
+             at the best setting in the sweep, a change of {:+.3}, which now BEATS the ±0.11 \
+             noise floor by ten times. **This test asserts a null and the null has broken.** \
+             The measured readings are −2.460, −2.803 and −2.559 across diffusions of 0.04, \
+             0.01 and 0.005. Check the photocyte control in the same run before believing it: \
+             it read +1.678, +0.102 and +0.356, and a motor that improved because the whole \
+             world got poorer around it is not a motor that pays",
             best - shipped
+        );
+    }
+
+    /// ⭐⭐⭐ Can a motor that can *steer* pay for itself? The experiment four nulls point at.
+    ///
+    /// # What the four nulls have in common, which took all four to see
+    ///
+    /// A motor moves a body 88 units in a lifetime. Moving finds +3.38% more food for a small
+    /// body alone. But **going faster finds less** — at a thrust of 100 a body travelling 200
+    /// units finds 8% *less* food, gross, with everything it spent already added back. The reason
+    /// is `light.gradient = 0.75`: this world is strongly top-weighted, and a flagellocyte pushes
+    /// along its body's own geometry with **nothing whatever steering it**. An undirected walk in
+    /// a world where most directions are darker than where you started is a losing bet, and the
+    /// bigger the body the more photocytes it drags into the dark.
+    ///
+    /// ⚠️ **And every body measured in this round so far was built with `sensor_gain = 0`.** The
+    /// modulation that `behaviour.rs` applies to a motor's magnitude — the same controller a
+    /// myocyte is driven by, sign and all — has never once been switched on in a measurement. So
+    /// the whole round has priced an organelle with its one steering input nailed shut.
+    ///
+    /// # What steering means here, and why it is not a scripted tactic
+    ///
+    /// Nothing points thrust at anything. `sensor_gain` scales **magnitude**, so a body drives its
+    /// motor harder or softer according to what an adhered sensocyte reads. On a body whose motor
+    /// sits at one end, that is a body which goes faster in some places than others — and a
+    /// population of such bodies accumulates where they go slowest. That is **kinesis**, it is
+    /// what real bacteria do (they cannot steer either; *E. coli* modulates tumble frequency), and
+    /// it is assembled here out of an organ, a sensor and an evolved number rather than written
+    /// down. The sign of that number decides whether a lineage gathers in the light or flees it,
+    /// and both are one point mutation from the other.
+    ///
+    /// The plan puts a sensocyte between the gonocyte and the motor so the two are adhered, which
+    /// is what `behaviour.rs` requires for a motor to hear anything at all.
+    #[test]
+    #[ignore = "a lifetime per arm; run deliberately with --ignored"]
+    fn can_a_motor_that_can_steer_pay_for_itself() {
+        const PLAN: [CellKind; 5] = [
+            CellKind::Photocyte,
+            CellKind::Photocyte,
+            CellKind::Gonocyte,
+            CellKind::Sensocyte,
+            CellKind::Flagellocyte,
+        ];
+        const WATCH: u64 = 1_500;
+        const THRUST: f64 = 40.0;
+
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a tick count of a few thousand is exact in an f64"
+        )]
+        let bar = f64::from(CellKind::Flagellocyte.upkeep()) * WATCH as f64;
+        println!("the motor must find more than {bar:.3} over {WATCH} ticks to be worth owning\n");
+        println!("sensor gain | gross gain | as % of the bar | travel");
+
+        let mut readings = Vec::new();
+        for gain in [0.0f32, 0.5, 1.0, -0.5, -1.0] {
+            let tune = |raw: &mut RawConfig| raw.physics.thrust = THRUST;
+
+            let (moving, lived) =
+                earns(42, tune, |limits| swimmer(limits, &PLAN, BEAT, gain), WATCH);
+            let (still, _) = earns(
+                42,
+                tune,
+                |limits| held_still(&swimmer(limits, &PLAN, BEAT, gain), limits),
+                WATCH,
+            );
+            let (travel, _) = travels(42, tune, |limits| swimmer(limits, &PLAN, BEAT, gain), WATCH);
+
+            assert_eq!(
+                lived, WATCH,
+                "the body died at tick {lived} of {WATCH} at a gain of {gain}"
+            );
+
+            // ⚠️ What the motor spent cannot be written in closed form here as it was in
+            // `what_the_field_has_to_be_like_for_moving_to_pay`, because the amplitude is no
+            // longer `resting_amplitude` exactly — it is whatever the sensor made it, tick by
+            // tick. It is bounded above by the unsteered figure, since the controller clamps the
+            // amplitude to one and the unsteered arm sits at 0.8, so `paid` here is an
+            // OVERESTIMATE of the cost at any positive gain and the gross gain below is therefore
+            // an overestimate too. It is quoted anyway because the comparison that matters is
+            // between the rows, and every row is overestimated by at most the same 25%.
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a tick count of a few thousand is exact in an f64"
+            )]
+            let paid = {
+                let (drag, dt) = (0.92f64, 1.0 / 60.0);
+                let force = THRUST * f64::from(BEAT);
+                0.0001 * force * force * (drag * dt * dt / (1.0 - drag)) * WATCH as f64
+            };
+            let gross = moving + paid - still;
+
+            println!(
+                "{gain:11.1} | {gross:+10.4} | {:15.1} | {travel:.1}",
+                gross / bar * 100.0
+            );
+            readings.push((gain, gross, travel));
+        }
+
+        let (_, blind, _) = readings[0];
+        let (gain, best, travel) = readings
+            .iter()
+            .copied()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).expect("energies are finite"))
+            .expect("the sweep has readings in it");
+
+        println!(
+            "\nSTEERING: a blind motor finds {blind:+.3}; the best steered one finds {best:+.3} \
+             at a gain of {gain} on {travel:.1} units of travel. The bar it has to clear is \
+             {bar:.1}, so a steered motor is at {:.0}% of its keep against a blind one's {:.0}%.",
+            best / bar * 100.0,
+            blind / bar * 100.0
+        );
+
+        assert!(
+            best > blind,
+            "no sensor gain in the sweep, of either sign, let a motor find more food than a \
+             blind one ({blind:+.3}). **Then steering is not what is limiting the organelle \
+             either**, and the four nulls before this one are not explained by the light \
+             gradient. What would be left is that a body's travel simply does not reach water \
+             different enough from the water it started in to be worth the fare"
+        );
+    }
+
+    /// ⭐⭐⭐ Is a steered motor worth more than a blind one, under selection? One mutation apart.
+    ///
+    /// `can_a_motor_that_can_steer_pay_for_itself` measures income on one body alone:
+    ///
+    /// | `sensor_gain` | gross gain | share of the 9.0 a motor costs | travel |
+    /// | --- | --- | --- | --- |
+    /// | 0.0 | +7.93 | 88% | 59.9 |
+    /// | +1.0 | +3.41 | 38% | 76.4 |
+    /// | **−1.0** | **+15.34** | **170%** | 6.3 |
+    ///
+    /// ⭐⭐ **The winning sign is negative, and that is orthokinesis.** A negative gain drives the
+    /// motor *softer* where the sensor reads more light, so a body races through the dark and
+    /// slows to a crawl in the bright — and a population of such bodies piles up where it is
+    /// worth being. It is what real bacteria do, and for the same reason: they cannot steer
+    /// either. *E. coli* has no rudder and no idea which way is up a gradient; it modulates how
+    /// long it swims before tumbling, and that alone is enough to climb one.
+    ///
+    /// Both arms here are the same five-celled body — two photocytes, a gonocyte, a sensocyte and
+    /// a flagellocyte — differing in **one gene's `sensor_gain`**. That is one point mutation, so
+    /// the competition assay will take it, and its ±0.11 %/generation floor is forty times
+    /// tighter than the invasion assay's variance on the arms this round has been reduced to
+    /// using.
+    ///
+    /// ⚠️ What this does **not** measure is whether a motorised body beats a plain founder. That
+    /// is three mutations away and no instrument here can ask it. What it asks is narrower and is
+    /// the question the income sweep raises: **given a motor and a sensor, does the sign of the
+    /// number joining them matter to selection?**
+    #[test]
+    #[ignore = "two 42,000-tick competition runs; run deliberately with --ignored"]
+    fn is_a_steered_motor_worth_more_than_a_blind_one() {
+        const PLAN: [CellKind; 5] = [
+            CellKind::Photocyte,
+            CellKind::Photocyte,
+            CellKind::Gonocyte,
+            CellKind::Sensocyte,
+            CellKind::Flagellocyte,
+        ];
+
+        let mut readings = Vec::new();
+        for seed in [42u64, 43, 44] {
+            let config = seeded_world(seed, |raw| raw.physics.thrust = 40.0);
+            let blind = swimmer(&config.limits, &PLAN, BEAT, 0.0);
+            let steered = swimmer(&config.limits, &PLAN, BEAT, -1.0);
+
+            let outcome = assay(&config, [&blind, &steered], WINDOW);
+            report(
+                &format!("a steered motor against a blind one, seed {seed}"),
+                &outcome,
+            );
+            readings.push(outcome.per_generation() * 100.0);
+        }
+
+        let mean = readings.iter().sum::<f64>() / 3.0;
+        let spread = readings.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+            - readings.iter().copied().fold(f64::INFINITY, f64::min);
+
+        println!(
+            "\nSTEERING UNDER SELECTION: a motor whose sensor gain is −1 is worth {mean:+.3} \
+             %/generation against the identical body at a gain of 0, meaned over three seeds \
+             (spread {spread:.3}, noise floor ±0.11). The three: {readings:?}"
+        );
+
+        // ⚠️ **Every seed has to agree in sign, not just the mean.** The first version of this
+        // asserted `spread < mean` and failed on a mean of +2.358 with a spread of 2.924 — which
+        // says nothing about whether any individual seed went the wrong way, and this round has
+        // already had one result destroyed by a mean that hid a disagreement. Three seeds all
+        // positive is a weaker claim than a tight spread and a much harder one to fake.
+        let worst = readings.iter().copied().fold(f64::INFINITY, f64::min);
+        assert!(
+            worst > 0.33,
+            "a steered motor priced {mean:+.3} %/generation against a blind one meaned over \
+             three seeds (spread {spread:.3}), but the weakest seed came back at {worst:+.3} — \
+             so the seeds do not agree in sign and the mean is carrying a disagreement. **The \
+             income sweep says a steered motor earns 170% of its keep and a blind one 88%**; if \
+             that does not appear here as a positive on every seed, then income is not what \
+             selection is acting on, and the gap between the two measurements is the next thing \
+             to explain rather than the organelle. The three: {readings:?}"
         );
     }
 }

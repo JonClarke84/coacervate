@@ -331,15 +331,21 @@ impl Run {
     /// the tick rather than before, so what it sees is a world that has finished a tick, which
     /// is the same state a stop leaves behind.
     ///
+    /// ⭐ **And the chronicle beside it, which is what makes a long run readable.** The event log
+    /// is a ring of the most recent thousand moments, so a run left going overnight has dropped
+    /// the beginning of its own history by morning — and the whole premise in CLAUDE.md is that
+    /// somebody comes back in the morning and reads what happened. Handing the log to `watch`
+    /// lets `main` print each event **as it occurs** rather than only what survived to the end.
+    ///
     /// This is [`Run::step`] in a loop and nothing more. See that method for why the loop is
     /// written the other way up.
-    pub fn go(&mut self, mut watch: impl FnMut(&World)) -> Stop {
+    pub fn go(&mut self, mut watch: impl FnMut(&World, &Chronicle)) -> Stop {
         loop {
             if let Some(why) = self.step() {
                 return why;
             }
 
-            watch(&self.world);
+            watch(&self.world, &self.chronicle);
         }
     }
 
@@ -626,7 +632,7 @@ mod tests {
             &Interrupt::new(),
         );
 
-        assert_eq!(run.go(|_| {}), Stop::TicksDone);
+        assert_eq!(run.go(|_, _| {}), Stop::TicksDone);
         assert_eq!(
             run.world().ticks(),
             founded + 500,
@@ -658,7 +664,7 @@ mod tests {
         );
 
         let began = Instant::now();
-        assert_eq!(run.go(|_| {}), Stop::OutOfTime);
+        assert_eq!(run.go(|_, _| {}), Stop::OutOfTime);
         let took = began.elapsed();
 
         assert!(
@@ -693,7 +699,7 @@ mod tests {
             &Interrupt::new(),
         );
 
-        assert_eq!(run.go(|_| {}), Stop::Extinction);
+        assert_eq!(run.go(|_, _| {}), Stop::Extinction);
         assert_eq!(
             run.world().organisms().iter().flatten().count(),
             0,
@@ -730,7 +736,7 @@ mod tests {
 
         let asked_on = founded + 200;
         assert_eq!(
-            run.go(|world| {
+            run.go(|world, _| {
                 if world.ticks() == asked_on {
                     interrupt.ask();
                 }
@@ -807,7 +813,7 @@ mod tests {
             &bounds(|run| run.max_ticks = Some(founded + allowance)),
             &Interrupt::new(),
         );
-        let all_at_once = wholesale.go(|_| {});
+        let all_at_once = wholesale.go(|_, _| {});
 
         assert_eq!(why, Stop::TicksDone);
         assert_eq!(
@@ -926,7 +932,7 @@ mod tests {
             None,
             "a run that has not taken a tick has already clustered something"
         );
-        assert_eq!(run.go(|_| {}), Stop::TicksDone);
+        assert_eq!(run.go(|_, _| {}), Stop::TicksDone);
 
         let sampled = run
             .taxonomy()
@@ -1071,7 +1077,7 @@ mod tests {
             &Interrupt::new(),
         );
 
-        assert_eq!(run.go(|_| {}), Stop::TicksDone);
+        assert_eq!(run.go(|_, _| {}), Stop::TicksDone);
 
         let log = run.chronicle();
         let said = log
@@ -1685,7 +1691,7 @@ mod tests {
             &Interrupt::new(),
         );
 
-        assert_eq!(run.go(|_| {}), Stop::TicksDone);
+        assert_eq!(run.go(|_, _| {}), Stop::TicksDone);
 
         let world = run.world();
         let census = Census::of(world);
@@ -1766,7 +1772,7 @@ mod tests {
             );
 
             let began = Instant::now();
-            let why = run.go(|_| {});
+            let why = run.go(|_, _| {});
 
             (why, began.elapsed(), run)
         };
@@ -1877,7 +1883,7 @@ mod tests {
             "an uncapped run is not due for its next tick immediately after taking one"
         );
 
-        assert_eq!(quick.go(|_| {}), Stop::TicksDone);
+        assert_eq!(quick.go(|_, _| {}), Stop::TicksDone);
         assert_eq!(
             quick.stopped(),
             Some(Stop::TicksDone),
@@ -1964,7 +1970,7 @@ mod tests {
         let mut worst = 0.0f64;
         let mut most_dead = 0.0f64;
         let mut fewest = usize::MAX;
-        run.go(|world| {
+        run.go(|world, _| {
             worst = worst.max(relative_error(world));
             most_dead = most_dead.max(world.ledger().detritus());
             fewest = fewest.min(world.organisms().iter().flatten().count());
@@ -2136,7 +2142,7 @@ mod tests {
         let mut settling = Census::of(run.world());
         let mut settled_from = 0u64;
 
-        run.go(|world| {
+        run.go(|world, _| {
             let living = world.organisms().iter().flatten().count();
             peak = peak.max(living);
             trough = trough.min(living);

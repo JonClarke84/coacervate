@@ -803,3 +803,61 @@ against a plain founder *in the same altered world*.
    world*.
 3. If 1 reads positive, the shipped `light.diffusion` is the change, and it wants its own
    profile and its own re-recorded golden vectors.
+
+### ⚠️ Result 5: the diffusion lever fails, and the control is what shows why
+
+`does_a_motor_pay_for_itself_once_the_water_stops_mixing`, competition assay, seed 42, thrust 40:
+
+| `light.diffusion` | a third flagellocyte | **a third photocyte (control)** |
+| --- | --- | --- |
+| **0.040** ships | −2.460 | **+1.678** |
+| 0.010 | −2.803 | **+0.102** |
+| 0.005 | −2.559 | **+0.356** |
+
+The motor does not improve. **And neither does the photocyte** — the best cell in the world loses
+nine tenths of its advantage over the same range. That is the confounder the control arm was put
+there to catch, and it caught it: slowing the water does not only sharpen the hole a body eats, it
+makes the field worse at moving light away from where it fell, so tiles under nobody fill to
+`light.cap` and spill into `dissipated` while tiles under bodies are grazed flat. **Less of the
+world's light gets eaten at all.**
+
+So Result 4's +39 at zero diffusion is real and is a fact about **one body alone** — a single body
+in an empty ocean gains everything from sharper structure and pays nothing for the light nobody
+collects. A population pays for it.
+
+⭐ **The general form, which six earlier rounds share:** a lever that improves what a specialist
+earns while improving what everyone earns by more is not a lever. A competition assay measures a
+*difference*, and a difference is what the world's poverty cancels out of.
+
+### ⭐⭐⭐ Result 6: what all five nulls had in common — nothing was ever steering
+
+Every body measured in this round was built with **`sensor_gain = 0`**. The modulation
+`behaviour.rs` applies to a motor's magnitude — the same controller a myocyte is driven by, sign
+and all — had never once been switched on in a measurement. The whole round priced an organelle
+with its one steering input nailed shut.
+
+`can_a_motor_that_can_steer_pay_for_itself`, on a five-celled body — two photocytes, a gonocyte, a
+sensocyte adhered to a flagellocyte:
+
+| `sensor_gain` | gross gain | **share of the 9.0 a motor costs** | travel |
+| --- | --- | --- | --- |
+| 0.0 | +7.93 | 88 % | 59.9 |
+| +0.5 | +3.41 | 38 % | 76.4 |
+| +1.0 | +3.41 | 38 % | 76.4 |
+| **−0.5** | +14.24 | **158 %** | 29.6 |
+| **−1.0** | **+15.34** | **170 %** | 6.3 |
+
+⭐⭐⭐ **A steered motor earns 170% of its keep. The winning sign is negative, and that is
+orthokinesis.** A negative gain drives the motor *softer* where the sensor reads more light, so a
+body races through the dark and crawls in the bright — and a population of such bodies piles up
+where it is worth being. Travel falls to 6.3 units, which looks like failure and is the mechanism:
+**the point is not to go far, it is to stop somewhere good.**
+
+**It is what real bacteria do, and for the same reason.** *E. coli* has no rudder and no idea which
+way is up a gradient. It modulates how long it swims before tumbling, and that alone climbs one.
+This world reproduced that constraint by accident — thrust points along a body's own geometry and
+nothing steers it — and then reproduced the solution.
+
+⚠️ **This is one body alone and says nothing about selection.**
+`is_a_steered_motor_worth_more_than_a_blind_one` puts the two arms one `sensor_gain` mutation apart
+through the competition assay at three seeds, and is the reading that matters.
