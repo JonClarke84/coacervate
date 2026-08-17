@@ -1297,7 +1297,7 @@ spent.
 
 ---
 
-## ⭐⭐⭐ Result 12: drag is NOT the problem, and what that proves is the root cause
+## ⚠️⚠️⚠️ Result 12 AS FIRST WRITTEN WAS WRONG ON EVERY LEG OF ITS EVIDENCE. The corrected version is below it.
 
 **The hypothesis.** `physics.drag = 0.92` is not a fact about water — it is a declaration that this
 world is **microscopic**. A cell keeps 92% of its velocity per tick, so motion dies in a dozen
@@ -1352,3 +1352,61 @@ contact. **Both niches are sessile by construction**, and no organism-side chang
 
 **Eleven rounds tuned the organisms. Nobody changed the world's economy.** That is the round that
 has never been run, and it is the only one left.
+
+---
+
+## ⭐⭐⭐ Result 12, CORRECTED — the conclusion stands, the evidence for it did not
+
+An adversarial design review took the section above apart. **Three of its four legs were broken,
+and two of the breaks were bugs in instruments I wrote.** The corrected sweep:
+
+| `drag` | `k` | travel | fuel | net | **⭐ gross** | extent | stable |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **0.920** ships | 0.00319 | 76.2 | 4.4 | +0.28 | **+4.70** | 59.2 | yes |
+| 0.960 | 0.00667 | 173.4 | 9.2 | −21.24 | −12.02 | 59.2 | yes |
+| 0.980 | 0.01361 | 363.0 | 18.8 | −38.26 | −19.45 | 63.3 | yes |
+| 0.990 | 0.02750 | 721.8 | 38.0 | −29.64 | **+8.38** | 68.9 | yes |
+| 0.995 | 0.05528 | 721.2 | 76.4 | −59.58 | **+16.83** | **72.7** | **yes** |
+
+**1. The fuel bill was multiplied, not divided.** `thrust` was pinned at 40 in every row, so the
+*force* was constant — and `behaviour.rs` charges `movement_cost × force² × thrust_work`, where
+`thrust_work` is the very same `k` that drag controls. Raising drag multiplied the fuel by 17×.
+The arithmetic that made drag look like the whole gap was about the cost of a **given speed**,
+which does fall as `1/k`; the experiment held **force** constant instead, so it measured something
+else. Gross income is **not** monotone falling — it is higher at `drag = 0.995` than at the shipped
+value.
+
+**2. "The body flies apart at 0.995" was my own instrument's bug.** `spreads` measured extent with
+a straight subtraction in a world that **wraps at 2,048 units**. The recorded 2,036 was a
+**twelve-unit body sitting on the seam**. Corrected, the extent is 72.7 and nothing is unstable
+anywhere in the sweep. See `wrapped_distance`.
+
+**3. `travels` has the same bug, and it is Group J's, not mine — so every travel figure this
+project has ever recorded was measured without the wrap.** It was invisible for eleven rounds
+because nothing ever moved more than 88 units against a wrap that bites at 1,024. The 721.2 at
+`drag = 0.99` is consistent with a true displacement of 1,326.8.
+
+### ⚠️ So drag is **unmeasured**, not refuted
+
+The right experiment holds **speed** constant and varies drag, or sweeps thrust at each drag to
+find the best net. Nobody has run it. It is back on the list.
+
+### ⭐⭐⭐ And the conclusion survives anyway, on evidence that was already in the repository
+
+The root cause did not need the drag sweep. `assay.rs:1619` has held this since an earlier round:
+
+> **arriving in the best water a lifetime's swim away, free and perfectly aimed:
+> −0.01 ± 0.09 %/generation** — and teleported a *quarter of the world* into the best water there
+> is: **−1.49 %/generation**.
+
+That removes the cost of travel, the time it takes, and the problem of aim, and hands a body the
+best water within reach **as a gift**. It is worth nothing. **Travel in this world is not
+expensive — it is worthless**, because the population has already flattened the value of position
+into a break-even surface, and a body that arrives somewhere better eats it down to break-even too.
+
+> **The optimal position is not merely fixed and occupied. There is no optimal position, because
+> there is no structure in the field at the scale a body lives at.**
+
+That is a much stronger statement than the one I wrote, it was measurable a fortnight ago, and I
+built a broken sweep instead of reading it. **Five errors this round, and the fifth was reaching
+for a new instrument when the answer was already committed.**

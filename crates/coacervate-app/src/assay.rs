@@ -1009,7 +1009,7 @@ fn travels(
         if world.organisms()[slot].is_none() {
             break;
         }
-        moved = (world.cells_of(slot)[0].pos - began).length();
+        moved = wrapped_distance(began, world.cells_of(slot)[0].pos, alone.world.width);
         lived = tick;
     }
 
@@ -1126,15 +1126,39 @@ fn spreads(
         let mut widest = 0.0f32;
         for (index, one) in cells.iter().enumerate() {
             for other in &cells[index + 1..] {
-                widest = widest.max((other.pos - one.pos).length());
+                widest = widest.max(wrapped_distance(one.pos, other.pos, alone.world.width));
             }
         }
         extent = extent.max(widest);
-        moved = (cells[0].pos - began).length();
+        moved = wrapped_distance(began, cells[0].pos, alone.world.width);
     }
 
     (extent, moved)
 }
+/// The distance between two points in a world that joins up sideways.
+///
+/// ⚠️⚠️ **Every travel figure this project has ever recorded was measured without this**, and the
+/// omission was invisible for eleven rounds because nothing ever moved far enough for it to
+/// matter: a body covered 2 to 88 units in a lifetime, against a 2,048-unit world whose wrap does
+/// not begin to bite until 1,024.
+///
+/// It bit the moment something did move. A drag sweep recorded 721.2 units of travel at
+/// `drag = 0.99` — and 2,048 − 721.2 = 1,326.8, which is what the arithmetic predicts. The
+/// straight subtraction cannot tell a body that went 721 one way from one that went 1,327 the
+/// other, and it reports the smaller. The same sweep recorded a body's extent as 2,036 units and
+/// was read as a body flying apart; it was a **twelve-unit body sitting on the seam**.
+///
+/// `physics.rs` has had `wrapped_offset` for exactly this since Phase 2 and its doc says why: *"Two
+/// versions of 'the world wraps' would be two rules about one thing, and the one written down
+/// twice is the one that ends up disagreeing with itself at the join."* It is `pub(crate)` to the
+/// simulation, so this is the third version, and that is a wart worth recording rather than hiding.
+fn wrapped_distance(from: Vec2, to: Vec2, width: f32) -> f32 {
+    let across = to.x - from.x;
+    let across = across - width * (across / width).round();
+
+    Vec2::new(across, to.y - from.y).length()
+}
+
 /// SPEC's shipped world, at the seed this run of the assay is being taken on.
 fn seeded_world(seed: u64, change: impl FnOnce(&mut RawConfig)) -> Config {
     let mut raw = spec_defaults();
@@ -4460,7 +4484,10 @@ mod tests {
         const WATCH: u64 = 1_500;
         const THRUST: f64 = 40.0;
 
-        println!("drag  |    k     | travel | net vs still | extent | lived | stable");
+        println!(
+            "drag  |    k     | travel | fuel  |    net | ⭐ GROSS | extent | stable\n\
+             ------+----------+--------+-------+--------+---------+--------+-------"
+        );
 
         for drag in [0.92f64, 0.96, 0.98, 0.99, 0.995] {
             let tune = |raw: &mut RawConfig| {
@@ -4480,17 +4507,39 @@ mod tests {
             );
             let (extent, _) = spreads(42, tune, |limits| swimmer(limits, &PLAN, BEAT, 0.0), WATCH);
 
-            // ⚠️ **The stability half, and it decides whether any of the rest is usable.** Drag
-            // damps springs and collisions as well as motion. A body whose cells have flown
-            // apart still reports a displacement — a large one — so a travel figure alone would
-            // read an exploding body as a fast swimmer. A five-celled chain at a rest length of
-            // ten spans about forty units when straight; anything past a few hundred is not a
-            // body.
+            // ⭐⭐⭐ **The fuel bill, which the first version of this sweep got backwards and built
+            // a root-cause conclusion on top of.**
+            //
+            // `thrust` is pinned at 40 in every row, so the FORCE is the same everywhere — and
+            // `behaviour.rs` charges `movement_cost × force² × thrust_work`, where
+            // `thrust_work` is the very same `k` that drag controls. So raising drag **multiplies**
+            // the fuel bill by 17×; it does not divide it.
+            //
+            // The arithmetic that made drag look like the whole gap was about the cost of a
+            // **given speed**, which does fall as `1/k`. This experiment held force constant
+            // instead of speed, so it measured a different thing and the net column is two
+            // effects of opposite sign added together. Backing the fuel out is what makes the row
+            // comparable: **gross is what the travel found.**
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a tick count of a few thousand is exact in an f64"
+            )]
+            let fuel = {
+                let force = THRUST * f64::from(BEAT) * 0.8;
+                0.0001 * force * force * k * WATCH as f64
+            };
+            let (net, gross) = (moving - still, moving - still + fuel);
+
+            // ⚠️ Drag damps springs and collisions as well as motion, so a body really can fly
+            // apart — but the first version of this check read 2,036 units of extent at
+            // `drag = 0.995` and called it exactly that. It was a **twelve-unit body sitting on
+            // the world's seam**, measured without the wrap. See `wrapped_distance`. A five-celled
+            // chain at a rest length of ten spans about forty units when straight.
             let stable = extent < 200.0 && travel.is_finite() && lived == WATCH;
 
             println!(
-                "{drag:5.3} | {k:8.5} | {travel:6.1} | {:12.4} | {extent:6.1} | {lived:5} | {}",
-                moving - still,
+                "{drag:5.3} | {k:8.5} | {travel:6.1} | {fuel:5.1} | {net:6.2} | {gross:+7.2} | \
+                 {extent:6.1} | {}",
                 if stable { "yes" } else { "**NO**" }
             );
         }
