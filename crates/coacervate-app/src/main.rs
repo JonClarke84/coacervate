@@ -143,7 +143,10 @@ fn main() -> ExitCode {
         };
 
         let seeds: Vec<u64> = (0..arguments.seeds.unwrap_or(3)).map(|n| 42 + n).collect();
-        let rows = bench::run(&seeds, &change);
+        // ⭐ `--motors` seeds every founder with a flagellocyte, turning "would a world INVENT a
+        // motor" into "does a world KEEP one". The second resolves; the first is one cell in two
+        // and a half thousand and reads as noise whatever the world does. See `bench.rs`.
+        let rows = bench::run(&seeds, &change, arguments.motors);
         bench::report(&spec, &seeds, &rows);
 
         return ExitCode::SUCCESS;

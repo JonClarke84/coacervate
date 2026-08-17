@@ -73,6 +73,10 @@ pub struct Arguments {
     /// the hard way is the minimum that can tell a result from a lucky draw.
     pub seeds: Option<u64>,
 
+    /// Seed every founder with a motor, so the bench measures whether a world KEEPS one rather
+    /// than whether it invents one. See `bench.rs`.
+    pub motors: bool,
+
     /// Run the world, draw one frame of it here, and stop. See `main.rs`'s `DUMP_TICKS` for
     /// how long it runs first and why.
     pub dump_frame: Option<PathBuf>,
@@ -223,6 +227,7 @@ impl Arguments {
                 // which is the whole of why the others are refused.
                 "--window" => parsed.window = true,
                 "--panel" => parsed.panel = true,
+                "--motors" => parsed.motors = true,
                 "--config" => {
                     once(&mut parsed.config, "--config")?;
                     parsed.config = Some(PathBuf::from(value(&mut line, "--config")?));

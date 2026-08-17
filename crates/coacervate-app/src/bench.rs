@@ -116,9 +116,13 @@ impl Reading {
 }
 
 /// Run one world to equilibrium and measure it.
-fn measure(config: &Config) -> Reading {
+fn measure(config: &Config, seeded_with_motors: bool) -> Reading {
     let mut world = World::new(config);
-    crate::founding::genesis(&mut world, 8);
+    if seeded_with_motors {
+        genesis_motorised(&mut world);
+    } else {
+        crate::founding::genesis(&mut world, 8);
+    }
     for _ in 0..SETTLE {
         world.tick();
     }
@@ -206,7 +210,7 @@ fn spread(of: impl Iterator<Item = f64>) -> (f64, f64) {
 /// If `change` produces a configuration the program would refuse. A bench is a thing a person
 /// drives from a command line, so a bad setting has to stop with the validator's own sentence
 /// rather than be quietly clamped into something that measures a world nobody asked for.
-pub fn run(seeds: &[u64], change: &(dyn Fn(&mut RawConfig) + Sync)) -> Vec<[f64; 4]> {
+pub fn run(seeds: &[u64], change: &(dyn Fn(&mut RawConfig) + Sync), motors: bool) -> Vec<[f64; 4]> {
     let build = |seed: u64, tuned: bool| {
         let mut raw = spec_defaults();
         raw.world.seed = seed;
@@ -222,7 +226,12 @@ pub fn run(seeds: &[u64], change: &(dyn Fn(&mut RawConfig) + Sync)) -> Vec<[f64;
     // merely likely — so the answer is the same whatever order they finish in.
     let pairs: Vec<(Reading, Reading)> = seeds
         .par_iter()
-        .map(|seed| (measure(&build(*seed, true)), measure(&build(*seed, false))))
+        .map(|seed| {
+            (
+                measure(&build(*seed, true), motors),
+                measure(&build(*seed, false), motors),
+            )
+        })
         .collect();
 
     let width = Reading::default().columns().len();
@@ -338,4 +347,72 @@ pub fn overrides(spec: &str) -> Result<impl Fn(&mut RawConfig) + Sync + use<>, S
 fn take(field: &mut f64, value: f64) -> bool {
     *field = value;
     true
+}
+
+/// ⭐⭐⭐ The founder that already has a motor, for asking whether a world **keeps** one.
+///
+/// # Why retention rather than invention
+///
+/// The bench's `motors` column reads 0.0004 in the shipped world — one cell in two and a half
+/// thousand — because mutation has to *find* a flagellocyte before anything can select on it, and
+/// in sixty thousand ticks it barely does. A share that small cannot clear its own between-seed
+/// spread, so every world reads `noise` whatever it does, and the instrument answers nothing.
+///
+/// Seeding every founder with a motor turns an invention problem into a **retention** problem, and
+/// retention resolves. A world that punishes motility sheds them and the share falls to nothing; a
+/// world that rewards it keeps them and the share stays up. The same sixty thousand ticks, the
+/// same cost, and an observable that starts at a hundred per cent instead of at nought.
+///
+/// ⚠️ It answers a narrower question than *would evolution find this*, and the difference matters:
+/// a world can keep a motor it was given and still never invent one. What it does answer is the
+/// one that has blocked this project for thirteen rounds — **is there anything here worth moving
+/// for** — and it answers it in three minutes instead of a night.
+fn motorised(limits: &coacervate_sim::config::LimitsConfig) -> coacervate_sim::genome::Genome {
+    use coacervate_sim::genome::{Action, Gene, Genome, SensorTarget, State};
+
+    let gene = |step: u8, kind: CellKind, driven: bool| Gene {
+        trigger_state: State::new(step),
+        min_step: step,
+        max_step: step,
+        action: Action::Divide,
+        angle: 0.0,
+        adhere: true,
+        child_state: State::new(step + 1),
+        child_kind: kind,
+        rest_length: 8.0,
+        stiffness: 10.0,
+        new_kind: CellKind::Photocyte,
+        new_state: State::ZERO,
+        // ⚠️ A motor whose gene carries an `osc_freq` of nought produces no force and is charged
+        // nothing — it is a sclerocyte with a dearer upkeep. That mistake cost this project three
+        // whole experiments, so the frequency is set here and the reason is written here.
+        osc_freq: if driven { 3.0 } else { 0.0 },
+        osc_phase: 0.0,
+        sensor_gain: 0.0,
+        sensor_target: SensorTarget::Light,
+    };
+
+    Genome::new(
+        vec![
+            gene(0, CellKind::Gonocyte, false),
+            gene(1, CellKind::Flagellocyte, true),
+        ],
+        limits,
+    )
+}
+
+/// Found a world whose every founder already carries a motor. See [`motorised`].
+fn genesis_motorised(world: &mut World) {
+    crate::founding::dawn(world);
+
+    let limits = world.config().limits.clone();
+    let (width, height) = (world.config().world.width, world.config().world.height);
+
+    for founder in 0..8 {
+        let _ = world.seed(
+            motorised(&limits),
+            crate::founding::place(founder, 8, width, height),
+            crate::founding::FOUNDER_ENERGY,
+        );
+    }
 }
