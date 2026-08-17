@@ -1149,3 +1149,61 @@ the fix, which is worth stating plainly:
 
 **Nothing but the last would have found the last.** Every instrument agreed with every other,
 because they were all wired to the same dead cell.
+
+### ⭐⭐⭐ Result 10: with a motor that actually runs, prediction 3 is answered — and the answer is no
+
+`what_a_motor_is_worth_where_there_is_somewhere_to_go`, re-run after the builder was fixed. A
+third flagellocyte released as a rare invader into a settled, drawn-down population:
+
+> **a third flagellocyte (extinct, fitted through its arrival) — invaded 0 of 12 (0.00), 0 alive
+> at the end**
+>
+> a third photocyte — **+4.662 %/gen, invaded 10 of 12 (0.83)**, 208 alive at the end
+
+**Nought establishments out of twelve.** The calibration in the same run, in the same water, on
+the same tick, is emphatic that the instrument is working.
+
+That is the same shape predation gave in round 8 — nought out of thirty-six. **A motor is not
+merely a poorer bet than a photocyte in a settled world; it is not viable in one at all.** That is
+a stronger statement than any coefficient would have been, and only a run allowed to finish could
+make it: `excess` used to `expect` an arm's survival, so the most informative outcome an invasion
+can have killed the run three-quarters of the way through instead of being recorded.
+
+---
+
+## Where the round actually ends
+
+| claim | status |
+| --- | --- |
+| A motor moves a body — 88 units a lifetime against 2.1 | ✅ deterministic |
+| Blind travel finds +3.38% more food, and *less* above thrust 40 | ✅ deterministic |
+| A motor costs about twice what its travel earns | ✅ 0.006/tick against 0.0037/tick |
+| A motor pays in empty water | ❌ −2.5 rising to −7.6, extinct at 250, monotone |
+| **A motor survives in a settled world** | ❌ **0 of 12 introductions** |
+| A motor pays on a body big enough to afford one | ❌ lethal at 10 cells; no readable trend |
+| Lowering `light.diffusion` rescues it | ❌ the photocyte control collapses further |
+| Steering rescues it | ❌ retracted — that was the motor idling |
+| Bigger bodies buy predation | ❌ 0.03% of income, and the *shipped* world is highest |
+
+**The organelle is built, correct, and measured, and nothing in this world will pay for one.**
+That is a real result and it is the eleventh consecutive null on locomotion — but it is the first
+one where the reason is a *number* rather than a mystery: **a flagellocyte costs 0.006 a tick and
+the travel it buys is worth 0.0037.** Everything above is that ratio, seen from nine directions.
+
+### What is genuinely left
+
+1. **The cost side is the only untried lever, and it is blocked for a stated reason.** A
+   flagellocyte would have to cost under 0.0031 a tick — below the photocyte's 0.004 — and that is
+   measured to be where neutral bloat begins. ⚠️ But that measurement was taken on the *myocyte*,
+   whose upkeep note argues the case, and **a working motor is not a myocyte**: a myocyte at 0.002
+   accumulated while displacement fell, because an idle muscle is free. A motor that is owned is
+   run. Whether the bloat argument transfers has never been tested and it is one sweep.
+2. **The flagellocyte's own upkeep was set at 0.006 on a claim the code contradicts** — that a
+   motor "works every tick whether or not it is asked to", when a motor at `osc_freq = 0` costs
+   exactly nothing to run. It is being charged twice for the same argument, once in upkeep and
+   once in `movement_cost`. The myocyte's 0.005 is the defensible figure and nobody has re-priced it.
+3. **Predation, not locomotion, may be the shorter path.** It is happening — 0.03% of income —
+   and it needs no organelle, only contact. Round 7 says contact is inherited rather than
+   encountered, and Result 9 says size does not change that. What has never been measured is
+   whether a *devorocyte on a body that already carries a motor* does better, which is the
+   exaptation ladder asked from the other end.

@@ -2219,6 +2219,11 @@ mod tests {
     /// ⚠️ Quoted this way and never bare, for the competition assay's reason: an invader pays a
     /// price for being a newcomer, the control arm is what that price is, and a bare number
     /// would be the two added together.
+    /// ⚠️ **An arm that went extinct has no fitness, and this says so rather than guessing one.**
+    /// It used to `expect` survival, which turned the most informative outcome an invasion can
+    /// have — *nought establishments out of twelve* — into a panic three-quarters of the way
+    /// through a forty-minute run. That is exactly what a working motor produced the first time
+    /// one was measured, and the run died instead of recording it.
     fn excess(invasion: &Invasion, arm: usize) -> f64 {
         let control = invasion.arms[0]
             .per_generation()
@@ -2228,6 +2233,17 @@ mod tests {
             .expect("an arm did not survive its own settling-in");
 
         (measured - control) * 100.0
+    }
+
+    /// Whether an arm left anything alive to have a fitness at all.
+    ///
+    /// ⚠️ **Nought establishments out of twelve is the most informative thing an invasion can
+    /// say, and [`excess`] panics on it.** That is right for a calibration arm, which is meant to
+    /// survive and whose death means the run is void. It is wrong for an arm under test: a
+    /// working motor produced exactly that outcome the first time one was measured, and a
+    /// forty-minute run died three-quarters of the way through instead of recording it.
+    fn survived(invasion: &Invasion, arm: usize) -> bool {
+        invasion.arms[arm].per_generation().is_some()
     }
 
     /// ⭐⭐⭐ **The calibration, and nothing this instrument measures counts without it.**
@@ -3072,6 +3088,7 @@ mod tests {
         for thrust in [0.0f64, 40.0, 100.0] {
             let mut motors = Vec::new();
             let mut photocytes = Vec::new();
+            let mut extinctions = 0u32;
 
             for seed in SEEDS {
                 let config = seeded_world(seed, |raw| raw.physics.thrust = thrust);
@@ -3090,11 +3107,29 @@ mod tests {
 
                 let invasion = invade(&config, &plain, &arms, INTRODUCTIONS, SETTLE, WINDOW);
                 report_invasion(&format!("thrust {thrust}, seed {seed}"), &invasion);
-                motors.push(excess(&invasion, 1));
+
+                // ⚠️⚠️ **An extinct arm is the answer, not an error.** With a motor that actually
+                // runs, this arm goes to nought of twelve introductions — see the test's
+                // documentation — and `excess` panics on an arm with no fitness. Recorded as an
+                // extinction so the run finishes and says so.
+                extinctions += u32::from(!survived(&invasion, 1));
+                if survived(&invasion, 1) {
+                    motors.push(excess(&invasion, 1));
+                }
                 photocytes.push(excess(&invasion, 2));
             }
 
-            let mean = |of: &[f64]| of.iter().sum::<f64>() / 3.0;
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a count of at most three seeds is exact in an f64"
+            )]
+            let mean = |of: &[f64]| {
+                if of.is_empty() {
+                    f64::NAN
+                } else {
+                    of.iter().sum::<f64>() / of.len() as f64
+                }
+            };
             let spread = |of: &[f64]| {
                 of.iter().copied().fold(f64::NEG_INFINITY, f64::max)
                     - of.iter().copied().fold(f64::INFINITY, f64::min)
@@ -3104,16 +3139,19 @@ mod tests {
                 mean(&motors),
                 mean(&photocytes),
                 spread(&motors),
-                motors.clone(),
+                extinctions,
             ));
         }
 
-        println!("\nthrust | motor %/gen (mean of 3) | spread | photocyte (calibration) | seeds");
-        for (thrust, motor, photocyte, spread, each) in &readings {
-            let each: Vec<String> = each.iter().map(|value| format!("{value:+.1}")).collect();
+        println!(
+            "\nthrust | motor %/gen (mean of survivors) | spread | photocyte (calibration) | \
+             extinct arms"
+        );
+        for (thrust, motor, photocyte, spread, extinctions) in &readings {
             println!(
-                "{thrust:6.0} | {motor:+21.3} | {spread:6.1} | {photocyte:+23.3} | {}",
-                each.join(", ")
+                "{thrust:6.0} | {motor:+29.3} | {spread:6.1} | {photocyte:+23.3} | \
+                 {extinctions} of {}",
+                SEEDS.len()
             );
         }
 
@@ -3128,68 +3166,45 @@ mod tests {
             );
         }
 
-        // ⭐⭐⭐ Prediction 3 itself: does what a motor is worth depend on whether it can move?
-        let (_, still, _, still_spread, _) = readings[0];
-        let (best_thrust, best, _, best_spread, _) = readings
-            .iter()
-            .cloned()
-            .max_by(|a, b| a.1.partial_cmp(&b.1).expect("coefficients are finite"))
-            .expect("the sweep has readings in it");
-        println!(
-            "\nPREDICTION 3: a motor that cannot push invades at {still:+.3} %/gen (spread \
-             {still_spread:.1} over {} seeds); the best a motor that can push manages is \
-             {best:+.3} at thrust {best_thrust} (spread {best_spread:.1}); the difference is \
-             {:+.3}",
-            SEEDS.len(),
-            best - still
-        );
-
-        // ⚠️⚠️⚠️ **THE NULL, ASSERTED AS A NULL.** Prediction 3 is not confirmed and the
-        // single-seed reading that appeared to confirm it was a lucky draw. Over three seeds:
+        // ⭐⭐⭐ **Prediction 3, answered properly at last, and the answer is no.**
+        //
+        // ⚠️⚠️ Every earlier version of this block reported a mean over three seeds, and every one
+        // of those runs measured a motor that was **switched off** —
+        // `founder_with_a_third_cell` gave the third cell's gene an `osc_freq` of nought, so
+        // `behaviour.rs`'s `propel` returned early on `force <= 0.0`. The readings it produced,
+        // kept here because they are the reason the builder was fixed:
         //
         //   thrust | mean %/gen | spread | the three seeds
         //        0 |    −10.340 |   16.9 | −19.9, −8.1, −3.0
-        //       40 |     −7.202 |   19.6 | **+2.0**, −17.7, −5.9
+        //       40 |     −7.202 |   19.6 | +2.0, −17.7, −5.9
         //      100 |    −15.158 |   23.7 | −30.8, −7.0, −7.7
         //
-        // The difference between a motor that can push and one that cannot is 3.1 %/generation
-        // against a between-seed spread of 17 to 24. **The +2.0 that made this look like a
-        // discovery is the first entry on the middle row**, and it is one seed out of nine.
+        // With a motor that runs, the arm does not produce a coefficient at all: **nought
+        // establishments out of twelve introductions, extinct.** The calibration in the same run
+        // is emphatic that the instrument is working — a third photocyte invaded ten of twelve at
+        // +4.662 %/generation on the same tick, in the same water.
         //
-        // # Why this instrument cannot answer the question, which is the useful part
-        //
-        // The invasion assay's ±1.12 noise floor was measured on arms near neutrality. This arm
-        // is nowhere near it: a founder plus one flagellocyte is a three-celled body with a
-        // *single* photocyte paying for a cell that costs more than that photocyte earns, so the
-        // invaders crash almost at once and the slope of a log frequency that has gone to nothing
-        // is badly estimated. The variance is a property of measuring a strongly negative arm,
-        // not of the motor.
-        //
-        // ⚠️ So what is refuted is the *experiment*, and the hypothesis is untested rather than
-        // false. `does_moving_find_more_food_than_staying_put` still says a motor finds 3.38%
-        // more food, deterministically, on a four-celled body with two photocytes. **The
-        // untested claim is that a motor pays for a body big enough to afford it**, and the
-        // founder-plus-one design cannot ask that, because the marginal cell it adds is always
-        // added to the smallest body in the world.
-        assert!(
-            best - still < still_spread.max(best_spread),
-            "a motor that can push invaded at {best:+.3} %/generation and one that cannot at \
-             {still:+.3}, a difference of {:+.3}, and that now BEATS the between-seed spread of \
-             {:.1}. **This test asserts a null and the null has broken**, which is a result \
-             worth stopping for rather than a failure: the measured means are −10.3, −7.2 and \
-             −15.2 with spreads of 17 to 24. Re-run at more seeds before believing it",
-            best - still,
-            still_spread.max(best_spread)
+        // That is the same shape predation gave in round 8: nought out of thirty-six. A motor is
+        // not merely a poorer bet than a photocyte in a settled world; **it is not viable in one
+        // at all**, which is a stronger statement than any number would have been and one that
+        // only a run allowed to finish could make.
+        let extinct: u32 = readings.iter().map(|&(_, _, _, _, e)| e).sum();
+        println!(
+            "\nPREDICTION 3: of {} motorised introductions across the sweep, {extinct} arms went \
+             extinct outright. A motor does not pay where there is somewhere to go; it does not \
+             survive there.",
+            readings.len() * SEEDS.len()
         );
 
-        // ⚠️ And the flat truth underneath: at no thrust does a motor pay in a crowd.
+        // ⚠️ Held as the finding rather than as a coefficient. If a motorised arm ever survives
+        // every seed at every thrust, this world has changed in a way worth stopping for.
         assert!(
-            best < -2.0,
-            "a motor invaded at {best:+.3} %/generation, meaned over {} seeds. Every reading \
-             taken so far is between −7 and −15 on the mean. A motor that has become worth \
-             owning in a settled world is the result this whole round was looking for and it \
-             must not arrive silently inside a test that was written to record a null",
-            SEEDS.len()
+            extinct > 0,
+            "every motorised arm survived its invasion, at every thrust and every seed. **The \
+             measured result is that a running motor goes extinct** — nought establishments out \
+             of twelve — while a third photocyte invades ten of twelve at +4.662 %/generation in \
+             the same water on the same tick. If motors now survive, something has changed that \
+             every conclusion in docs/NEXT.md section 8 depends on"
         );
     }
 
